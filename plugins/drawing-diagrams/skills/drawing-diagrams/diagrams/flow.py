@@ -458,7 +458,7 @@ def plan(model, mode_name, overrides=None, draft=False):
             spot = max(spots, key=lambda s: s["room"])
             room = max(spot["room"], 0)
             fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot['where']}, "
-                      f"влезает ~{max(int(room / 7), 1)}; сократите, вынесите в сноску [n] "
+                      f"влезает ~{fit_chars(len(text), need, room)}; сократите, вынесите в сноску [n] "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
         e["lside"] = spot.get("side", "R")
         if "ly" in spot:

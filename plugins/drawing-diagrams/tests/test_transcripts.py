@@ -77,9 +77,9 @@ class RunMetrics(unittest.TestCase):
         self.assertIn("run.jsonl", line)
         self.assertIn("out=527", line)
         self.assertIn("renders=1/1", line)
-        self.assertIn("invocations=1", line)
+        self.assertIn("mentions=1", line)
 
-    def test_run_metrics_counts_invocations_within_a_compound_render_call(self):
+    def test_run_metrics_counts_mentions_within_a_compound_render_call(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         session = Path(tmp.name) / "compound.jsonl"
@@ -88,6 +88,10 @@ class RunMetrics(unittest.TestCase):
                                           "python3 /x/skills/drawing-diagrams/render.py b.json"}}
         single = {"type": "tool_use", "id": "c2", "name": "Bash",
                   "input": {"command": "python3 /x/skills/drawing-diagrams/render.py c.json --mode widget"}}
+        # a shell loop mentions render.py once in the command text but runs it three times; the
+        # transcript cannot see the real execution count, so it must count as 1 mention, 1 call
+        loop = {"type": "tool_use", "id": "c3", "name": "Bash",
+                "input": {"command": 'for m in a b c; do python3 /x/skills/drawing-diagrams/render.py "$m.json"; done'}}
         write(session, [
             assistant("m1", {"input_tokens": 1, "output_tokens": 1}, content=[compound]),
             {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "is_error": True,
@@ -95,10 +99,15 @@ class RunMetrics(unittest.TestCase):
             assistant("m2", {"input_tokens": 1, "output_tokens": 1}, content=[single]),
             {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c2", "is_error": False,
                                                       "content": "OK"}]}},
+            assistant("m3", {"input_tokens": 1, "output_tokens": 1}, content=[loop]),
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c3", "is_error": False,
+                                                      "content": "OK"}]}},
         ])
+        renders = transcripts.render_commands(str(session))
+        self.assertEqual(renders[2]["mentions"], 1)
         m = transcripts.run_metrics(str(session))
-        self.assertEqual(m["renders"], 2)
-        self.assertEqual(m["render_invocations"], 3)
+        self.assertEqual(m["renders"], 3)
+        self.assertEqual(m["render_mentions"], 4)
         self.assertEqual(m["renders_failed"], 1)
 
 

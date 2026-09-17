@@ -364,7 +364,7 @@ def parse_render(cmd, result):
     exit_code = re.search(r'Exit code (\d+)', text)
     errors = len(re.findall(r'(?m)^\s*ошибка', text))
     return {
-        'invocations': cmd.count('render.py'),
+        'mentions': cmd.count('render.py'),
         'check': '--check' in cmd,
         'draft': '--draft' in cmd,
         'harness': '--harness' in cmd,
@@ -436,11 +436,10 @@ def run_files(session_path):
 def run_metrics(session_path):
     """Metrics of one headless run: the session and every agent it dispatched.
 
-    renders/renders_failed count Bash calls that invoke render.py, not renderer invocations: a
-    compound command can run render.py several times, and failures are counted per Bash call —
-    a call that runs the renderer several times and fails once counts once. render_invocations
-    sums parse_render(...)['invocations'] across all render calls, so a single Bash call running
-    render.py twice counts as two invocations there.
+    renders counts Bash calls that mention the renderer, render_mentions counts textual
+    occurrences of render.py in those commands (not executions: loops, subprocesses and
+    variables are not visible in a transcript), and failures are counted per Bash call — a call
+    that runs the renderer several times and fails once counts once.
     """
     files = run_files(session_path)
     calls = [c for f in files for c in api_calls(f)]
@@ -452,7 +451,7 @@ def run_metrics(session_path):
             'models': collections.Counter(c['model'] for c in calls),
             'efforts': collections.Counter(c['effort'] for c in calls),
             'renders': len(renders), 'renders_failed': sum(r['failed'] for r in renders),
-            'render_invocations': sum(r['invocations'] for r in renders)}
+            'render_mentions': sum(r['mentions'] for r in renders)}
 
 
 def is_prompt(rec):
@@ -673,7 +672,7 @@ def part2(files, index, by_agent):
             print(f'     вызов: {d["subagent_type"]}, model={d["param_model"] or "—"}, фон={d["background"]}, '
                   f'родитель {d["parent_model"]}/{d["parent_effort"] or "n/a"}; «{d["description"][:60]}»')
         if rs:
-            print(f'     render.py: команд {len(rs)} (запусков {sum(r["invocations"] for r in rs)}), '
+            print(f'     render.py: команд {len(rs)} (упоминаний {sum(r["mentions"] for r in rs)}), '
                   f'--check {sum(r["check"] for r in rs)}, с ошибкой {sum(r["failed"] for r in rs)}, '
                   f'строк «ошибка» {sum(r["errors"] for r in rs)}, предупр. {sum(r["warnings"] for r in rs)}, '
                   f'--draft {sum(r["draft"] for r in rs)}, --harness {sum(r["harness"] for r in rs)}, '
@@ -730,7 +729,7 @@ def main(argv=None):
             m = run_metrics(path)
             print(f"{os.path.basename(path)}  calls={m['calls']} agents={m['agents']} out={m['out']} "
                   f"think={m['think']} cw={m['cw']} cr={m['cr']} in={m['in']} peak={m['peak_ctx']} "
-                  f"renders={m['renders']}/{m['renders_failed']} invocations={m['render_invocations']} "
+                  f"renders={m['renders']}/{m['renders_failed']} mentions={m['render_mentions']} "
                   f"effort={fmt_counter(m['efforts'])} "
                   f"model={fmt_counter(m['models'])}")
         return 0

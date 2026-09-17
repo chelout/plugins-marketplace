@@ -60,6 +60,14 @@ class FitMessages(unittest.TestCase):
         self.assertBudget(msg, r"подпись 'вправо идём' (\d+) симв\. не помещается .*, влезает ~(\d+)")
         self.assertIn(msg, exc.fit)
 
+    def test_edge_label_wide_glyphs(self):
+        nodes = [{"id": "a?", "title": "Да?"}, {"id": "b", "kind": "terminal", "title": "B"},
+                 {"id": "c", "kind": "terminal", "title": "C"}]
+        exc = self.failure(flow, flow_model(nodes, ["a? b", "c ."], ["a? -> b : ШШШ", "a? -> c : вниз"]))
+        msg = self.message(exc, "связь a? -> b:")
+        self.assertBudget(msg, r"подпись 'ШШШ' (\d+) симв\. не помещается .*, влезает ~(\d+)")
+        self.assertIn(msg, exc.fit)
+
     def test_schema_key_row_warning(self):
         tables = [{"id": "t", "name": "t", "group": "g",
                    "columns": [{"name": "external_correlation_identifier", "type": "uuid", "flags": ["PK"]}]}]
