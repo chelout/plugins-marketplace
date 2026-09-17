@@ -299,7 +299,7 @@ cache read per run) are about 45M cache read and 0.5M output; likely less after 
 |---|---|---|
 | 1 | `tools/assets.py check` exits 0 on the branch | command output |
 | 2 | after the merge `tools/assets.py verify-cdn` exits 0 | command output |
-| 3 | `--assets cdn` widget fragments of the six examples have a median of at most 4.5K characters | size table from a script over `examples/` |
+| 3 | `--assets cdn` widget fragments of the six examples have a median of at most 6K characters (27–43K today; the diagram markup of the examples alone has a median of about 5K, larger than the 2.9K of the widgets measured in sessions) | size table printed by a unit test over `examples/` |
 | 4 | `--assets inline` widget fragments of the six examples draw every edge and keep their interactions | harness pages in the in-app browser: no console errors, connector count equals edge count, a scenario chip and a column toggle work |
 | 5 | `--assets` modes: `cdn` output has the stylesheet link first and the script last with `REF` URLs; without `REF` it falls back to `inline` with a warning; `--no-assets` equals `--assets none` | unit tests |
 | 6 | a failing model gives empty stdout and exit 1; the map is printed for a non-text-fit layout error and not for text-fit errors; on success widget stdout is only the fragment | unit tests |
