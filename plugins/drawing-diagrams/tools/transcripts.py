@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
-"""Analytics over local Claude Code transcripts (~/.claude/projects).
+"""Measurements of drawing-diagrams usage from local Claude Code transcripts (~/.claude/projects).
 
-Part 1: every subagent - how its model and effort compare with the dispatch
-        (Agent tool parameters, agent definition on disk, parent session),
-        plus Workflow agents against the Workflow call and its script.
-Part 2: drawing-diagrams / drawing-db-schemas episodes - inline or agent,
-        model and effort during the work, the render.py loop, embedding.
-
-Usage: skill_analytics.py [OUT_DIR]   (JSON dumps go to OUT_DIR if given)
+  transcripts.py tokens SESSION.jsonl…   metrics per headless run: the session and its agents
+  transcripts.py agents [--out DIR]      model and effort of every dispatched agent
+  transcripts.py episodes [--out DIR]    drawing episodes: inline or agent, the render loop
+  transcripts.py segments DIR            token usage of drawing episodes, from episodes --out DIR
 """
+import argparse
 import collections
 import glob
 import json
 import os
 import re
+import statistics
 import sys
 
 HOME = os.path.expanduser('~')
 PROJECTS = os.path.join(HOME, '.claude', 'projects')
 SKILLS = ('drawing-diagrams', 'drawing-db-schemas')
-RENDER_RE = re.compile(r'(?:python3?\s[^\n;|&]*|exec\(open\([^)]*)drawing-(?:diagrams|db-schemas)/render\.py')
+RENDER_RE = re.compile(r'(?:python3?\s[^\n;|&]*|exec\(open\([^)]*)'
+                       r'(?:drawing-(?:diagrams|db-schemas)|\$\{CLAUDE_SKILL_DIR\})/render\.py')
+RENDER_PATH = re.compile(r'drawing-(?:diagrams|db-schemas)/render\.py')
+SKILLFILE = re.compile(r'skills/drawing-(?:diagrams|db-schemas)/')
 AGENT_ID_RE = re.compile(r'agentId: (a[0-9a-f]{8,})')
 WF_RE = re.compile(r'wf_[0-9a-f]{8}-[0-9a-f]{3}')
 SCRIPT_MODEL_RE = re.compile(r"model[\\\"']*\s*:\s*[\\\"']+([\w.-]+)")
@@ -375,6 +377,203 @@ def parse_render(cmd, result):
     }
 
 
+def usage_numbers(u):
+    """Input, cache write, cache read, output and thinking tokens of one usage object. Iterations
+    are summed when present: some records carry zeros at the top level."""
+    its = u.get('iterations') or [u]
+    s = lambda k: sum((i.get(k) or 0) for i in its)
+    cw = s('cache_creation_input_tokens')
+    if not cw and isinstance(u.get('cache_creation'), dict):
+        cw = sum(v or 0 for v in u['cache_creation'].values())
+    return {'in': s('input_tokens'), 'cw': cw, 'cr': s('cache_read_input_tokens'), 'out': s('output_tokens'),
+            'think': (u.get('output_tokens_details') or {}).get('thinking_tokens') or 0}
+
+
+def api_calls(path):
+    """One entry per model response. A message is written as several records; the last one
+    carries its final usage."""
+    last, order = {}, []
+    for rec in records(path, ('"type":"assistant"',)):
+        msg = rec.get('message') or {}
+        mid = msg.get('id')
+        if rec.get('type') != 'assistant' or not mid or msg.get('model') in (None, '<synthetic>'):
+            continue
+        if mid not in last:
+            order.append(mid)
+        last[mid] = rec
+    calls = []
+    for mid in order:
+        rec = last[mid]
+        n = usage_numbers(rec['message'].get('usage') or {})
+        n.update(model=rec['message'].get('model'), effort=rec.get('effort') or 'n/a',
+                 ctx=n['in'] + n['cw'] + n['cr'])
+        calls.append(n)
+    return calls
+
+
+def render_commands(path):
+    """render.py commands of one transcript and how each ended."""
+    uses, results, seen = [], {}, set()
+    for rec in records(path):
+        for b in blocks(rec):
+            if (b.get('type') == 'tool_use' and b.get('name') == 'Bash' and b.get('id') not in seen
+                    and RENDER_RE.search((b.get('input') or {}).get('command') or '')):
+                seen.add(b.get('id'))
+                uses.append(b)
+            elif b.get('type') == 'tool_result':
+                results[b.get('tool_use_id')] = (bool(b.get('is_error')), text_of(b))
+    return [parse_render(b['input']['command'], results.get(b.get('id'))) for b in uses]
+
+
+def run_files(session_path):
+    base = session_path[:-len('.jsonl')]
+    return [session_path] + sorted(glob.glob(os.path.join(base, 'subagents', '**', '*.jsonl'), recursive=True))
+
+
+def run_metrics(session_path):
+    """Metrics of one headless run: the session and every agent it dispatched."""
+    files = run_files(session_path)
+    calls = [c for f in files for c in api_calls(f)]
+    renders = [r for f in files for r in render_commands(f)]
+    total = lambda k: sum(c[k] for c in calls)
+    return {'calls': len(calls), 'agents': len(files) - 1,
+            'in': total('in'), 'cw': total('cw'), 'cr': total('cr'), 'out': total('out'), 'think': total('think'),
+            'peak_ctx': max((c['ctx'] for c in calls), default=0),
+            'models': collections.Counter(c['model'] for c in calls),
+            'efforts': collections.Counter(c['effort'] for c in calls),
+            'renders': len(renders), 'renders_failed': sum(r['failed'] for r in renders)}
+
+
+def is_prompt(rec):
+    if rec.get('type') != 'user' or rec.get('isMeta') or rec.get('isCompactSummary'):
+        return False
+    c = (rec.get('message') or {}).get('content')
+    if isinstance(c, list):
+        if any(isinstance(b, dict) and b.get('type') == 'tool_result' for b in c):
+            return False
+        c = ' '.join(b.get('text', '') for b in c if isinstance(b, dict) and b.get('type') == 'text')
+    return isinstance(c, str) and bool(c.strip()) and not c.startswith(('<local-command', '<system-reminder>')) and 'Base directory for this skill' not in c
+
+
+def load_calls(path):
+    calls, order, seg, segs = {}, [], -1, []
+    for line in open(path, errors='ignore'):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if is_prompt(rec):
+            seg += 1
+            c = (rec.get('message') or {}).get('content')
+            text = c if isinstance(c, str) else ' '.join(b.get('text', '') for b in c if isinstance(b, dict))
+            segs.append(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', text)).strip()[:48])
+            continue
+        if rec.get('type') != 'assistant':
+            continue
+        msg = rec.get('message') or {}
+        mid = msg.get('id')
+        if mid not in calls:
+            calls[mid] = {'seg': max(seg, 0), 'tools': [], 'ts': rec.get('timestamp', '')}
+            order.append(mid)
+        calls[mid]['usage'] = msg.get('usage') or {}
+        for b in msg.get('content') or []:
+            if isinstance(b, dict) and b.get('type') == 'tool_use':
+                calls[mid]['tools'].append(b)
+    out = []
+    for mid in order:
+        c = calls[mid]
+        n = usage_numbers(c['usage'])
+        n['ctx'] = n['in'] + n['cw'] + n['cr']
+        out.append({**c, **n})
+    return out, segs
+
+
+def classify(tool):
+    nm, inp = tool.get('name', ''), tool.get('input') or {}
+    s = json.dumps(inp, ensure_ascii=False)
+    if nm == 'Skill' and 'drawing' in str(inp.get('skill')): return 'skill-load'
+    if nm == 'Bash' and RENDER_PATH.search(inp.get('command') or ''): return 'render'
+    if nm.endswith('show_widget'): return 'show_widget'
+    if nm == 'Artifact': return 'artifact'
+    if nm in ('Read',) and SKILLFILE.search(inp.get('file_path') or ''): return 'read-skill-file'
+    if nm == 'Bash' and SKILLFILE.search(inp.get('command') or '') and re.search(r'\b(cat|sed|head|tail|rg|grep)\b', inp.get('command') or ''): return 'read-skill-file'
+    if nm in ('Write', 'Edit') and str(inp.get('file_path', '')).endswith('.json') and 'grid' in s: return 'model-json'
+    return None
+
+
+def totals(calls):
+    t = collections.Counter()
+    for c in calls:
+        for k in ('in', 'cw', 'cr', 'out', 'think'): t[k] += c[k]
+    t['calls'] = len(calls)
+    ctx = [c['ctx'] for c in calls] or [0]
+    t['ctx_start'], t['ctx_med'], t['ctx_max'] = ctx[0], int(statistics.median(ctx)), max(ctx)
+    return t
+
+
+def fmt(t):
+    k = lambda v: f'{v/1000:.1f}K' if v < 1_000_000 else f'{v/1e6:.2f}M'
+    return (f"вызовов {t['calls']:3d} | выход {k(t['out']):>6} (мышл. {k(t['think']):>6}) | запись кэша {k(t['cw']):>6} | "
+            f"чтение кэша {k(t['cr']):>7} | без кэша {k(t['in']):>5} | контекст старт {k(t['ctx_start'])}, медиана {k(t['ctx_med'])}, макс {k(t['ctx_max'])}")
+
+
+def record_growth(calls, growth):
+    for i, c in enumerate(calls[:-1]):
+        kinds = [classify(t) for t in c['tools']]
+        if len(c['tools']) != 1 or kinds[0] not in ('skill-load', 'read-skill-file'): continue
+        g = calls[i + 1]['ctx'] - c['ctx'] - c['out']
+        if g > 0:
+            inp = c['tools'][0].get('input') or {}
+            target = 'SKILL.md body' if kinds[0] == 'skill-load' else re.sub(r'.*skills/drawing-[\w-]+/', '', inp.get('file_path') or inp.get('command') or '')[:40]
+            growth[target].append(g)
+
+
+def segments(out_dir):
+    """Token usage of drawing episodes: agents whole, inline sessions per segment with drawing work."""
+    eps = json.load(open(os.path.join(out_dir, 'drawing_episodes.json')))
+    agents_path = os.path.join(out_dir, 'agents.json')
+    agents = json.load(open(agents_path)) if os.path.exists(agents_path) else []
+    growth = collections.defaultdict(list)
+
+    print('=== АГЕНТЫ (весь транскрипт = задача рисования) ===')
+    labels = {e['path']: f"#{i} {e['dispatch']['description'][:42]}"
+              for i, e in enumerate(eps, 1) if e['kind'] == 'агент' and e.get('dispatch')}
+    clean = next((a for a in agents if a['dispatch']['description'].startswith('Clean baseline')), None)
+    if clean:
+        labels[clean['path']] = 'Clean baseline: schema without skill'
+    for path, label in sorted(labels.items(), key=lambda x: x[1]):
+        calls, _ = load_calls(path)
+        record_growth(calls, growth)
+        print(f'{label:46} {fmt(totals(calls))}')
+
+    print('\n=== СЕССИИ: только отрезки между сообщениями пользователя, где была отрисовка ===')
+    for i, e in enumerate(eps, 1):
+        if e['kind'] != 'сессия':
+            continue
+        calls, segs = load_calls(e['path'])
+        record_growth(calls, growth)
+        by_seg = collections.defaultdict(list)
+        for c in calls:
+            by_seg[c['seg']].append(c)
+        drawing = [s for s, cs in by_seg.items()
+                   if any(classify(t) in ('skill-load', 'render', 'model-json', 'read-skill-file') for c in cs for t in c['tools'])]
+        all_draw = [c for s in drawing for c in by_seg[s]]
+        widget_out = sum(c['out'] for c in all_draw if any(classify(t) == 'show_widget' for t in c['tools']))
+        widget_chars = sum(len((t.get('input') or {}).get('widget_code') or '')
+                           for c in all_draw for t in c['tools'] if classify(t) == 'show_widget')
+        print(f"\n#{i} {e['date']}: отрезков с отрисовкой {len(drawing)} из {len(segs)}; "
+              f"show_widget: выход {widget_out/1000:.1f}K ток., {widget_chars/1000:.1f}K симв. кода")
+        print(f"   ИТОГО {fmt(totals(all_draw))}")
+        for s in sorted(drawing):
+            cs = by_seg[s]
+            prompt = segs[s] if s < len(segs) else '(до первого сообщения)'
+            print(f"   · {cs[0]['ts'][5:16]} «{prompt[:40]}» {fmt(totals(cs))}")
+
+    print('\n=== Прирост контекста после загрузки или чтения файлов скила ===')
+    for k, v in sorted(growth.items(), key=lambda x: -statistics.median(x[1])):
+        print(f'  {k:42} n={len(v):2d} медиана {int(statistics.median(v)):6d} ток.')
+
+
 def episode(path, index, by_agent):
     events, results = [], {}
     for rec in records(path):
@@ -503,18 +702,49 @@ def dump(out_dir, name, rows):
     print(f'записано {path}', file=sys.stderr)
 
 
-def main():
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest='cmd', required=True)
+    p = sub.add_parser('tokens', help='metrics of headless runs, one session file each')
+    p.add_argument('sessions', nargs='+')
+    for name in ('agents', 'episodes'):
+        p = sub.add_parser(name)
+        p.add_argument('--out', help='also write JSON dumps to this directory')
+    p = sub.add_parser('segments', help='token usage of drawing episodes, from an episodes --out directory')
+    p.add_argument('out')
+    args = ap.parse_args(argv)
+
+    if args.cmd == 'tokens':
+        for path in args.sessions:
+            m = run_metrics(path)
+            print(f"{os.path.basename(path)}  calls={m['calls']} agents={m['agents']} out={m['out']} "
+                  f"think={m['think']} cw={m['cw']} cr={m['cr']} in={m['in']} peak={m['peak_ctx']} "
+                  f"renders={m['renders']}/{m['renders_failed']} effort={fmt_counter(m['efforts'])} "
+                  f"model={fmt_counter(m['models'])}")
+        return 0
+    if args.cmd == 'segments':
+        segments(args.out)
+        return 0
+
     files = sorted(glob.glob(os.path.join(PROJECTS, '**', '*.jsonl'), recursive=True))
-    linked, wf, index, by_agent = part1(files)
+    strip = lambda row: row.get('dispatch') and row.update(
+        dispatch={k: v for k, v in row['dispatch'].items() if k != 'prompt'})
+    if args.cmd == 'agents':
+        linked, wf, _, _ = part1(files)
+        if args.out:
+            for row in linked:
+                strip(row)
+            dump(args.out, 'agents.json', linked)
+            dump(args.out, 'workflow_agents.json', wf)
+        return 0
+    index, by_agent = scan_dispatches(files)
     episodes = part2(files, index, by_agent)
-    if len(sys.argv) > 1:
-        for row in linked + episodes:
-            if row.get('dispatch'):
-                row['dispatch'] = {k: v for k, v in row['dispatch'].items() if k != 'prompt'}
-        dump(sys.argv[1], 'agents.json', linked)
-        dump(sys.argv[1], 'workflow_agents.json', wf)
-        dump(sys.argv[1], 'drawing_episodes.json', episodes)
+    if args.out:
+        for row in episodes:
+            strip(row)
+        dump(args.out, 'drawing_episodes.json', episodes)
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
