@@ -3,7 +3,7 @@ states as chips in a fixed order. No connectors."""
 import json
 
 from . import assets
-from .common import BASE_MODES, ID_RE, ModelError, esc, labels_for, text_width, wrap_lines
+from .common import BASE_MODES, ID_RE, ModelError, esc, fit_chars, labels_for, text_width, two_line_chars, wrap_lines
 
 MODES = {
     "widget": {"rail": 64, "max_moments": 12},
@@ -20,7 +20,12 @@ def mode_for(mode_name, overrides):
 
 
 def plan(model, mode_name, overrides=None, draft=False):
-    errors, layout_errors, warnings = [], [], []
+    errors, layout_errors, fit_errors, warnings = [], [], [], []
+
+    def fit_error(msg):
+        layout_errors.append(msg)
+        fit_errors.append(msg)
+
     mode = mode_for(mode_name, overrides)
     entities = model.get("entities") or []
     moments = model.get("moments") or []
@@ -64,12 +69,14 @@ def plan(model, mode_name, overrides=None, draft=False):
             errors.append(f"момент {mid}: нет title")
             continue
         tag = m.get("tag") or ""
-        need = text_width(m["title"]) * 1.04 + 20 + (text_width(tag) * 0.9 + 8 if tag else 0)
+        tag_w = text_width(tag) * 0.9 + 8 if tag else 0
+        need = text_width(m["title"]) * 1.04 + 20 + tag_w
         if need > card_w:
-            layout_errors.append(f"момент {mid}: заголовок шире карточки на {need - card_w:.0f}px")
+            fit_error(f"момент {mid}: заголовок {len(m['title'])} симв., влезает "
+                      f"{fit_chars(len(m['title']), need - 20 - tag_w, card_w - 20 - tag_w)}")
         text = m.get("text") or ""
         if text and wrap_lines(text, card_w - 20) > 2:
-            layout_errors.append(f"момент {mid}: текст займёт больше двух строк")
+            fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{two_line_chars(text, card_w - 20)}")
         states = m.get("states") or {}
         for k in states:
             if k not in ent_ids:
@@ -84,9 +91,9 @@ def plan(model, mode_name, overrides=None, draft=False):
         rows.append({"id": mid, "label": label, "title": m["title"], "text": text, "tag": tag, "chips": chips})
 
     if errors:
-        raise ModelError(errors + layout_errors, layout=layout_errors)
+        raise ModelError(errors + layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors and not draft:
-        raise ModelError(layout_errors, layout=layout_errors)
+        raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
     ent_labels = {e["id"]: e.get("label", e["id"]) for e in entities if isinstance(e, dict) and e.get("id")}

@@ -98,9 +98,9 @@ def plan(model, mode_name, overrides=None, draft=False):
                 if mode["type_on_keys"]:
                     need += len(col.get("type", "")) * ch + 4
                 if need > card_w:
-                    warnings.append(
-                        f"таблица {tid}.{name}: строка ключа шире карточки на {need - card_w:.0f}px "
-                        f"(карточка {card_w:.0f}px), имя перенесётся; сузьте grid или сократите имя")
+                    budget = max(int((card_w - (need - len(name) * ch)) / ch), 1)
+                    warnings.append(f"таблица {tid}.{name}: имя {len(name)} симв., влезает ~{budget}; "
+                                    f"сузьте grid или сократите имя")
         if not any(is_key(c) for c in t.get("columns") or []):
             warnings.append(f"таблица {tid}: нет ни одной ключевой колонки, линии крепить не к чему")
 

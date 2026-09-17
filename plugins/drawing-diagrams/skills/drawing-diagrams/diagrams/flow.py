@@ -4,7 +4,8 @@ import math
 import re
 
 from . import assets, router
-from .common import BASE_MODES, ID_RE, RAMPS, ModelError, esc, label_width, labels_for, text_width, wrap_lines
+from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_chars, label_width, labels_for, text_width,
+                     two_line_chars, wrap_lines)
 from .grid import check_placement, empty_lines, parse_grid
 
 MODES = {
@@ -217,7 +218,12 @@ def parse_edge(e, errors, i):
 def plan(model, mode_name, overrides=None, draft=False):
     kind = model.get("kind", "flow")
     lanes_mode = kind == "swimlane"
-    errors, layout_errors, warnings = [], [], []
+    errors, layout_errors, fit_errors, warnings = [], [], [], []
+
+    def fit_error(msg):
+        layout_errors.append(msg)
+        fit_errors.append(msg)
+
     mode = mode_for(kind, mode_name, overrides)
 
     groups = model.get("groups") or {}
@@ -283,8 +289,9 @@ def plan(model, mode_name, overrides=None, draft=False):
             extra += 30
         need = text_width(n["title"]) * 1.04 + 20 + extra
         if need > card_w:
-            layout_errors.append(f"узел {nid}: заголовок шире карточки на {need - card_w:.0f}px "
-                                 f"(карточка {card_w:.0f}px); сократите заголовок или сузьте grid")
+            fit_error(f"узел {nid}: заголовок {len(n['title'])} симв., влезает "
+                      f"{fit_chars(len(n['title']), need - 20 - extra, card_w - 20 - extra)}; "
+                      f"сократите заголовок или сузьте grid")
         text = n.get("text") or ""
         m_note = FOOT_RE.search(text) if text else None
         if m_note:
@@ -296,17 +303,17 @@ def plan(model, mode_name, overrides=None, draft=False):
                 text = text[: m_note.start()].rstrip() + " " + CIRCLED[ref - 1]
                 n["_text"] = text
         if text:
-            lines = wrap_lines(text, card_w - 20)
-            if lines > 2:
-                layout_errors.append(f"узел {nid}: текст займёт {lines} строки, допустимы две; сократите или вынесите в сноску")
+            if wrap_lines(text, card_w - 20) > 2:
+                fit_error(f"узел {nid}: текст {len(text)} симв., в две строки влезает ~{two_line_chars(text, card_w - 20)}; "
+                          f"сократите или вынесите в сноску")
         items = n.get("items") or []
         if items and k != "block":
             warnings.append(f"узел {nid}: items показываются только у block")
         if len(items) > 5:
             layout_errors.append(f"узел {nid}: пунктов {len(items)}, допустимо пять")
-        for it in items:
+        for pos, it in enumerate(items, 1):
             if wrap_lines(it, card_w - 30) > 2:
-                layout_errors.append(f"узел {nid}: пункт {it!r} займёт больше двух строк")
+                fit_error(f"узел {nid}: пункт {pos} — {len(it)} симв., влезает ~{two_line_chars(it, card_w - 30)}")
         if k == "terminal" and text:
             warnings.append(f"узел {nid}: у terminal текст не показывается, только заголовок")
 
@@ -389,7 +396,7 @@ def plan(model, mode_name, overrides=None, draft=False):
                 errors.append(f"маршрут {name!r}: между {a} и {b} нет связи")
 
     if errors:
-        raise ModelError(errors + layout_errors, layout=layout_errors)
+        raise ModelError(errors + layout_errors, layout=layout_errors, fit=fit_errors)
 
     # routing
     lat = router.Lattice(grid_cols, grid_rows, {nid: rc for nid, rc in cells.items() if nid in by_id})
@@ -418,7 +425,7 @@ def plan(model, mode_name, overrides=None, draft=False):
             if p is not None:
                 paths[i] = p
     if layout_errors and not draft:
-        raise ModelError(layout_errors, layout=layout_errors)
+        raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
 
@@ -450,9 +457,9 @@ def plan(model, mode_name, overrides=None, draft=False):
         if spot is None:
             spot = max(spots, key=lambda s: s["room"])
             room = max(spot["room"], 0)
-            layout_errors.append(f"связь {e['a']} -> {e['b']}: подпись {text!r} ({need:.0f}px) не помещается {spot['where']} "
-                                 f"(места {room:.0f}px); сократите до {max(int(room / 7), 1)} символов, вынесите в сноску [n] "
-                                 f"или переставьте узлы так, чтобы линия уходила вниз")
+            fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot['where']}, "
+                      f"влезает ~{max(int(room / 7), 1)}; сократите, вынесите в сноску [n] "
+                      f"или переставьте узлы так, чтобы линия уходила вниз")
         e["lside"] = spot.get("side", "R")
         if "ly" in spot:
             e["ly"] = spot["ly"]
@@ -479,7 +486,7 @@ def plan(model, mode_name, overrides=None, draft=False):
                                     f"{routed[j]['a']} -> {routed[j]['b']}; переставьте узлы или уберите подпись в сноску")
 
     if layout_errors and not draft:
-        raise ModelError(layout_errors, layout=layout_errors)
+        raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors if x not in " ".join(warnings)] + warnings
 

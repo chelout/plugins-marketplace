@@ -64,13 +64,14 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_]*\??$")
 
 
 class ModelError(Exception):
-    """Validation failed. `errors` is the list of messages; `layout` marks the
-    ones --draft may downgrade to warnings."""
+    """Validation failed. `errors` is the list of messages; `layout` marks the ones --draft may
+    downgrade to warnings; `fit` marks the layout errors about a text too long for its place."""
 
-    def __init__(self, errors, layout=()):
+    def __init__(self, errors, layout=(), fit=()):
         super().__init__("\n".join("ошибка: " + e for e in errors))
         self.errors = list(errors)
         self.layout = list(layout)
+        self.fit = list(fit)
 
 
 def plural(n, forms):
@@ -162,3 +163,16 @@ def wrap_lines(text, width, scale=0.88):
             lines += 1
             cur = w
     return lines
+
+
+def fit_chars(n, need, room):
+    """Characters of an n-character text that fit `room` px when all n need `need` px."""
+    if need <= 0:
+        return n
+    return max(int(n * room / need), 1)
+
+
+def two_line_chars(text, width, scale=0.88):
+    """About how many characters of `text` fit two word-wrapped lines of `width` px. Wrapping leaves
+    the ends of lines short, so a tenth of the room is kept in reserve."""
+    return fit_chars(len(text), text_width(text, scale) * 1.05, 2 * width * 0.9)
