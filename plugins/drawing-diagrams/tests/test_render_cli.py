@@ -211,6 +211,32 @@ class RenderCli(unittest.TestCase):
         self.assertFalse(out_dir.exists())
         self.assertIn(model_path, err)
 
+    # finding P1 (branch-gate round 5): a non-string `id` must not crash the batch (JSON number,
+    # bool, list, object) nor silently fall back to the file stem (falsy-but-not-null: "", 0,
+    # [], {}). Only an absent key or an explicit `null` may fall back; every other non-conforming
+    # value fails the whole batch before anything is written, with the existing --out-dir id
+    # error and no traceback.
+    def test_out_dir_rejects_non_string_ids(self):
+        bad_ids = (123, True, 0, "", [], {}, ["a"])
+        for i, bad_id in enumerate(bad_ids):
+            with self.subTest(bad_id=bad_id):
+                out_dir = self.tmp / f"out_bad_{i}"
+                good_path = self.write_model(f"good_{i}", dict(GOOD, id=f"good_{i}"))
+                bad_path = self.write_model(f"bad_{i}", {**GOOD, "id": bad_id})
+                code, out, err = self.run_cli(good_path, bad_path, "--out-dir", str(out_dir))
+                self.assertEqual((code, out), (1, ""))
+                self.assertFalse(out_dir.exists())
+                self.assertIn("--out-dir", err)
+                self.assertIn(bad_path, err)
+                self.assertNotIn("Traceback", err)
+
+    def test_out_dir_null_id_falls_back_to_file_stem(self):
+        out_dir = self.tmp / "out"
+        model_path = self.write_model("stem_name", {**GOOD, "id": None})
+        code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["stem_name.html"])
+
     def test_out_dir_rejects_targets_colliding_after_resolution(self):
         # One model names its target via an explicit id, the other via the file-stem fallback;
         # both resolve to "dup.html". A literal-name comparison of "dup" (id) vs the fallback

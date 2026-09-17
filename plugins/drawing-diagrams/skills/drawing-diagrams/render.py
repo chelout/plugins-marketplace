@@ -99,13 +99,13 @@ def batch_target(path, model, target_dir, resolved_dir, fmt):
     ValueError with the message to print when the id is not a safe file name or the target
     would land outside target_dir."""
     model_id = model.get("id")
-    if model_id:
-        if not ID_RE.match(model_id):
-            raise ValueError(f"ошибка: --out-dir: {path}: id «{model_id}» не годится для имени файла "
-                              f"(разрешены только буквы, цифры, _ и -, без точек и разделителей)")
-        stem = model_id
-    else:
+    if model_id is None:
         stem = Path(path).stem
+    else:
+        if not isinstance(model_id, str) or not ID_RE.match(model_id):
+            raise ValueError(f"ошибка: --out-dir: {path}: id «{model_id!r}» не годится для имени файла "
+                              f"(нужна строка из букв, цифр, _ и -, без точек и разделителей)")
+        stem = model_id
     target = target_dir / f"{stem}{SUFFIX[fmt]}"
     resolved = target.resolve()
     if resolved.parent != resolved_dir:
