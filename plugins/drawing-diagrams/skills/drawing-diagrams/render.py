@@ -92,7 +92,7 @@ def main(argv=None):
     elif args.format == "mermaid":
         out = mod.mermaid(model, layout) + "\n"
     else:
-        out = mod.render(model, args.mode, layout, warnings, with_assets=not args.no_assets, draft=draft_used)
+        out = mod.render(model, args.mode, layout, warnings, assets_mode="none" if args.no_assets else "inline", draft=draft_used)
         if args.harness:
             if args.mode != "widget":
                 print("ошибка: --harness имеет смысл только в режиме widget", file=sys.stderr)

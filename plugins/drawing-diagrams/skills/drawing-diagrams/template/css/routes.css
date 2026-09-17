@@ -1,0 +1,4 @@
+.dg-routes{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px var(--dg-padr) 0 var(--dg-padl);font-size:12px;color:var(--dg-text2)}
+.dg-route{font:inherit;font-size:12px;color:var(--dg-text2);background:transparent;border:1px solid var(--dg-border2);border-radius:999px;padding:3px 10px;cursor:pointer}
+.dg-route.on{color:var(--dg-accent);border-color:var(--dg-accent)}
+.dg-c.lo{opacity:.3}

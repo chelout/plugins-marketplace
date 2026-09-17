@@ -143,7 +143,7 @@ CIRCLED_WIDTH = 10.25  # ① … ⑳ come from a fallback font, much wider than 
 
 
 def label_width(text):
-    """Width in px of an edge label as core.js draws it. A glyph that was not measured
+    """Width in px of an edge label as template/js/flow.js draws it. A glyph that was not measured
     counts as a circled number: wide rather than optimistic."""
     return sum(LABEL_ADVANCE.get(ch, CIRCLED_WIDTH) for ch in text)
 

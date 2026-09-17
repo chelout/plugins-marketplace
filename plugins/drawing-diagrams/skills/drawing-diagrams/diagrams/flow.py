@@ -31,7 +31,7 @@ LABEL_MAX_CHARS, LABEL_MAX_WORDS = 24, 3
 FOOT_RE = re.compile(r"\s*\[(\d+)\]\s*$")
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 
-# Where drawFlow in template/core.js puts a label, in px; keep the two in step.
+# Where drawFlow in template/js/flow.js puts a label, in px; keep the two in step.
 LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
 LABEL_SIDE = 3    # from the card edge at a straight sideways exit
 LABEL_CLEAR = 2   # the text box keeps this far from a card edge or a line
@@ -40,7 +40,7 @@ LABEL_WORD = 8    # two labels in one row keep this much more apart, or they rea
 
 
 class Geometry:
-    """Pixel x of cards and lattice lines, relative to the grid box, as core.js derives
+    """Pixel x of cards and lattice lines, relative to the grid box, as template/js/flow.js derives
     them (tracks, bx, clampX). Card heights are unknown here, so there is no y."""
 
     def __init__(self, mode, card_w, cols):
@@ -102,7 +102,7 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True):
 
 
 def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()):
-    """Places core.js can give the label of routed edge i, each with its room in px:
+    """Places template/js/flow.js can give the label of routed edge i, each with its room in px:
     `room` counts cards, `line_room` other lines and the `labels` already placed too.
     Only a label beside a vertical second segment has a choice (its row `ly` and side);
     every other shape has one place. A spot also says where its text lies: the lattice rows
@@ -127,7 +127,7 @@ def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()
                  "band": (p[1][1], p[1][1]), "start": x2 - LABEL_BEND if rt else x2 + LABEL_BEND, "grow": "L" if rt else "R",
                  "key": ("h", p[1][1], p[2][0], p[2][0] > p[1][0])}]
     if len(p) >= 3:
-        # beside the vertical second segment. Without `ly` core.js centres the label on the
+        # beside the vertical second segment. Without `ly` template/js/flow.js centres the label on the
         # segment, at a pixel row that depends on card heights: that place is kept when the side
         # is clear in every row the middle can fall in. Otherwise the label is pinned to one row
         # the segment passes, gutters included: the middle first, the rows of its ends last.
@@ -423,7 +423,7 @@ def plan(model, mode_name, overrides=None, draft=False):
         warnings = ["черновик: " + x for x in layout_errors] + warnings
 
     # where a label goes and how much room it has, from the shape of the route and the
-    # pixels core.js will use: straight line: at the exit; horizontal second segment: above
+    # pixels template/js/flow.js will use: straight line: at the exit; horizontal second segment: above
     # it, near its end; vertical second segment: beside its middle when that is clear whatever
     # the card heights, else pinned to the first row it passes where the text is clear
     offsets = router.assign_offsets(paths, nodes=frozenset(lat.blocked))
@@ -554,7 +554,7 @@ def legend_html(model, layout, labels):
     return '<div class="dg-legend">' + "".join(items) + "</div>"
 
 
-def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
+def render(model, mode_name, layout, warnings, assets_mode="inline", draft=False):
     kind, mode = layout["kind"], layout["mode"]
     labels = labels_for(model)
     groups = model.get("groups") or {}
@@ -563,9 +563,9 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     summary = model.get("summary") or model.get("title") or "Схема"
     labels_js = esc(json.dumps({}, ensure_ascii=False))
 
-    parts = []
-    if with_assets:
-        parts.append(assets.style_block({g["ramp"] for g in groups.values()}))
+    before, after = assets.asset_blocks(assets_mode, mode_name, kind, {g["ramp"] for g in groups.values()},
+                                        layout["edges"], layout["routes"], layout["footnotes"])
+    parts = [before] if before else []
     parts.append(assets.section_open(model, kind, style_vars, labels_js, summary))
     if mode_name == "page" and model.get("title"):
         parts.append(f'<h3 style="margin:0 0 4px {mode["pad_l"]}px;font-size:16px;font-weight:500">{esc(model["title"])}</h3>')
@@ -591,8 +591,8 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     parts.append(legend_html(model, layout, labels))
     parts.append(assets.edges_json(layout["edges"]))
     parts.append("</section>")
-    if with_assets:
-        parts.append(assets.script_block())
+    if after:
+        parts.append(after)
     return "\n".join(parts)
 
 

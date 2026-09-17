@@ -94,16 +94,15 @@ def plan(model, mode_name, overrides=None, draft=False):
             "card_w": card_w, "edges": [], "draft": bool(layout_errors)}, warnings
 
 
-def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
+def render(model, mode_name, layout, warnings, assets_mode="inline", draft=False):
     mode = layout["mode"]
     labels = labels_for(model)
     total = mode["total"]
     style_vars = (f"--dg-rail:{mode['rail']}px;--dg-tlw:{total}px;--dg-padl:{mode['pad_l']}px;--dg-padr:{mode['pad_r']}px;"
                   f"--dg-cols:1;--dg-w:{layout['card_w']:.0f}px;--dg-gap:0px;--dg-rowgap:0px")
     summary = model.get("summary") or model.get("title") or "Таймлайн"
-    parts = []
-    if with_assets:
-        parts.append(assets.style_block())
+    before, after = assets.asset_blocks(assets_mode, mode_name, "timeline")
+    parts = [before] if before else []
     parts.append(assets.section_open(model, "timeline", style_vars, esc("{}"), summary))
     if mode_name == "page" and model.get("title"):
         parts.append(f'<h3 style="margin:0 0 4px {mode["pad_l"]}px;font-size:16px;font-weight:500">{esc(model["title"])}</h3>')
@@ -122,8 +121,8 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     parts.append(f'<div class="dg-legend"><span><span class="dg-chip chg" style="margin-right:4px"><b>{esc(labels["chip"])}</b>…</span>'
                  f'{esc(labels["changed"])}</span></div>')
     parts.append("</section>")
-    if with_assets:
-        parts.append(assets.script_block())
+    if after:
+        parts.append(after)
     return "\n".join(parts)
 
 

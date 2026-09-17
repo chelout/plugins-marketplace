@@ -1,4 +1,8 @@
-"""CSS, JS and page wrappers shared by every kind."""
+"""CSS, JS and page wrappers shared by every kind.
+
+Styles and scripts are fragments under template/css and template/js. A page carries all of them;
+a chat widget either links to the published build in template/dist (served by jsDelivr at the
+commit named in template/dist/REF) or carries only the fragments its diagram uses."""
 import hashlib
 import json
 from pathlib import Path
@@ -6,9 +10,17 @@ from pathlib import Path
 from .common import RAMPS, esc
 
 TPL = Path(__file__).resolve().parent.parent / "template"
+DIST = TPL / "dist"
+CSS_PARTS = ("base", "schema", "flow", "lanes", "routes", "foot", "timeline")
+JS_PARTS = ("head", "flow", "schema", "draw", "routes", "end")
+FLOW_KINDS = ("flow", "swimlane", "state", "blocks")
+CDN = ("https://cdn.jsdelivr.net/gh/chelout/plugins-marketplace@{ref}"
+       "/plugins/drawing-diagrams/skills/drawing-diagrams/template/dist/{name}")
 
 
 def ramp_css(ramps):
+    if not ramps:
+        return ""
     light, dark = [], []
     for r in sorted(ramps):
         s = RAMPS[r]
@@ -24,15 +36,75 @@ def ramp_css(ramps):
             + "@media (prefers-color-scheme:dark){" + scoped(':root:not([data-mode]):not([data-theme="light"])') + "}")
 
 
-def style_block(ramps=None):
-    """All nine ramps are emitted regardless of `ramps`: a second diagram on the
-    same page (rendered with --no-assets) may use colours the first did not."""
-    css = (TPL / "tokens.css").read_text() + (TPL / "core.css").read_text() + ramp_css(RAMPS)
-    return "<style>" + css + "</style>"
+def css_text(parts=CSS_PARTS, ramps=None):
+    """Tokens, the named fragments in CSS_PARTS order, then the ramps: all nine when `ramps` is None,
+    because a second diagram on a page (rendered with --assets none) may use colours the first did not."""
+    body = "".join((TPL / "css" / f"{p}.css").read_text() for p in CSS_PARTS if p in parts)
+    return (TPL / "tokens.css").read_text() + body + ramp_css(RAMPS if ramps is None else ramps)
 
 
-def script_block():
-    return "<script>" + (TPL / "core.js").read_text() + "</script>"
+def js_text(parts=JS_PARTS):
+    return "".join((TPL / "js" / f"{p}.js").read_text() for p in JS_PARTS if p in parts)
+
+
+def widget_parts(kind, edges, routes, footnotes):
+    """(CSS parts, JS parts) of one diagram in a chat widget. A timeline draws nothing by script and a
+    flow-like diagram without edges has nothing to draw; a schema needs its toggles either way."""
+    css = ["base"]
+    if kind == "schema":
+        css.append("schema")
+    elif kind == "timeline":
+        css.append("timeline")
+    else:
+        css.append("flow")
+        if kind == "swimlane":
+            css.append("lanes")
+        if routes:
+            css.append("routes")
+        if footnotes:
+            css.append("foot")
+    if kind == "timeline" or (kind in FLOW_KINDS and not edges):
+        return css, []
+    js = ["head", "schema" if kind == "schema" else "flow", "draw"]
+    if routes:
+        js.append("routes")
+    return css, js + ["end"]
+
+
+def style_block(parts=CSS_PARTS, ramps=None):
+    return "<style>" + css_text(parts, ramps) + "</style>"
+
+
+def script_block(parts=JS_PARTS):
+    return "<script>" + js_text(parts) + "</script>" if parts else ""
+
+
+def read_ref():
+    """SHA of the commit whose tree holds template/dist, or None before the first release."""
+    try:
+        ref = (DIST / "REF").read_text().strip()
+    except OSError:
+        return None
+    return ref or None
+
+
+def cdn_url(ref, name):
+    return CDN.format(ref=ref, name=name)
+
+
+def asset_blocks(assets_mode, mode_name, kind, ramps=None, edges=(), routes=None, footnotes=()):
+    """(before, after): what surrounds a diagram's <section>. `cdn` needs read_ref() to be set;
+    render.py falls back to `inline` otherwise."""
+    if assets_mode == "none":
+        return "", ""
+    if assets_mode == "cdn":
+        ref = read_ref()
+        return (f'<link rel="stylesheet" href="{esc(cdn_url(ref, "dg.css"))}">',
+                f'<script src="{esc(cdn_url(ref, "dg.js"))}"></script>')
+    if mode_name == "page":
+        return style_block(), script_block()
+    css, js = widget_parts(kind, edges, routes, footnotes)
+    return style_block(css, ramps or ()), script_block(js)
 
 
 def harness(fragment):
