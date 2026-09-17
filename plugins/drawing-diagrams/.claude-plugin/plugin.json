@@ -1,0 +1,9 @@
+{
+  "name": "drawing-diagrams",
+  "description": "Readable diagrams from a small JSON model: ERD, flowchart, swimlane, state machine, timeline, blocks — fixed fonts, routed connectors, no lines through boxes",
+  "author": {
+    "name": "Viacheslav Ostrovskii"
+  },
+  "repository": "https://github.com/chelout/plugins-marketplace",
+  "keywords": ["diagrams", "erd", "flowchart", "swimlane", "state-machine", "timeline"]
+}

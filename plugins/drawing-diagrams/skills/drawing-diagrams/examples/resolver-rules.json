@@ -1,0 +1,144 @@
+{
+  "kind": "flow",
+  "id": "resolver-rules",
+  "title": "Правила резолвера до парковки",
+  "summary": "Алгоритм резолвера KYC: покрытие одной строкой, живая попытка, присоединение или ожидание, блокировки, выбор профиля и fire.",
+  "groups": {
+    "graph": {
+      "label": "граф",
+      "ramp": "purple"
+    },
+    "res": {
+      "label": "резолвер",
+      "ramp": "teal"
+    }
+  },
+  "nodes": [
+    {
+      "id": "start",
+      "kind": "terminal",
+      "group": "graph",
+      "title": "Вход в узел KYC"
+    },
+    {
+      "id": "covered?",
+      "group": "res",
+      "title": "Покрыто целиком?",
+      "text": "approved-строка учётки содержит всё требование"
+    },
+    {
+      "id": "covered",
+      "kind": "terminal",
+      "group": "res",
+      "title": "covered: approved"
+    },
+    {
+      "id": "live?",
+      "group": "res",
+      "title": "Есть живая попытка?",
+      "text": "открыта, дедлайн не истёк"
+    },
+    {
+      "id": "contains?",
+      "group": "res",
+      "title": "Профиль содержит всё?",
+      "text": "набор профиля попытки"
+    },
+    {
+      "id": "join",
+      "kind": "terminal",
+      "group": "res",
+      "title": "join: парковка"
+    },
+    {
+      "id": "wait",
+      "kind": "terminal",
+      "group": "res",
+      "title": "wait: парковка"
+    },
+    {
+      "id": "blocked?",
+      "group": "res",
+      "title": "Блокировка?",
+      "text": "блок субъекта или declined_final"
+    },
+    {
+      "id": "declined",
+      "kind": "terminal",
+      "group": "res",
+      "title": "без fire: declined_final"
+    },
+    {
+      "id": "pick",
+      "group": "res",
+      "title": "Четыре фильтра",
+      "text": "страна, содержит всё, минимум новых, размер"
+    },
+    {
+      "id": "one?",
+      "group": "res",
+      "title": "Ровно один кандидат?"
+    },
+    {
+      "id": "fire",
+      "kind": "terminal",
+      "group": "res",
+      "title": "fire: попытка, handoff"
+    },
+    {
+      "id": "config",
+      "kind": "terminal",
+      "group": "res",
+      "title": "ошибка конфигурации"
+    }
+  ],
+  "grid": [
+    "start     .          .",
+    "covered?  covered    .",
+    "live?     contains?  join",
+    "blocked?  declined   wait",
+    "pick      .          .",
+    "one?      fire       .",
+    "config    .          ."
+  ],
+  "edges": [
+    "start -> covered?",
+    "covered? -> covered : да",
+    "covered? -> live? : нет",
+    "live? -> contains? : да",
+    "contains? -> join : да",
+    "contains? -> wait : нет",
+    "live? -> blocked? : нет",
+    "blocked? -> declined : да",
+    "blocked? -> pick : нет",
+    "pick -> one?",
+    "one? -> fire : да",
+    "one? -> config : нет [1]"
+  ],
+  "footnotes": [
+    "Ноль или несколько кандидатов. Требование шире любого профиля даёт ту же ошибку: гейт делится на узлы. Publish блокирует, рантайм fail closed."
+  ],
+  "routes": {
+    "Марк: покрыто": [
+      "start",
+      "covered?",
+      "covered"
+    ],
+    "Кира: fire": [
+      "start",
+      "covered?",
+      "live?",
+      "blocked?",
+      "pick",
+      "one?",
+      "fire"
+    ],
+    "wait-чек": [
+      "start",
+      "covered?",
+      "live?",
+      "contains?",
+      "wait"
+    ]
+  }
+}

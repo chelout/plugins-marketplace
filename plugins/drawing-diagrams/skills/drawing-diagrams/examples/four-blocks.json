@@ -1,0 +1,92 @@
+{
+  "kind": "blocks",
+  "id": "four-blocks",
+  "title": "Четыре блока на одном чеке",
+  "summary": "Вердикты, матрица, попытки, блок субъекта и резолвер: тип истины каждого блока, кто пишет, кто читает, и шаги 1–6 одного чека.",
+  "groups": {
+    "cfg": {
+      "label": "истина конфигурации",
+      "ramp": "purple"
+    },
+    "ven": {
+      "label": "истина вендора",
+      "ramp": "teal"
+    },
+    "run": {
+      "label": "истина рантайма",
+      "ramp": "coral"
+    },
+    "calc": {
+      "label": "истины нет, вычисляет",
+      "ramp": "gray"
+    }
+  },
+  "nodes": [
+    {
+      "id": "matrix",
+      "group": "cfg",
+      "title": "Матрица",
+      "items": [
+        "пишет автор учётки",
+        "читают резолвер, ревокация, publish",
+        "даёт покрытие и минимальный профиль"
+      ]
+    },
+    {
+      "id": "subject",
+      "group": "ven",
+      "title": "Блок субъекта",
+      "items": [
+        "пишет адаптер по субъектному сигналу",
+        "снимает только vendor_reset",
+        "читает резолвер перед fire"
+      ]
+    },
+    {
+      "id": "resolver",
+      "group": "calc",
+      "title": "Резолвер",
+      "items": [
+        "ничего не пишет",
+        "читают узлы sumsub_kyc, «флоу пройден»",
+        "выдаёт покрытие, дельту, исход"
+      ]
+    },
+    {
+      "id": "verdicts",
+      "group": "ven",
+      "title": "Вердикты",
+      "items": [
+        "пишет только адаптер",
+        "читают резолвер, ревокация, импорт",
+        "проекция в пруфы"
+      ]
+    },
+    {
+      "id": "attempts",
+      "group": "run",
+      "title": "Попытки",
+      "items": [
+        "пишут fire, join, адаптер, свипер",
+        "читают резолвер, вебхук, resume",
+        "кого будить одним вердиктом"
+      ]
+    }
+  ],
+  "grid": [
+    "matrix    .         subject",
+    ".         resolver  .",
+    "verdicts  .         attempts"
+  ],
+  "edges": [
+    "resolver -> verdicts : 1 читает approved",
+    "resolver -> matrix : 2 сверяет снимки",
+    "resolver -> attempts : 3–4 попытки, fire",
+    "resolver -> subject : 4a блокировка?",
+    "attempts -> verdicts : 5 approved [1] | dashed",
+    "verdicts -> resolver : 6 resume: covered"
+  ],
+  "footnotes": [
+    "Адаптер по событию вендора ставит approved со снимком proofs и valid_until, закрывает попытку и будит присоединённые чеки."
+  ]
+}
