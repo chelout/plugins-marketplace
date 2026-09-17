@@ -3,7 +3,7 @@ states as chips in a fixed order. No connectors."""
 import json
 
 from . import assets
-from .common import BASE_MODES, ID_RE, ModelError, esc, fit_chars, labels_for, text_width, two_line_chars, wrap_lines
+from .common import BASE_MODES, ID_RE, ModelError, esc, fit_prefix, labels_for, text_width, wrap_lines
 
 MODES = {
     "widget": {"rail": 64, "max_moments": 12},
@@ -70,13 +70,16 @@ def plan(model, mode_name, overrides=None, draft=False):
             continue
         tag = m.get("tag") or ""
         tag_w = text_width(tag) * 0.9 + 8 if tag else 0
-        need = text_width(m["title"]) * 1.04 + 20 + tag_w
-        if need > card_w:
+        def title_fits(s, tag_w=tag_w, card_w=card_w):
+            return text_width(s) * 1.04 + 20 + tag_w <= card_w
+        if not title_fits(m["title"]):
             fit_error(f"момент {mid}: заголовок {len(m['title'])} симв., влезает "
-                      f"{fit_chars(len(m['title']), need - 20 - tag_w, card_w - 20 - tag_w)}")
+                      f"{fit_prefix(m['title'], title_fits)}")
         text = m.get("text") or ""
-        if text and wrap_lines(text, card_w - 20) > 2:
-            fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{two_line_chars(text, card_w - 20)}")
+        def text_fits(s, card_w=card_w):
+            return wrap_lines(s, card_w - 20) <= 2
+        if text and not text_fits(text):
+            fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}")
         states = m.get("states") or {}
         for k in states:
             if k not in ent_ids:

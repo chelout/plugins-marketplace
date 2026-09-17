@@ -4,8 +4,8 @@ import math
 import re
 
 from . import assets, router
-from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_chars, label_width, labels_for, text_width,
-                     two_line_chars, wrap_lines)
+from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_prefix, label_width, labels_for, text_width,
+                     wrap_lines)
 from .grid import check_placement, empty_lines, parse_grid
 
 MODES = {
@@ -287,10 +287,11 @@ def plan(model, mode_name, overrides=None, draft=False):
         extra = 21 if k == "decision" else 0
         if lanes_mode:
             extra += 30
-        need = text_width(n["title"]) * 1.04 + 20 + extra
-        if need > card_w:
+        def title_fits(s, extra=extra, card_w=card_w):
+            return text_width(s) * 1.04 + 20 + extra <= card_w
+        if not title_fits(n["title"]):
             fit_error(f"узел {nid}: заголовок {len(n['title'])} симв., влезает "
-                      f"{fit_chars(len(n['title']), need - 20 - extra, card_w - 20 - extra)}; "
+                      f"{fit_prefix(n['title'], title_fits)}; "
                       f"сократите заголовок или сузьте grid")
         text = n.get("text") or ""
         m_note = FOOT_RE.search(text) if text else None
@@ -302,18 +303,22 @@ def plan(model, mode_name, overrides=None, draft=False):
                 n["_note"] = ref
                 text = text[: m_note.start()].rstrip() + " " + CIRCLED[ref - 1]
                 n["_text"] = text
+        def text_fits(s, card_w=card_w):
+            return wrap_lines(s, card_w - 20) <= 2
         if text:
-            if wrap_lines(text, card_w - 20) > 2:
-                fit_error(f"узел {nid}: текст {len(text)} симв., в две строки влезает ~{two_line_chars(text, card_w - 20)}; "
+            if not text_fits(text):
+                fit_error(f"узел {nid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}; "
                           f"сократите или вынесите в сноску")
         items = n.get("items") or []
         if items and k != "block":
             warnings.append(f"узел {nid}: items показываются только у block")
         if len(items) > 5:
             layout_errors.append(f"узел {nid}: пунктов {len(items)}, допустимо пять")
+        def item_fits(s, card_w=card_w):
+            return wrap_lines(s, card_w - 30) <= 2
         for pos, it in enumerate(items, 1):
-            if wrap_lines(it, card_w - 30) > 2:
-                fit_error(f"узел {nid}: пункт {pos} — {len(it)} симв., влезает ~{two_line_chars(it, card_w - 30)}")
+            if not item_fits(it):
+                fit_error(f"узел {nid}: пункт {pos} — {len(it)} симв., влезает ~{fit_prefix(it, item_fits)}")
         if k == "terminal" and text:
             warnings.append(f"узел {nid}: у terminal текст не показывается, только заголовок")
 
@@ -457,8 +462,10 @@ def plan(model, mode_name, overrides=None, draft=False):
         if spot is None:
             spot = max(spots, key=lambda s: s["room"])
             room = max(spot["room"], 0)
+            def label_fits(s, room=room):
+                return label_width(s) <= room
             fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot['where']}, "
-                      f"влезает ~{fit_chars(len(text), need, room)}; сократите, вынесите в сноску [n] "
+                      f"влезает ~{fit_prefix(text, label_fits)}; сократите, вынесите в сноску [n] "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
         e["lside"] = spot.get("side", "R")
         if "ly" in spot:

@@ -193,7 +193,7 @@ A flow whose columns are participants and whose rows are steps in time.
   comes from its lane; a `group` that disagrees with the lane is an error.
 - Rows are numbered automatically and the number appears in each node. Two
   nodes in one row read as simultaneous and raise a warning.
-- Up to 5 lanes in widget mode (cards about 114 px, titles up to about 13
+- Up to 5 lanes in widget mode (cards about 114 px, titles up to about 9
   characters), 7 in page mode. Merge minor participants into one lane rather
   than exceeding the limit.
 - Everything else (edges, labels, footnotes, routes, checks) is as in `flow`.

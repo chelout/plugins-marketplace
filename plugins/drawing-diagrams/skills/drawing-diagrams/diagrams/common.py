@@ -165,14 +165,10 @@ def wrap_lines(text, width, scale=0.88):
     return lines
 
 
-def fit_chars(n, need, room):
-    """Characters of an n-character text that fit `room` px when all n need `need` px."""
-    if need <= 0:
-        return n
-    return max(int(n * room / need), 1)
-
-
-def two_line_chars(text, width, scale=0.88):
-    """About how many characters of `text` fit two word-wrapped lines of `width` px. Wrapping leaves
-    the ends of lines short, so a tenth of the room is kept in reserve."""
-    return fit_chars(len(text), text_width(text, scale) * 1.05, 2 * width * 0.9)
+def fit_prefix(text, fits):
+    """Budget of a text-fit message: the length of the longest prefix of `text` that `fits` accepts,
+    so cutting the text to it passes the same check. 0 when not even one character fits."""
+    k = len(text) - 1
+    while k > 0 and not fits(text[:k]):
+        k -= 1
+    return max(k, 0)

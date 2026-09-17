@@ -2,7 +2,7 @@
 import json
 
 from . import assets, router
-from .common import BASE_MODES, ICONS, CHEVRON, ID_RE, RAMPS, ModelError, esc, icon_svg, labels_for, plural
+from .common import BASE_MODES, ICONS, CHEVRON, ID_RE, RAMPS, ModelError, esc, fit_prefix, icon_svg, labels_for, plural
 from .grid import ascii_map, check_placement, empty_lines, parse_grid
 
 KEY_FLAGS = ("PK", "FK", "U")
@@ -94,12 +94,13 @@ def plan(model, mode_name, overrides=None, draft=False):
             if col.get("key") and col["key"] not in ICONS:
                 errors.append(f"таблица {tid}.{name}: key {col['key']!r} не из {', '.join(ICONS)}")
             if is_key(col):
-                need = 10 + 12 + 4 + len(name) * ch + 4 + len(" ".join(col.get("flags", []))) * 6.6 + 10
-                if mode["type_on_keys"]:
-                    need += len(col.get("type", "")) * ch + 4
-                if need > card_w:
-                    budget = max(int((card_w - (need - len(name) * ch)) / ch), 1)
-                    warnings.append(f"таблица {tid}.{name}: имя {len(name)} симв., влезает ~{budget}; "
+                def key_row_fits(s, col=col, ch=ch, card_w=card_w, mode=mode):
+                    need = 10 + 12 + 4 + len(s) * ch + 4 + len(" ".join(col.get("flags", []))) * 6.6 + 10
+                    if mode["type_on_keys"]:
+                        need += len(col.get("type", "")) * ch + 4
+                    return need <= card_w
+                if not key_row_fits(name):
+                    warnings.append(f"таблица {tid}.{name}: имя {len(name)} симв., влезает ~{fit_prefix(name, key_row_fits)}; "
                                     f"сузьте grid или сократите имя")
         if not any(is_key(c) for c in t.get("columns") or []):
             warnings.append(f"таблица {tid}: нет ни одной ключевой колонки, линии крепить не к чему")
