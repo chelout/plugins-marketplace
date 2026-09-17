@@ -169,6 +169,41 @@ class FitMessages(unittest.TestCase):
         self.assertEqual(len(words), 1, exc.errors)
         self.assertIn(f"слово {len(self.URL)} симв.", words[0])
 
+    # -- the same class where the line count actually disagrees: one or two too-wide words wrap to
+    # one and two lines, which the two-line check accepts anyway, so only three of them reach the
+    # case where that check fails on its own and skipping it is what keeps its message away.
+
+    def three_wide_words(self, base):
+        """Three words, each wider than the box on its own, so each starts a line of its own."""
+        return [base, base + "/second_segment", base + "/third_segment"]
+
+    def assertOnlyFirstWord(self, exc, prefix, words):
+        found = [e for e in exc.errors if e.startswith(prefix)]
+        self.assertEqual(len(found), 1, exc.errors)
+        self.assertIn(f"слово {len(words[0])} симв.", found[0])
+
+    def test_node_text_three_wide_words(self):
+        words = self.three_wide_words(self.URL)
+        nodes = [{"id": n, "title": n.upper(), **({"text": " ".join(words)} if n == "a" else {})}
+                 for n in "abcd"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c d"]))
+        self.assertOnlyFirstWord(exc, "узел a: слово", words)
+        self.assertNoMessage(exc, r"узел a: текст")
+
+    def test_block_item_three_wide_words(self):
+        words = self.three_wide_words(self.URL)
+        nodes = [{"id": n, "title": n.upper(), "items": [" ".join(words)] if n == "a" else []}
+                 for n in "abc"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c"], kind="blocks"))
+        self.assertOnlyFirstWord(exc, "узел a: пункт 1 — слово", words)
+        self.assertNoMessage(exc, r"пункт 1 — \d+ симв\.")
+
+    def test_timeline_text_three_wide_words(self):
+        words = self.three_wide_words(self.URL + "?attempt=4b&reason=document_unreadable")
+        exc = self.failure(timeline, self.timeline_model(" ".join(words)))
+        self.assertOnlyFirstWord(exc, "момент m1: слово", words)
+        self.assertNoMessage(exc, r"момент m1: текст")
+
     # -- round trip: cutting a text to its reported budget must pass the same check again --
 
     def assertGone(self, errors, prefix):
