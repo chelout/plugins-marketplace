@@ -15,6 +15,7 @@ warnings and stamps the output as a draft.
 """
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from diagrams.grid import ascii_map, parse_grid  # noqa: E402
 
 KINDS = {"schema": schema, "flow": flow, "swimlane": flow, "state": flow, "blocks": flow, "timeline": timeline}
 SUFFIX = {"html": ".html", "mermaid": ".mmd", "ascii": ".txt"}
+ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 def parse_args(argv):
@@ -90,6 +92,25 @@ def failure_map(mod, model, mode_name, overrides, exc):
             return ascii_map(cells, cols, rows)
         return None
     return mod.ascii(model, layout)
+
+
+def batch_target(path, model, target_dir, resolved_dir, fmt):
+    """(target, resolved target) to write one model's output to in --out-dir mode; raises
+    ValueError with the message to print when the id is not a safe file name or the target
+    would land outside target_dir."""
+    model_id = model.get("id")
+    if model_id:
+        if not ID_RE.match(model_id):
+            raise ValueError(f"ошибка: --out-dir: {path}: id «{model_id}» не годится для имени файла "
+                              f"(разрешены только буквы, цифры, _ и -, без точек и разделителей)")
+        stem = model_id
+    else:
+        stem = Path(path).stem
+    target = target_dir / f"{stem}{SUFFIX[fmt]}"
+    resolved = target.resolve()
+    if resolved.parent != resolved_dir:
+        raise ValueError(f"ошибка: --out-dir: {path}: цель {target} выходит за пределы {target_dir}")
+    return target, resolved
 
 
 def produce(model, mod, args, overrides, assets_mode):
@@ -170,22 +191,31 @@ def main(argv=None):
             sys.stdout.write(out)
         return 0
     if args.out_dir:
-        targets, dups = {}, {}
-        for path, model, _, _, _ in done:
-            name = f"{model.get('id') or Path(path).stem}{SUFFIX[args.format]}"
-            if name in targets:
-                dups.setdefault(name, [targets[name]]).append(path)
+        target_dir = Path(args.out_dir)
+        resolved_dir = target_dir.resolve()
+        bad, targets, dups, computed = [], {}, {}, []
+        for path, model, out, _, _ in done:
+            try:
+                target, resolved = batch_target(path, model, target_dir, resolved_dir, args.format)
+            except ValueError as exc:
+                bad.append(str(exc))
+                continue
+            if resolved in targets:
+                dups.setdefault(resolved, [targets[resolved]]).append(path)
             else:
-                targets[name] = path
+                targets[resolved] = path
+                computed.append((target, out))
+        if bad:
+            for exc in bad:
+                print(exc, file=sys.stderr)
+            return 1
         if dups:
-            for name, paths in dups.items():
-                print(f"ошибка: --out-dir: несколько моделей пишут в {name}: {', '.join(paths)}",
+            for resolved, paths in dups.items():
+                print(f"ошибка: --out-dir: несколько моделей пишут в {resolved.name}: {', '.join(paths)}",
                       file=sys.stderr)
             return 1
-        target_dir = Path(args.out_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
-        for path, model, out, _, _ in done:
-            target = target_dir / f"{model.get('id') or Path(path).stem}{SUFFIX[args.format]}"
+        for target, out in computed:
             target.write_text(out)
             print(f"{target} ({len(out)} байт)")
         return 0

@@ -1,7 +1,7 @@
 # drawing-diagrams: token cost of using the skill — design
 
-Date: 2026-09-17. Status: agreed section by section with the owner in the design session; this file
-awaits the owner's review. Branch: `feat/drawing-diagrams-token-cost`.
+Date: 2026-09-17. Status: accepted by the owner on 2026-09-17 and implemented on this branch; the
+experiment of §6 ended with V1 (see docs/design.md §13). Branch: `feat/drawing-diagrams-token-cost`.
 
 ## Stream slots
 

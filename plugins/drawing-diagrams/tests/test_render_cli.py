@@ -171,6 +171,62 @@ class RenderCli(unittest.TestCase):
         self.assertIn(str(b), err)
         self.assertIn("good.html", err)
 
+    # finding 1 (branch-gate round 1, P1): an `id` used verbatim as a file name lets a model
+    # escape --out-dir (absolute id, id with "..", id with "/"), and lexically different names
+    # that resolve to the same file bypass the literal-name duplicate check. Every case must fail
+    # the batch before anything is written: no file at the escape target, out_dir not created.
+
+    def write_model(self, name, data):
+        """Write `data` to `<tmp>/<name>.json` directly, bypassing self.model()'s `<id>.json`
+        naming — needed when `id` itself is not a safe file name (contains '/', '..', or is
+        absolute)."""
+        path = self.tmp / f"{name}.json"
+        path.write_text(json.dumps(data, ensure_ascii=False))
+        return str(path)
+
+    def test_out_dir_rejects_absolute_id(self):
+        out_dir = self.tmp / "out"
+        escaped = self.tmp / "escaped"
+        model_path = self.write_model("evil1", dict(GOOD, id=str(escaped)))
+        code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""))
+        self.assertFalse(out_dir.exists())
+        self.assertFalse(escaped.with_suffix(".html").exists())
+        self.assertIn(model_path, err)
+
+    def test_out_dir_rejects_id_with_dotdot(self):
+        out_dir = self.tmp / "out"
+        model_path = self.write_model("evil2", dict(GOOD, id="../victim"))
+        code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""))
+        self.assertFalse(out_dir.exists())
+        self.assertFalse((self.tmp / "victim.html").exists())
+        self.assertIn(model_path, err)
+
+    def test_out_dir_rejects_id_with_slash(self):
+        out_dir = self.tmp / "out"
+        model_path = self.write_model("evil3", dict(GOOD, id="nested/evil"))
+        code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""))
+        self.assertFalse(out_dir.exists())
+        self.assertIn(model_path, err)
+
+    def test_out_dir_rejects_targets_colliding_after_resolution(self):
+        # One model names its target via an explicit id, the other via the file-stem fallback;
+        # both resolve to "dup.html". A literal-name comparison of "dup" (id) vs the fallback
+        # stem still matches here, but must go through the same resolved-path dedup as every
+        # other --out-dir collision — nothing gets written for either.
+        out_dir = self.tmp / "out"
+        explicit = self.write_model("explicit", dict(GOOD, id="dup"))
+        no_id = {k: v for k, v in GOOD.items() if k != "id"}
+        implicit = self.write_model("dup", no_id)
+        code, out, err = self.run_cli(explicit, implicit, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""))
+        self.assertFalse(out_dir.exists())
+        self.assertIn(explicit, err)
+        self.assertIn(implicit, err)
+        self.assertIn("dup.html", err)
+
 
 if __name__ == "__main__":
     unittest.main()
