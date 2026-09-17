@@ -158,9 +158,11 @@ def main(argv=None):
 
     # G4: every successful render — --check included — prints one summary line per model to
     # stderr, in the --check shape, before any stdout/file output for that model is produced.
+    # With several models the line also carries the model path, so it doesn't rely on order.
     for path, model, out, warnings, layout in done:
         n = len(model.get("tables") or model.get("nodes") or model.get("moments") or [])
-        print(f"ок: вид {model['kind']}, {n} узлов, {len(layout['edges'])} связей, "
+        prefix = f"{path}: " if batch else ""
+        print(f"ок: {prefix}вид {model['kind']}, {n} узлов, {len(layout['edges'])} связей, "
               f"{len(warnings)} предупреждений", file=sys.stderr)
 
     if args.check:
@@ -168,6 +170,18 @@ def main(argv=None):
             sys.stdout.write(out)
         return 0
     if args.out_dir:
+        targets, dups = {}, {}
+        for path, model, _, _, _ in done:
+            name = f"{model.get('id') or Path(path).stem}{SUFFIX[args.format]}"
+            if name in targets:
+                dups.setdefault(name, [targets[name]]).append(path)
+            else:
+                targets[name] = path
+        if dups:
+            for name, paths in dups.items():
+                print(f"ошибка: --out-dir: несколько моделей пишут в {name}: {', '.join(paths)}",
+                      file=sys.stderr)
+            return 1
         target_dir = Path(args.out_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         for path, model, out, _, _ in done:

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 import support  # noqa: F401
 import transcripts
@@ -76,6 +77,29 @@ class RunMetrics(unittest.TestCase):
         self.assertIn("run.jsonl", line)
         self.assertIn("out=527", line)
         self.assertIn("renders=1/1", line)
+
+
+class ShortProject(unittest.TestCase):
+    def test_derives_encoding_from_home_instead_of_a_hardcoded_user(self):
+        with mock.patch.object(transcripts, "HOME", "/home/alice"), \
+             mock.patch.object(transcripts, "PROJECTS", "/home/alice/.claude/projects"):
+            sub = "/home/alice/.claude/projects/-home-alice-work-myproj/session.jsonl"
+            self.assertEqual(transcripts.short_project(sub), "work-myproj")
+            bare = "/home/alice/.claude/projects/-home-alice/session.jsonl"
+            self.assertEqual(transcripts.short_project(bare), "~")
+
+    def test_scratch_workspaces_still_collapse(self):
+        with mock.patch.object(transcripts, "HOME", "/home/alice"), \
+             mock.patch.object(transcripts, "PROJECTS", "/home/alice/.claude/projects"):
+            path = "/home/alice/.claude/projects/-home-alice-scratch-workspaces-xyz/session.jsonl"
+            self.assertEqual(transcripts.short_project(path), "scratch")
+
+
+class RunFiles(unittest.TestCase):
+    def test_rejects_a_session_path_without_the_jsonl_suffix(self):
+        with self.assertRaises(ValueError) as ctx:
+            transcripts.run_files("/tmp/run.json")
+        self.assertIn("/tmp/run.json", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -68,7 +68,8 @@ def short_project(path):
     rel = os.path.relpath(path, PROJECTS).split(os.sep)[0]
     if 'scratch-workspaces' in rel:
         return 'scratch'
-    return rel.replace('-Users-chelout-', '').replace('-Users-chelout', '~')
+    enc = '-' + HOME.strip(os.sep).replace(os.sep, '-')
+    return rel.replace(enc + '-', '').replace(enc, '~')
 
 
 def dominant(counter):
@@ -426,6 +427,8 @@ def render_commands(path):
 
 
 def run_files(session_path):
+    if not session_path.endswith('.jsonl'):
+        raise ValueError(f'session path does not end with .jsonl: {session_path}')
     base = session_path[:-len('.jsonl')]
     return [session_path] + sorted(glob.glob(os.path.join(base, 'subagents', '**', '*.jsonl'), recursive=True))
 

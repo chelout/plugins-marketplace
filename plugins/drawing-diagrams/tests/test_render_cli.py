@@ -147,6 +147,30 @@ class RenderCli(unittest.TestCase):
         self.assertIn("grid шириной 5", err)
         self.assertIn("a  b  c  d  e", err)
 
+    # finding 3: with several models, a summary line is tied to its model only by print order
+    # today; carry the model path in the summary itself.
+    def test_batch_summary_lines_carry_the_model_path(self):
+        out_dir = self.tmp / "out"
+        path1, path2 = self.model(GOOD), self.model(dict(GOOD, id="good2"))
+        code, out, err = self.run_cli(path1, path2, "--out-dir", str(out_dir))
+        self.assertEqual(code, 0)
+        self.assertIn(f"ок: {path1}: вид flow, 2 узлов, 1 связей, 0 предупреждений", err)
+        self.assertIn(f"ок: {path2}: вид flow, 2 узлов, 1 связей, 0 предупреждений", err)
+
+    # finding 4: two models writing to the same --out-dir target (same id, or same stem without
+    # an id) must not silently overwrite each other; reject before writing anything.
+    def test_duplicate_out_dir_targets_are_rejected_before_writing(self):
+        out_dir = self.tmp / "out"
+        a, b = self.tmp / "a.json", self.tmp / "b.json"
+        a.write_text(json.dumps(dict(GOOD, id="good"), ensure_ascii=False))
+        b.write_text(json.dumps(dict(GOOD, id="good"), ensure_ascii=False))
+        code, out, err = self.run_cli(str(a), str(b), "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""))
+        self.assertFalse(out_dir.exists())
+        self.assertIn(str(a), err)
+        self.assertIn(str(b), err)
+        self.assertIn("good.html", err)
+
 
 if __name__ == "__main__":
     unittest.main()

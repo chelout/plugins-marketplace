@@ -14,8 +14,8 @@ diagram and exports.
 | `id` | no | Stable id for the `<section>`; defaults to a hash of the model |
 | `title` | no | Caption; shown as a heading in page mode only |
 | `summary` | no | One sentence for screen readers (falls back to `title`) |
-| `grid` | yes | The grid map, see below |
-| `groups` | yes | Colour groups, see below. At most 4 |
+| `grid` | yes, except `timeline` | The grid map, see below |
+| `groups` | yes, except `timeline` | Colour groups, see below. At most 4 |
 | `edges` | no | Connectors; the syntax is in the file of the kind |
 | `labels` | no | Override UI strings, see below |
 
