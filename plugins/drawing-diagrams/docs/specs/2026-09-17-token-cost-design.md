@@ -16,7 +16,8 @@ awaits the owner's review. Branch: `feat/drawing-diagrams-token-cost`.
 - **Performance budget:** set after the first end-to-end measurement (stage 1, variant V0 in §6) as
   token numbers per task; not set ahead of it.
 - **Decision record:** applies — a new asset delivery contract and a new reference layout that later
-  work inherits. `decisions.dir` is not declared; see Q1.
+  work inherits. `decisions.dir` is not declared; per the owner (2026-09-17) the record is an
+  amendment section in `plugins/drawing-diagrams/docs/design.md`, where §5.4 moves that file.
 - **Integration:** not declared in a profile. Pushing the branch and opening a pull request are done
   by the owner or on the owner's word.
 
@@ -238,6 +239,15 @@ One run per cell; a pair within 15% of each other on the deciding metric is run 
 **Metrics per run:** calls; output and thinking; cache write; cache read; peak context; widget
 fragment characters; failed `render.py` commands; applied effort per record.
 
+**Measurement tool:** `plugins/drawing-diagrams/tools/transcripts.py`, outside the skill directory.
+It replaces the two scripts imported as-is from the design session (`tools/skill_analytics.py`,
+`tools/skill_tokens.py`) with subcommands `agents` (model and effort of each dispatched agent),
+`episodes` (skill episodes and their render loop) and `tokens` (usage per run or per drawing
+segment). Usage is taken once per message id, from its last record, and summed over
+`usage.iterations`, because a message is written as several records and some records carry zeros at
+the top level. Render commands are matched under the old `skills/drawing-diagrams/` path and under
+the plugin cache path.
+
 **Automatic gate:** the final check has no errors and no warnings; crossings are not above V0 on the
 same task; every table or step listed for the task is present (lists written before stage 1).
 
@@ -298,16 +308,20 @@ cache read per run) are about 45M cache read and 0.5M output; likely less after 
 | 9 | every section of today's `reference/model.md` is in exactly one new reference file; field tables exist for `schema`, the flow family and `timeline`; `examples/schema-small.json` is at most 3K characters and `examples/kyc-module.json` is under `examples/full/` | checklist in the pull request description, `wc -c` output |
 | 10 | `SKILL.md` body is at most 6.7K characters, uses one render command in its workflow, contains the cost rules and no longer lists `design.md`; `design.md` is under `plugins/drawing-diagrams/docs/` | `wc -c` and `rg` output |
 | 11 | the experiment report has the metric table per stage and the owner's decision | report file and the owner's recorded word |
+| 12 | `tools/transcripts.py` counts each message once, sums `usage.iterations`, and prints the §6 metrics per run; the imported `skill_analytics.py` and `skill_tokens.py` are removed | unit test over a fixture transcript; command output over stage 1 runs |
+| 13 | the decision record is an amendment section in `plugins/drawing-diagrams/docs/design.md` | `rg` output |
 
 Unit tests use the standard library (`python3 -m unittest`) and live in `plugins/drawing-diagrams/tests/`,
 outside the skill directory.
 
-## 10. Open questions
+## 10. Resolved questions
 
-- **Q1.** Where the decision record goes: an amendment section in `plugins/drawing-diagrams/docs/design.md`
-  is proposed. Answered by the owner before the plan.
-- **Q2.** Where the transcript measurement script lives for §6: today it exists only in the design
-  session's scratch space and goes away with that session. Answered by the owner before stage 1.
-- **Q3.** The experiment harness changes user settings — a temporary directory marketplace and the
-  production plugin disabled for the experiment. Needs the owner's permission at the start of
-  stage 1.
+Answered by the owner on 2026-09-17.
+
+- **Q1.** The decision record is an amendment section in `plugins/drawing-diagrams/docs/design.md`
+  (criterion 13).
+- **Q2.** The transcript measurement script lives in the repository as `tools/transcripts.py`
+  (§6, criterion 12).
+- **Q3.** The experiment harness may change user settings: a temporary directory marketplace and the
+  production plugin disabled for the experiment. Each change is stated before it is made, and the
+  settings are restored after stage 3 or when the experiment stops.
