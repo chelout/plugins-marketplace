@@ -13,8 +13,10 @@ awaits the owner's review. Branch: `feat/drawing-diagrams-token-cost`.
   unchanged is checked by the owner's pair review in §6.
 - **Evidence:** named per criterion in §9. `completion.evidence_kind` is not declared, so each
   criterion names a command output, a test, or the owner's recorded word.
-- **Performance budget:** set after the first end-to-end measurement (stage 1, variant V0 in §6) as
-  token numbers per task; not set ahead of it.
+- **Performance budget:** per task, `out` and `cr` of a later change stay at or below the stage 1 V1
+  values (report of 2026-09-17): T1 25202/1559035, T2 25238/2270881, T3 19969/1437586,
+  T4 5336/506938. Stage 1 V0 for comparison: T1 33946/2940641, T2 40060/4268054, T3 34689/3232766,
+  T4 7354/1045612.
 - **Decision record:** applies — a new asset delivery contract and a new reference layout that later
   work inherits. `decisions.dir` is not declared; per the owner (2026-09-17) the record is an
   amendment section in `plugins/drawing-diagrams/docs/design.md`, where §5.4 moves that file.
