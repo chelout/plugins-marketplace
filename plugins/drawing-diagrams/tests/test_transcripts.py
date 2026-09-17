@@ -77,6 +77,29 @@ class RunMetrics(unittest.TestCase):
         self.assertIn("run.jsonl", line)
         self.assertIn("out=527", line)
         self.assertIn("renders=1/1", line)
+        self.assertIn("invocations=1", line)
+
+    def test_run_metrics_counts_invocations_within_a_compound_render_call(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        session = Path(tmp.name) / "compound.jsonl"
+        compound = {"type": "tool_use", "id": "c1", "name": "Bash",
+                    "input": {"command": "python3 /x/skills/drawing-diagrams/render.py a.json && "
+                                          "python3 /x/skills/drawing-diagrams/render.py b.json"}}
+        single = {"type": "tool_use", "id": "c2", "name": "Bash",
+                  "input": {"command": "python3 /x/skills/drawing-diagrams/render.py c.json --mode widget"}}
+        write(session, [
+            assistant("m1", {"input_tokens": 1, "output_tokens": 1}, content=[compound]),
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "is_error": True,
+                                                      "content": "Exit code 1\nошибка: узел a: заголовок 30 симв., влезает 19"}]}},
+            assistant("m2", {"input_tokens": 1, "output_tokens": 1}, content=[single]),
+            {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c2", "is_error": False,
+                                                      "content": "OK"}]}},
+        ])
+        m = transcripts.run_metrics(str(session))
+        self.assertEqual(m["renders"], 2)
+        self.assertEqual(m["render_invocations"], 3)
+        self.assertEqual(m["renders_failed"], 1)
 
 
 class ShortProject(unittest.TestCase):

@@ -434,7 +434,14 @@ def run_files(session_path):
 
 
 def run_metrics(session_path):
-    """Metrics of one headless run: the session and every agent it dispatched."""
+    """Metrics of one headless run: the session and every agent it dispatched.
+
+    renders/renders_failed count Bash calls that invoke render.py, not renderer invocations: a
+    compound command can run render.py several times, and failures are counted per Bash call —
+    a call that runs the renderer several times and fails once counts once. render_invocations
+    sums parse_render(...)['invocations'] across all render calls, so a single Bash call running
+    render.py twice counts as two invocations there.
+    """
     files = run_files(session_path)
     calls = [c for f in files for c in api_calls(f)]
     renders = [r for f in files for r in render_commands(f)]
@@ -444,7 +451,8 @@ def run_metrics(session_path):
             'peak_ctx': max((c['ctx'] for c in calls), default=0),
             'models': collections.Counter(c['model'] for c in calls),
             'efforts': collections.Counter(c['effort'] for c in calls),
-            'renders': len(renders), 'renders_failed': sum(r['failed'] for r in renders)}
+            'renders': len(renders), 'renders_failed': sum(r['failed'] for r in renders),
+            'render_invocations': sum(r['invocations'] for r in renders)}
 
 
 def is_prompt(rec):
@@ -722,7 +730,8 @@ def main(argv=None):
             m = run_metrics(path)
             print(f"{os.path.basename(path)}  calls={m['calls']} agents={m['agents']} out={m['out']} "
                   f"think={m['think']} cw={m['cw']} cr={m['cr']} in={m['in']} peak={m['peak_ctx']} "
-                  f"renders={m['renders']}/{m['renders_failed']} effort={fmt_counter(m['efforts'])} "
+                  f"renders={m['renders']}/{m['renders_failed']} invocations={m['render_invocations']} "
+                  f"effort={fmt_counter(m['efforts'])} "
                   f"model={fmt_counter(m['models'])}")
         return 0
     if args.cmd == 'segments':
