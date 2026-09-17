@@ -120,3 +120,4 @@ renders were texts that did not fit.
   per kind; this file lives outside the skill directory.
 - Skill-level effort and a delegated agent are decided by the experiment of the spec (§6); the outcome
   is recorded below.
+- Outcome of the experiment (2026-09-17): neither skill-level effort nor delegation paid off at equal quality; the session's effort and model stay. Against the previous version the changes above cut output tokens by 26–42% and cache reads by 47–56% on four benchmark tasks. `effort: high` in the frontmatter cut output further but applied in only two of three runs and led the model to inline assets, tripling widget size; `effort: medium` dropped required states from a model twice; a delegated `sonnet` agent raised cache reads by 49% on the schema task.
