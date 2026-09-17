@@ -1,0 +1,80 @@
+{
+  "kind": "state",
+  "id": "verdict-row-lifecycle",
+  "title": "Цикл строки вердикта",
+  "summary": "Состояния строки kyc_verdicts и переходы между ними: вердикт вендора, новый вердикт следующей попытки, сигнал вендора.",
+  "groups": {
+    "ven": {
+      "label": "истина вендора",
+      "ramp": "teal"
+    }
+  },
+  "nodes": [
+    {
+      "id": "none",
+      "kind": "terminal",
+      "group": "ven",
+      "title": "строки нет"
+    },
+    {
+      "id": "expired",
+      "kind": "note",
+      "title": "истёк valid_until",
+      "text": "статус не меняется, строка выпадает из проекции"
+    },
+    {
+      "id": "approved",
+      "group": "ven",
+      "title": "approved",
+      "text": "proofs непустой, в проекции до valid_until"
+    },
+    {
+      "id": "declined_retry",
+      "group": "ven",
+      "title": "declined_retry",
+      "text": "можно повторить; новый fire строку не меняет"
+    },
+    {
+      "id": "invalid",
+      "group": "ven",
+      "title": "invalid",
+      "text": "причина из сигнала вендора [1]"
+    },
+    {
+      "id": "declined_final",
+      "group": "ven",
+      "title": "declined_final",
+      "text": "блокирует fire выбранного профиля"
+    }
+  ],
+  "grid": [
+    "none      .               .",
+    "approved  declined_retry  declined_final",
+    "invalid   .               expired"
+  ],
+  "edges": [
+    "none -> approved : вердикт",
+    "none -> declined_retry : RED retry",
+    "none -> declined_final : RED final",
+    "approved -> invalid : сигнал вендора [1]",
+    "invalid -> approved : [2]",
+    "declined_retry -> approved : [2]",
+    "declined_retry -> declined_final : [2]"
+  ],
+  "footnotes": [
+    "vendor_reset, vendor_rejected или proof_revoked:<пруф>. Вердикт атомарен: изъятие любого пруфа гасит строку целиком.",
+    "Новый терминальный вердикт следующей попытки: прибавить к вердикту нельзя ничего, только заменить его новым."
+  ],
+  "routes": {
+    "Кира: изъятие документа": [
+      "approved",
+      "invalid",
+      "approved"
+    ],
+    "Марк: RED retry, потом approved": [
+      "none",
+      "declined_retry",
+      "approved"
+    ]
+  }
+}

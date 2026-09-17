@@ -1,0 +1,21 @@
+{
+  "kind": "timeline",
+  "id": "mark-timeline",
+  "title": "Чеки Марка",
+  "summary": "Моменты t1–t5 с вариантами t4′ и t4″: какой чек пришёл, какое правило сработало, что стало с вердиктами и попытками.",
+  "entities": [
+    {"id": "verdicts", "label": "вердикты"},
+    {"id": "attempts", "label": "попытки"}
+  ],
+  "moments": [
+    {"id": "t1", "label": "t1", "title": "Покупка: документ, селфи", "text": "1 нет → 2 нет → 4b fire ID+Selfie", "states": {"verdicts": "нет", "attempts": "A open {t1}"}},
+    {"id": "t2", "label": "t2", "title": "Покупка: документ, селфи", "text": "1 нет → 2 да → 3 да: join A", "states": {"attempts": "A open {t1, t2}"}},
+    {"id": "t3", "label": "t3", "title": "IBAN: документ, селфи, адрес", "text": "1 нет → 2 да → 3 нет: wait A", "states": {"attempts": "A open {t1, t2, t3}"}},
+    {"id": "t4", "label": "t4", "title": "A GREEN: resume t1, t2", "tag": "вебхук", "text": "covered, факт approved", "states": {"verdicts": "ID+Selfie approved", "attempts": "A approved"}},
+    {"id": "t4b", "label": "t4", "title": "resume t3, wait-чек", "text": "1 нет → fire IBAN, чек остаётся запаркован", "states": {"attempts": "B IBAN open {t3}"}},
+    {"id": "t4r", "label": "t4′", "title": "A RED retry: resume t1, t2, t3", "tag": "вариант", "text": "факт declined_retry, fire нет", "states": {"verdicts": "ID+Selfie declined_retry", "attempts": "A declined_retry"}},
+    {"id": "t5", "label": "t5", "title": "Новое событие: документ, селфи", "text": "1 нет → 2 нет → 4a нет → 4b fire", "states": {"attempts": "B open {t5}"}},
+    {"id": "t4f", "label": "t4″", "title": "A RED final: resume t1, t2, t3", "tag": "вариант", "text": "факт declined_final", "states": {"verdicts": "ID+Selfie declined_final", "attempts": "A final, блок субъекта"}},
+    {"id": "t5f", "label": "t5″", "title": "Новое событие, любой профиль", "text": "4a → факт declined_final без похода к вендору", "states": {"attempts": "не открывается"}}
+  ]
+}

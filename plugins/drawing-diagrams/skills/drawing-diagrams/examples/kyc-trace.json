@@ -1,0 +1,132 @@
+{
+  "kind": "swimlane",
+  "id": "kyc-trace",
+  "title": "Покупка Марка: от узла KYC до GREEN",
+  "summary": "Трассировка одиннадцати шагов по дорожкам участников: пользователь, граф, резолвер, адаптер, вендор.",
+  "groups": {
+    "user": {
+      "label": "пользователь",
+      "ramp": "pink"
+    },
+    "graph": {
+      "label": "граф",
+      "ramp": "purple"
+    },
+    "res": {
+      "label": "резолвер",
+      "ramp": "teal"
+    },
+    "adapter": {
+      "label": "адаптер",
+      "ramp": "coral"
+    },
+    "vendor": {
+      "label": "вендор",
+      "ramp": "gray"
+    }
+  },
+  "lanes": [
+    "user",
+    "graph",
+    "res",
+    "adapter",
+    "vendor"
+  ],
+  "nodes": [
+    {
+      "id": "buy",
+      "title": "Покупка",
+      "text": "Марк жмёт «купить»"
+    },
+    {
+      "id": "node",
+      "title": "Узел KYC",
+      "text": "гейт: документ, селфи"
+    },
+    {
+      "id": "rules",
+      "title": "Правила",
+      "text": "нет строки, нет попытки"
+    },
+    {
+      "id": "fire",
+      "title": "fire",
+      "text": "профиль basic-kyc"
+    },
+    {
+      "id": "attempt",
+      "title": "Попытка",
+      "text": "applicant, level, ссылка"
+    },
+    {
+      "id": "handoff",
+      "title": "Handoff",
+      "text": "открывает виджет"
+    },
+    {
+      "id": "verify",
+      "title": "Проверка",
+      "text": "документ и селфи"
+    },
+    {
+      "id": "webhook",
+      "title": "Вебхук",
+      "text": "approved"
+    },
+    {
+      "id": "verdict",
+      "title": "Вердикт",
+      "text": "approved, закрыта"
+    },
+    {
+      "id": "resume",
+      "title": "Resume",
+      "text": "covered"
+    },
+    {
+      "id": "green",
+      "kind": "terminal",
+      "title": "GREEN"
+    }
+  ],
+  "grid": [
+    "buy      .      .       .        .",
+    ".        node   .       .        .",
+    ".        .      rules   .        .",
+    ".        .      fire    .        .",
+    ".        .      .       attempt  .",
+    "handoff  .      .       .        .",
+    ".        .      .       .        verify",
+    ".        .      .       .        webhook",
+    ".        .      .       verdict  .",
+    ".        .      resume  .        .",
+    ".        green  .       .        ."
+  ],
+  "edges": [
+    "buy -> node",
+    "node -> rules",
+    "rules -> fire",
+    "fire -> attempt",
+    "attempt -> handoff : ссылка",
+    "handoff -> verify",
+    "verify -> webhook",
+    "webhook -> verdict | dashed",
+    "verdict -> resume",
+    "resume -> green"
+  ],
+  "routes": {
+    "путь Марка": [
+      "buy",
+      "node",
+      "rules",
+      "fire",
+      "attempt",
+      "handoff",
+      "verify",
+      "webhook",
+      "verdict",
+      "resume",
+      "green"
+    ]
+  }
+}

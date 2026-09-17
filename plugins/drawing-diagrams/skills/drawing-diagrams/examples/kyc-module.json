@@ -1,0 +1,592 @@
+{
+  "kind": "schema",
+  "id": "kyc-module",
+  "title": "KYC-модуль: таблицы",
+  "summary": "Карта ключей KYC-модуля: шесть таблиц модуля и три таблицы за портом адаптера, связанные по ключам учётки, пользователя, профиля и попытки.",
+  "grid": [
+    "matrix   verdicts    attempts",
+    "subject  history     outbox",
+    "conn     applicants  checks"
+  ],
+  "groups": {
+    "cfg": {
+      "label": "конфигурация",
+      "ramp": "purple"
+    },
+    "ven": {
+      "label": "истина вендора",
+      "ramp": "teal"
+    },
+    "run": {
+      "label": "истина рантайма",
+      "ramp": "coral"
+    },
+    "out": {
+      "label": "за портом адаптера",
+      "ramp": "gray",
+      "outside": true
+    }
+  },
+  "tables": [
+    {
+      "id": "matrix",
+      "name": "kyc_profile_matrix",
+      "group": "cfg",
+      "subtitle": "матрица · истина конфигурации",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "profile",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "profile"
+        },
+        {
+          "name": "proofs",
+          "type": "text[]"
+        },
+        {
+          "name": "countries",
+          "type": "text[]",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "valid_for",
+          "type": "interval",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "updated_by",
+          "type": "text"
+        }
+      ],
+      "details": [
+        "<code>countries</code> NULL: без ограничения по стране; <code>valid_for</code> NULL: горизонта нет",
+        "элементы <code>proofs</code> только из словаря пруфов в коде",
+        "publish проверяет: каждое требование графа даёт ровно один профиль"
+      ]
+    },
+    {
+      "id": "verdicts",
+      "name": "kyc_verdicts",
+      "group": "ven",
+      "subtitle": "вердикты · истина вендора",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "user"
+        },
+        {
+          "name": "profile",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "profile"
+        },
+        {
+          "name": "attempt_id",
+          "type": "uuid",
+          "flags": [
+            "FK",
+            "N"
+          ],
+          "key": "attempt"
+        },
+        {
+          "name": "review_status",
+          "type": "text"
+        },
+        {
+          "name": "proofs",
+          "type": "text[]"
+        },
+        {
+          "name": "review_result",
+          "type": "jsonb",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "checked_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "valid_until",
+          "type": "timestamptz",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "invalidated_at",
+          "type": "timestamptz",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "invalid_reason",
+          "type": "text",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "created_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamptz"
+        }
+      ],
+      "details": [
+        "<code>review_status</code>: approved · declined_retry · declined_final · invalid",
+        "<code>invalid_reason</code>: vendor_reset · vendor_rejected · proof_revoked:&lt;пруф&gt;",
+        "CHECK: approved требует непустой <code>proofs</code>; invalid требует <code>invalid_reason</code>",
+        "<code>review_result</code>: review_answer, reject_type, reject_labels и ничего больше"
+      ],
+      "notes": [
+        "proofs: снимок строки матрицы в момент вердикта, дальше не меняется"
+      ]
+    },
+    {
+      "id": "attempts",
+      "name": "kyc_attempts",
+      "group": "run",
+      "subtitle": "попытки · истина рантайма",
+      "columns": [
+        {
+          "name": "attempt_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "attempt"
+        },
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "FK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "key": "user"
+        },
+        {
+          "name": "profile",
+          "type": "text",
+          "key": "profile"
+        },
+        {
+          "name": "external_attempt_id",
+          "type": "text",
+          "flags": [
+            "U"
+          ],
+          "key": "external"
+        },
+        {
+          "name": "status",
+          "type": "text"
+        },
+        {
+          "name": "deadline",
+          "type": "timestamptz"
+        },
+        {
+          "name": "epoch",
+          "type": "bigint"
+        },
+        {
+          "name": "opened_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "closed_at",
+          "type": "timestamptz",
+          "flags": [
+            "N"
+          ]
+        }
+      ],
+      "details": [
+        "<code>status</code>: open · approved · declined_retry · declined_final · expired",
+        "вебхук: UNIQUE (connection_id, external_attempt_id)",
+        "свипер: индекс (deadline) WHERE status = open"
+      ],
+      "notes": [
+        "claim: UNIQUE (connection_id, user_id) WHERE status = open"
+      ]
+    },
+    {
+      "id": "subject",
+      "name": "kyc_subject_blocks",
+      "group": "ven",
+      "subtitle": "блок субъекта · истина вендора",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "user"
+        },
+        {
+          "name": "reason",
+          "type": "text"
+        },
+        {
+          "name": "blocked_at",
+          "type": "timestamptz"
+        },
+        {
+          "name": "attempt_id",
+          "type": "uuid",
+          "flags": [
+            "N"
+          ]
+        }
+      ],
+      "details": [
+        "<code>reason</code>: закрытый словарь субъектных сигналов вендора"
+      ],
+      "notes": [
+        "наличие строки читает правило 4a: гасит все вердикты пользователя"
+      ]
+    },
+    {
+      "id": "history",
+      "name": "kyc_verdict_history",
+      "group": "ven",
+      "subtitle": "журнал · только добавление",
+      "columns": [
+        {
+          "name": "id",
+          "type": "bigint",
+          "flags": [
+            "PK"
+          ],
+          "key": "id"
+        },
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "FK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "flags": [
+            "FK"
+          ],
+          "key": "user"
+        },
+        {
+          "name": "profile",
+          "type": "text",
+          "flags": [
+            "FK"
+          ],
+          "key": "profile"
+        },
+        {
+          "name": "from_status",
+          "type": "text",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "to_status",
+          "type": "text"
+        },
+        {
+          "name": "reason",
+          "type": "text"
+        },
+        {
+          "name": "review_result",
+          "type": "jsonb",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "attempt_id",
+          "type": "uuid",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "recorded_at",
+          "type": "timestamptz"
+        }
+      ],
+      "details": [
+        "<code>reason</code>: verdict · import · vendor_reset · vendor_rejected · proof_revoked:&lt;пруф&gt;",
+        "пишется в одной транзакции со строкой вердикта"
+      ]
+    },
+    {
+      "id": "checks",
+      "name": "kyc_attempt_checks",
+      "group": "run",
+      "subtitle": "чеки попытки · один ко многим",
+      "columns": [
+        {
+          "name": "attempt_id",
+          "type": "uuid",
+          "flags": [
+            "PK",
+            "FK"
+          ],
+          "key": "attempt"
+        },
+        {
+          "name": "check_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "check"
+        },
+        {
+          "name": "tenant_id",
+          "type": "uuid"
+        },
+        {
+          "name": "event_type_id",
+          "type": "uuid"
+        },
+        {
+          "name": "provider_node_id",
+          "type": "text"
+        },
+        {
+          "name": "role",
+          "type": "text"
+        },
+        {
+          "name": "joined_at",
+          "type": "timestamptz"
+        }
+      ],
+      "details": [
+        "<code>role</code>: initiator · join · wait",
+        "колонки чека те же, что в <code>sumsub_callback_correlations</code>",
+        "ON DELETE CASCADE от попытки"
+      ]
+    },
+    {
+      "id": "conn",
+      "name": "provider_connections",
+      "group": "out",
+      "subtitle": "учётка · уже есть",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "tenant_id",
+          "type": "uuid",
+          "flags": [
+            "FK"
+          ]
+        },
+        {
+          "name": "provider_key",
+          "type": "text"
+        },
+        {
+          "name": "display_name",
+          "type": "text"
+        },
+        {
+          "name": "environment_id",
+          "type": "text"
+        },
+        {
+          "name": "fields",
+          "type": "jsonb"
+        },
+        {
+          "name": "secrets",
+          "type": "jsonb"
+        },
+        {
+          "name": "lifecycle_status",
+          "type": "text"
+        }
+      ],
+      "notes": [
+        "ключует все таблицы модуля; линии к ней не нарисованы"
+      ]
+    },
+    {
+      "id": "applicants",
+      "name": "sumsub_applicants",
+      "group": "out",
+      "subtitle": "деталь адаптера · уже есть",
+      "columns": [
+        {
+          "name": "connection_id",
+          "type": "uuid",
+          "flags": [
+            "PK"
+          ],
+          "key": "connection"
+        },
+        {
+          "name": "user_id",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "user"
+        },
+        {
+          "name": "applicant_id",
+          "type": "text"
+        }
+      ],
+      "notes": [
+        "связь с модулем по (connection_id, user_id), без FK"
+      ]
+    },
+    {
+      "id": "outbox",
+      "name": "sumsub_callback_outbox",
+      "group": "out",
+      "subtitle": "вебхуки · уже есть, kind = kyc",
+      "columns": [
+        {
+          "name": "kind",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "kind"
+        },
+        {
+          "name": "external_correlation_id",
+          "type": "text",
+          "flags": [
+            "PK"
+          ],
+          "key": "external"
+        },
+        {
+          "name": "payload_digest",
+          "type": "bytea",
+          "flags": [
+            "PK"
+          ]
+        },
+        {
+          "name": "connection_id",
+          "type": "uuid"
+        },
+        {
+          "name": "payload",
+          "type": "text"
+        },
+        {
+          "name": "status",
+          "type": "text"
+        },
+        {
+          "name": "attempts",
+          "type": "int"
+        },
+        {
+          "name": "claim_epoch",
+          "type": "bigint"
+        },
+        {
+          "name": "worker_id",
+          "type": "text",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "leased_until",
+          "type": "timestamptz",
+          "flags": [
+            "N"
+          ]
+        },
+        {
+          "name": "available_at",
+          "type": "timestamptz"
+        }
+      ],
+      "details": [
+        "<code>status</code>: pending · claimed · done · failed"
+      ],
+      "notes": [
+        "для kyc ключ равен external_attempt_id"
+      ]
+    }
+  ],
+  "edges": [
+    "verdicts.attempt_id -> attempts.attempt_id | ends=plain/one",
+    "history.profile -> verdicts.profile",
+    "checks.attempt_id -> attempts.attempt_id | right",
+    "outbox.external_correlation_id -> attempts.external_attempt_id | logical"
+  ]
+}
