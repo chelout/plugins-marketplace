@@ -3,7 +3,8 @@ states as chips in a fixed order. No connectors."""
 import json
 
 from . import assets
-from .common import BASE_MODES, ID_RE, ModelError, esc, fit_prefix, labels_for, text_width, wrap_lines
+from .common import (BASE_MODES, ID_RE, ModelError, esc, fit_prefix, labels_for, text_width, too_wide_word,
+                     wrap_lines)
 
 MODES = {
     "widget": {"rail": 64, "max_moments": 12},
@@ -78,8 +79,12 @@ def plan(model, mode_name, overrides=None, draft=False):
         text = m.get("text") or ""
         def text_fits(s, card_w=card_w):
             return wrap_lines(s, card_w - 20) <= 2
-        if text and not text_fits(text):
-            fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}")
+        if text:
+            wide = too_wide_word(text, card_w - 20)
+            if wide:
+                fit_error(f"момент {mid}: слово {len(wide[0])} симв., влезает ~{wide[1]}")
+            elif not text_fits(text):
+                fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}")
         states = m.get("states") or {}
         for k in states:
             if k not in ent_ids:

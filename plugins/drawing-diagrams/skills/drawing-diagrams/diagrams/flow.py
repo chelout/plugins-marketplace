@@ -5,7 +5,7 @@ import re
 
 from . import assets, router
 from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_prefix, label_width, labels_for, text_width,
-                     wrap_lines)
+                     too_wide_word, wrap_lines)
 from .grid import check_placement, empty_lines, parse_grid
 
 MODES = {
@@ -306,7 +306,10 @@ def plan(model, mode_name, overrides=None, draft=False):
         def text_fits(s, card_w=card_w):
             return wrap_lines(s, card_w - 20) <= 2
         if text:
-            if not text_fits(text):
+            wide = too_wide_word(text, card_w - 20)
+            if wide:
+                fit_error(f"узел {nid}: слово {len(wide[0])} симв., влезает ~{wide[1]}")
+            elif not text_fits(text):
                 fit_error(f"узел {nid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}; "
                           f"сократите или вынесите в сноску")
         items = n.get("items") or []
@@ -317,7 +320,10 @@ def plan(model, mode_name, overrides=None, draft=False):
         def item_fits(s, card_w=card_w):
             return wrap_lines(s, card_w - 30) <= 2
         for pos, it in enumerate(items, 1):
-            if not item_fits(it):
+            wide = too_wide_word(it, card_w - 30)
+            if wide:
+                fit_error(f"узел {nid}: пункт {pos} — слово {len(wide[0])} симв., влезает ~{wide[1]}")
+            elif not item_fits(it):
                 fit_error(f"узел {nid}: пункт {pos} — {len(it)} симв., влезает ~{fit_prefix(it, item_fits)}")
         if k == "terminal" and text:
             warnings.append(f"узел {nid}: у terminal текст не показывается, только заголовок")
