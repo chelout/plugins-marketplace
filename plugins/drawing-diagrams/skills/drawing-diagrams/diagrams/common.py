@@ -64,13 +64,14 @@ ID_RE = re.compile(r"^[a-z][a-z0-9_]*\??$")
 
 
 class ModelError(Exception):
-    """Validation failed. `errors` is the list of messages; `layout` marks the
-    ones --draft may downgrade to warnings."""
+    """Validation failed. `errors` is the list of messages; `layout` marks the ones --draft may
+    downgrade to warnings; `fit` marks the layout errors about a text too long for its place."""
 
-    def __init__(self, errors, layout=()):
+    def __init__(self, errors, layout=(), fit=()):
         super().__init__("\n".join("ошибка: " + e for e in errors))
         self.errors = list(errors)
         self.layout = list(layout)
+        self.fit = list(fit)
 
 
 def plural(n, forms):
@@ -143,7 +144,7 @@ CIRCLED_WIDTH = 10.25  # ① … ⑳ come from a fallback font, much wider than 
 
 
 def label_width(text):
-    """Width in px of an edge label as core.js draws it. A glyph that was not measured
+    """Width in px of an edge label as template/js/flow.js draws it. A glyph that was not measured
     counts as a circled number: wide rather than optimistic."""
     return sum(LABEL_ADVANCE.get(ch, CIRCLED_WIDTH) for ch in text)
 
@@ -162,3 +163,12 @@ def wrap_lines(text, width, scale=0.88):
             lines += 1
             cur = w
     return lines
+
+
+def fit_prefix(text, fits):
+    """Budget of a text-fit message: the length of the longest prefix of `text` that `fits` accepts,
+    so cutting the text to it passes the same check. 0 when not even one character fits."""
+    k = len(text) - 1
+    while k > 0 and not fits(text[:k]):
+        k -= 1
+    return max(k, 0)

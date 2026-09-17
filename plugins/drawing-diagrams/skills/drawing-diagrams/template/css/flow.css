@@ -1,0 +1,20 @@
+.dg-node{position:relative;z-index:1}
+.dg-node .dg-h{font-family:var(--dg-sans);font-size:12.5px;padding:6px 10px 5px;display:flex;align-items:center;gap:6px}
+.dg-node .dg-h .ttl{flex:1;min-width:0}
+.dg .r-none{background:transparent;color:var(--dg-text)}
+.k-terminal{border-radius:999px;text-align:center}
+.k-terminal .dg-pill{padding:7px 12px;font-size:12.5px;font-weight:500;display:flex;justify-content:center;gap:6px;align-items:center}
+.k-note{border-style:dashed;background:transparent}
+.dg-q{display:inline-flex;width:15px;height:15px;border-radius:50%;border:1.5px solid currentColor;font-size:10px;font-weight:500;align-items:center;justify-content:center;flex:none;line-height:1}
+.dg-num{display:inline-flex;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:currentColor;font-size:10px;font-weight:500;align-items:center;justify-content:center;flex:none}
+.dg-num::after{content:attr(data-n);color:var(--dg-surface)}
+.dg-svg text{font-family:var(--dg-sans);font-size:11px;fill:var(--dg-text2);paint-order:stroke;stroke:var(--dg-page);stroke-width:3px;stroke-linejoin:round}
+.dg-svg path.arrow{fill:var(--dg-border3);stroke:none}
+.dg-svg path.arrow.m{fill:var(--dg-muted)}
+.dg-svg g.hi path.arrow{fill:var(--dg-accent)}
+.dg-svg g.hi text{fill:var(--dg-accent)}
+.k-state{border-left:5px solid var(--dg-border3)}
+.k-state .dg-h{font-weight:500}
+.dg-items{margin:0;padding:4px 10px 8px 24px;font-size:11.5px;line-height:1.4;color:var(--dg-text2)}
+.dg-items li{margin:1px 0}
+.dg-h+.dg-items{border-top:1px solid var(--dg-border)}

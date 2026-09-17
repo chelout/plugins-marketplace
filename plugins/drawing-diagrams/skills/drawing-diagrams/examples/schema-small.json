@@ -1,0 +1,34 @@
+{
+  "kind": "schema",
+  "id": "schema-small",
+  "title": "Заказы и оплаты",
+  "summary": "Три таблицы: клиенты из CRM, заказы и оплаты заказов.",
+  "groups": {
+    "crm": {"label": "CRM, вне модуля", "ramp": "gray", "outside": true},
+    "shop": {"label": "заказы", "ramp": "teal"},
+    "pay": {"label": "оплаты", "ramp": "purple"}
+  },
+  "tables": [
+    {"id": "customers", "name": "customers", "group": "crm", "subtitle": "клиенты",
+     "columns": [{"name": "id", "type": "uuid", "flags": ["PK"], "key": "user"},
+                 {"name": "email", "type": "text", "flags": ["U"], "key": "id"},
+                 {"name": "created_at", "type": "timestamptz"}],
+     "notes": ["источник правды в CRM"]},
+    {"id": "orders", "name": "orders", "group": "shop", "subtitle": "заказы",
+     "columns": [{"name": "id", "type": "uuid", "flags": ["PK"], "key": "key"},
+                 {"name": "customer_id", "type": "uuid", "flags": ["FK"], "key": "user"},
+                 {"name": "total", "type": "numeric"},
+                 {"name": "status", "type": "text"}],
+     "details": ["<code>status</code>: new · paid · cancelled"]},
+    {"id": "payments", "name": "payments", "group": "pay", "subtitle": "оплаты",
+     "columns": [{"name": "id", "type": "uuid", "flags": ["PK"], "key": "key"},
+                 {"name": "order_id", "type": "uuid", "flags": ["FK"], "key": "link"},
+                 {"name": "status", "type": "text"}],
+     "notes": ["одна успешная оплата на заказ"]}
+  ],
+  "grid": ["customers  orders  payments"],
+  "edges": [
+    "orders.customer_id -> customers.id",
+    "payments.order_id -> orders.id"
+  ]
+}

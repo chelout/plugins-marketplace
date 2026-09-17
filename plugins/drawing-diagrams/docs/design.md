@@ -2,7 +2,7 @@
 
 Agreed with the owner on 12.09.2026 after a full walk of the decision tree.
 This file is the source of truth for scope and architecture; SKILL.md tells an
-agent how to use what is built, reference/model.md documents the model.
+agent how to use what is built, the files under reference/ document the model.
 
 ## 1. Scope
 
@@ -101,3 +101,23 @@ Examples from each step become `examples/`.
 Implementation details left to the renderer: a decision's exit side follows
 the target's position; the colour group limit for a swimlane equals its lane
 count, up to five.
+
+## 13. Token cost (amendment, 2026-09-17)
+
+Spec: `docs/specs/2026-09-17-token-cost-design.md`. Decided after measuring local transcripts: a chat
+widget was about 70% CSS and JS, the model trimmed them by hand on every iteration, and most failed
+renders were texts that did not fit.
+
+- Assets are fragments under `template/css` and `template/js`. A page carries all of them inline. A
+  chat widget links to the build in `template/dist`, served by jsDelivr at the commit in
+  `template/dist/REF`; `--assets inline` carries only the fragments the diagram uses, `none` nothing.
+- Release of the build: `tools/assets.py build` and `check`, commit, the SHA of that commit into
+  `REF`, commit, merge with a merge commit, then `tools/assets.py verify-cdn`.
+- Every render checks the model; on errors stdout is empty, text-fit messages name the length and the
+  budget, and the map is printed for layout errors only. Several models render in one call with
+  `--out-dir`, all or nothing.
+- The reference is split by kind (`common`, `schema`, `flow`, `timeline`, `output`) with a field table
+  per kind; this file lives outside the skill directory.
+- Skill-level effort and a delegated agent are decided by the experiment of the spec (§6); the outcome
+  is recorded below.
+- Outcome of the experiment (2026-09-17): neither skill-level effort nor delegation paid off at equal quality; the session's effort and model stay. Against the previous version the changes above cut output tokens by 26–42% and cache reads by 47–56% on four benchmark tasks. `effort: high` in the frontmatter cut output further but applied in only two of three runs and led the model to inline assets, tripling widget size; `effort: medium` dropped required states from a model twice; a delegated `sonnet` agent raised cache reads by 49% on the schema task.

@@ -2,7 +2,7 @@
 import json
 
 from . import assets, router
-from .common import BASE_MODES, ICONS, CHEVRON, ID_RE, RAMPS, ModelError, esc, icon_svg, labels_for, plural
+from .common import BASE_MODES, ICONS, CHEVRON, ID_RE, RAMPS, ModelError, esc, fit_prefix, icon_svg, labels_for, plural
 from .grid import ascii_map, check_placement, empty_lines, parse_grid
 
 KEY_FLAGS = ("PK", "FK", "U")
@@ -94,13 +94,14 @@ def plan(model, mode_name, overrides=None, draft=False):
             if col.get("key") and col["key"] not in ICONS:
                 errors.append(f"таблица {tid}.{name}: key {col['key']!r} не из {', '.join(ICONS)}")
             if is_key(col):
-                need = 10 + 12 + 4 + len(name) * ch + 4 + len(" ".join(col.get("flags", []))) * 6.6 + 10
-                if mode["type_on_keys"]:
-                    need += len(col.get("type", "")) * ch + 4
-                if need > card_w:
-                    warnings.append(
-                        f"таблица {tid}.{name}: строка ключа шире карточки на {need - card_w:.0f}px "
-                        f"(карточка {card_w:.0f}px), имя перенесётся; сузьте grid или сократите имя")
+                def key_row_fits(s, col=col, ch=ch, card_w=card_w, mode=mode):
+                    need = 10 + 12 + 4 + len(s) * ch + 4 + len(" ".join(col.get("flags", []))) * 6.6 + 10
+                    if mode["type_on_keys"]:
+                        need += len(col.get("type", "")) * ch + 4
+                    return need <= card_w
+                if not key_row_fits(name):
+                    warnings.append(f"таблица {tid}.{name}: имя {len(name)} симв., влезает ~{fit_prefix(name, key_row_fits)}; "
+                                    f"сузьте grid или сократите имя")
         if not any(is_key(c) for c in t.get("columns") or []):
             warnings.append(f"таблица {tid}: нет ни одной ключевой колонки, линии крепить не к чему")
 
@@ -370,7 +371,7 @@ def legend_html(model, labels):
     return '<div class="dg-legend">' + "".join(items) + "</div>"
 
 
-def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
+def render(model, mode_name, layout, warnings, assets_mode="inline", draft=False):
     mode = layout["mode"]
     labels = labels_for(model)
     groups = model["groups"]
@@ -379,9 +380,9 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     summary = model.get("summary") or model.get("title") or "Схема таблиц"
     labels_js = esc(json.dumps({k: labels[k] for k in ("collapse", "open_all", "close_all")}, ensure_ascii=False))
 
-    parts = []
-    if with_assets:
-        parts.append(assets.style_block({g["ramp"] for g in groups.values()}))
+    before, after = assets.asset_blocks(assets_mode, mode_name, "schema", {g["ramp"] for g in groups.values()},
+                                        layout["edges"])
+    parts = [before] if before else []
     parts.append(assets.section_open(model, "schema", style_vars, labels_js, summary))
     if mode_name == "page" and model.get("title"):
         parts.append(f'<h3 style="margin:0 0 4px {mode["pad_l"]}px;font-size:16px;font-weight:500">{esc(model["title"])}</h3>')
@@ -395,8 +396,8 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     parts.append(legend_html(model, labels))
     parts.append(assets.edges_json(layout["edges"]))
     parts.append("</section>")
-    if with_assets:
-        parts.append(assets.script_block())
+    if after:
+        parts.append(after)
     return "\n".join(parts)
 
 

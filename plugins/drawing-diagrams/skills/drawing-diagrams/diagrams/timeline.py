@@ -3,7 +3,7 @@ states as chips in a fixed order. No connectors."""
 import json
 
 from . import assets
-from .common import BASE_MODES, ID_RE, ModelError, esc, labels_for, text_width, wrap_lines
+from .common import BASE_MODES, ID_RE, ModelError, esc, fit_prefix, labels_for, text_width, wrap_lines
 
 MODES = {
     "widget": {"rail": 64, "max_moments": 12},
@@ -20,7 +20,12 @@ def mode_for(mode_name, overrides):
 
 
 def plan(model, mode_name, overrides=None, draft=False):
-    errors, layout_errors, warnings = [], [], []
+    errors, layout_errors, fit_errors, warnings = [], [], [], []
+
+    def fit_error(msg):
+        layout_errors.append(msg)
+        fit_errors.append(msg)
+
     mode = mode_for(mode_name, overrides)
     entities = model.get("entities") or []
     moments = model.get("moments") or []
@@ -64,12 +69,17 @@ def plan(model, mode_name, overrides=None, draft=False):
             errors.append(f"момент {mid}: нет title")
             continue
         tag = m.get("tag") or ""
-        need = text_width(m["title"]) * 1.04 + 20 + (text_width(tag) * 0.9 + 8 if tag else 0)
-        if need > card_w:
-            layout_errors.append(f"момент {mid}: заголовок шире карточки на {need - card_w:.0f}px")
+        tag_w = text_width(tag) * 0.9 + 8 if tag else 0
+        def title_fits(s, tag_w=tag_w, card_w=card_w):
+            return text_width(s) * 1.04 + 20 + tag_w <= card_w
+        if not title_fits(m["title"]):
+            fit_error(f"момент {mid}: заголовок {len(m['title'])} симв., влезает "
+                      f"{fit_prefix(m['title'], title_fits)}")
         text = m.get("text") or ""
-        if text and wrap_lines(text, card_w - 20) > 2:
-            layout_errors.append(f"момент {mid}: текст займёт больше двух строк")
+        def text_fits(s, card_w=card_w):
+            return wrap_lines(s, card_w - 20) <= 2
+        if text and not text_fits(text):
+            fit_error(f"момент {mid}: текст {len(text)} симв., в две строки влезает ~{fit_prefix(text, text_fits)}")
         states = m.get("states") or {}
         for k in states:
             if k not in ent_ids:
@@ -84,9 +94,9 @@ def plan(model, mode_name, overrides=None, draft=False):
         rows.append({"id": mid, "label": label, "title": m["title"], "text": text, "tag": tag, "chips": chips})
 
     if errors:
-        raise ModelError(errors + layout_errors, layout=layout_errors)
+        raise ModelError(errors + layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors and not draft:
-        raise ModelError(layout_errors, layout=layout_errors)
+        raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
     ent_labels = {e["id"]: e.get("label", e["id"]) for e in entities if isinstance(e, dict) and e.get("id")}
@@ -94,16 +104,15 @@ def plan(model, mode_name, overrides=None, draft=False):
             "card_w": card_w, "edges": [], "draft": bool(layout_errors)}, warnings
 
 
-def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
+def render(model, mode_name, layout, warnings, assets_mode="inline", draft=False):
     mode = layout["mode"]
     labels = labels_for(model)
     total = mode["total"]
     style_vars = (f"--dg-rail:{mode['rail']}px;--dg-tlw:{total}px;--dg-padl:{mode['pad_l']}px;--dg-padr:{mode['pad_r']}px;"
                   f"--dg-cols:1;--dg-w:{layout['card_w']:.0f}px;--dg-gap:0px;--dg-rowgap:0px")
     summary = model.get("summary") or model.get("title") or "Таймлайн"
-    parts = []
-    if with_assets:
-        parts.append(assets.style_block())
+    before, after = assets.asset_blocks(assets_mode, mode_name, "timeline")
+    parts = [before] if before else []
     parts.append(assets.section_open(model, "timeline", style_vars, esc("{}"), summary))
     if mode_name == "page" and model.get("title"):
         parts.append(f'<h3 style="margin:0 0 4px {mode["pad_l"]}px;font-size:16px;font-weight:500">{esc(model["title"])}</h3>')
@@ -122,8 +131,8 @@ def render(model, mode_name, layout, warnings, with_assets=True, draft=False):
     parts.append(f'<div class="dg-legend"><span><span class="dg-chip chg" style="margin-right:4px"><b>{esc(labels["chip"])}</b>…</span>'
                  f'{esc(labels["changed"])}</span></div>')
     parts.append("</section>")
-    if with_assets:
-        parts.append(assets.script_block())
+    if after:
+        parts.append(after)
     return "\n".join(parts)
 
 
