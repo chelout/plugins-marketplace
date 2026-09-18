@@ -1,8 +1,9 @@
+import re
 import unittest
 
-import support  # noqa: F401
+import support
 from diagrams import flow
-from diagrams.common import label_width
+from diagrams.common import ModelError, label_width
 
 
 def loop_model(grid, edges):
@@ -71,6 +72,271 @@ class SidewaysLabel(unittest.TestCase):
             with self.subTest(grid=grid):
                 _, warnings = flow.plan(loop_model(grid, EDGES + ["c -> d"]), "widget")
                 self.assertEqual(self.label_warnings(warnings), [], warnings)
+
+
+def exit_model(grid, edges, terminals=(), nodes=()):
+    """A flow on `grid`, a node per id titled with it; `terminals` are ids, `nodes` replace the
+    default node of their id."""
+    given = {n["id"]: n for n in nodes}
+    ids = [n for n in " ".join(grid).split() if n != "."]
+    return {"kind": "flow", "grid": grid, "edges": edges,
+            "nodes": [given.get(n) or {"id": n, "title": n.upper(), **({"kind": "terminal"} if n in terminals else {})}
+                      for n in ids]}
+
+
+# A straight exit down or up keeps its label in the gutter under or over the card, 5 px beside the
+# line: template/js/flow.js puts the baseline 14 px under the card's bottom edge or 6 px over its
+# top edge, so the text stands between the card and the middle of the gutter, where lines run.
+DOWN = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> c : нет"], terminals=("b", "c"))
+UP = exit_model(["c b", "d a?"], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да", "d -> b : да",
+                                  "d -> c : да"])
+
+
+class ExitLabelCase(unittest.TestCase):
+    """Where template/js/flow.js draws the label of a straight exit down or up, as the tests
+    assert it before asserting what the check says about it."""
+
+    def text_span(self, layout, edge):
+        """The layout's geometry, the exit side of `edge` and the px span of its label: 5 px
+        beside the line, as wide as its glyphs."""
+        geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"])
+        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
+        self.assertEqual(len(own["path"]), 2, own)
+        X, _, ox, _ = own["path"][0]
+        x0 = geo.clamp(layout["cells"][edge[0]][1], geo.x(X) + ox) + 5
+        return geo, own["sa"], x0, x0 + label_width(own["label"])
+
+    def near_label(self, layout, edge):
+        """The gutter row the label of the straight exit `edge` stands in, and the other lines'
+        segments in that row whose px span comes within LABEL_CLEAR of the text (a vertical line
+        is 2 px wide), as the check measures them: (edge, "v", lo, hi) for a vertical one, as
+        lattice rows, and (edge, "h", oy) for one along the row."""
+        geo, sa, x0, x1 = self.text_span(layout, edge)
+        lo_x, hi_x = x0 - flow.LABEL_CLEAR, x1 + flow.LABEL_CLEAR
+        row = layout["cells"][edge[0]][0] * 2 + 1 + (1 if sa == "B" else -1)
+        near = []
+        for e in layout["edges"]:
+            key = (e["a"], e["b"])
+            if key == edge:
+                continue
+            for (xa, ya, oxa, oya), (xb, yb, oxb, _) in zip(e["path"], e["path"][1:]):
+                pa, pb = geo.x(xa) + oxa, geo.x(xb) + oxb
+                if xa == xb and min(ya, yb) <= row <= max(ya, yb) and lo_x - 1 < pa < hi_x + 1:
+                    near.append((key, "v", min(ya, yb), max(ya, yb)))
+                elif ya == yb == row and min(pa, pb) < hi_x and max(pa, pb) > lo_x:
+                    near.append((key, "h", oya))
+        return sa, row, near
+
+    def label_warnings(self, warnings, edge):
+        return [w for w in warnings if w.startswith(f"связь {edge[0]} -> {edge[1]}:")]
+
+    def fit_error(self, model, edge, overrides=None):
+        """The one fit error about `edge`'s label; the draft layout of the same model is what the
+        premise is asserted on."""
+        with self.assertRaises(ModelError) as ctx:
+            flow.plan(model, "widget", overrides)
+        found = [m for m in ctx.exception.fit if m.startswith(f"связь {edge[0]} -> {edge[1]}: подпись")]
+        self.assertEqual(len(found), 1, ctx.exception.errors)
+        return found[0]
+
+
+class StraightExitLabel(ExitLabelCase):
+    def test_a_line_from_the_card_through_the_label_is_a_warning(self):
+        # the other line leaves (or enters) the same side of the card beside the label and turns in
+        # the gutter: its vertical runs from the card edge to the middle of the gutter, through the text
+        for model, edge, side, cross, where in ((DOWN, ("a?", "b"), "B", ("a?", "c"), "у выхода вниз"),
+                                                (UP, ("d", "c"), "T", ("b", "d"), "у выхода вверх")):
+            for mode in ("widget", "page"):
+                with self.subTest(edge=edge, mode=mode):
+                    layout, warnings = flow.plan(model, mode)
+                    sa, row, near = self.near_label(layout, edge)
+                    self.assertEqual(sa, side)
+                    card_side = (row - 1, row) if side == "B" else (row, row + 1)
+                    self.assertIn((cross, "v", *card_side), near)
+                    found = self.label_warnings(warnings, edge)
+                    self.assertEqual(len(found), 1, warnings)
+                    self.assertTrue(found[0].startswith(f"связь {edge[0]} -> {edge[1]}: подпись 'да' {where} "
+                                                        f"ляжет на другую линию"), found)
+
+    def test_a_line_through_the_gutter_past_the_label_is_a_warning(self):
+        # b -> a? runs down beside a? -> b, from b's bottom edge to a?'s top edge: it passes the gutter
+        # the text stands in from one side to the other
+        model = exit_model(["c", "b", "a?"], ["c -> a?", "a? -> c : да", "a? -> b : да", "b -> a?"])
+        for mode in ("widget", "page"):
+            with self.subTest(mode=mode):
+                layout, warnings = flow.plan(model, mode)
+                sa, row, near = self.near_label(layout, ("a?", "b"))
+                self.assertEqual(sa, "T")
+                self.assertEqual(near, [(("b", "a?"), "v", row - 1, row + 1)])
+                found = self.label_warnings(warnings, ("a?", "b"))
+                self.assertEqual(len(found), 1, warnings)
+                self.assertTrue(found[0].startswith("связь a? -> b: подпись 'да' у выхода вверх ляжет на другую линию"),
+                                found)
+
+    def test_a_lone_exit_is_no_warning(self):
+        # the same card, the other branch leaves sideways: nothing else in the gutter under the label
+        model = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> x : нет"], terminals=("b", "c"))
+        for mode in ("widget", "page"):
+            with self.subTest(mode=mode):
+                layout, warnings = flow.plan(model, mode)
+                self.assertEqual(self.near_label(layout, ("a?", "b"))[2], [])
+                self.assertEqual(self.label_warnings(warnings, ("a?", "b")), [], warnings)
+
+    def test_a_line_turning_in_the_gutter_from_the_far_side_is_no_warning(self):
+        # the other line comes from the far side of the gutter and turns along its middle: it ends
+        # where the text ends, short of it
+        cases = ((exit_model(["a? b", "c d"], ["b -> c", "d -> c", "a? -> b : да", "d -> b", "a? -> c : да"]),
+                  ("a?", "c"), "B", ("b", "c")),
+                 (exit_model(["b e c", "a? f d"], ["b -> c", "a? -> c : да", "a? -> b : да"]),
+                  ("a?", "b"), "T", ("b", "c")))
+        for model, edge, side, turn in cases:
+            for mode in ("widget", "page"):
+                with self.subTest(edge=edge, mode=mode):
+                    layout, warnings = flow.plan(model, mode)
+                    sa, row, near = self.near_label(layout, edge)
+                    self.assertEqual(sa, side)
+                    far_side = (row, row + 1) if side == "B" else (row - 1, row)
+                    self.assertEqual(sorted(near), [(turn, "h", 0.0), (turn, "v", *far_side)])
+                    self.assertEqual(self.label_warnings(warnings, edge), [], warnings)
+
+    def test_a_line_along_the_gutter_counts_when_it_runs_on_the_card_side_of_the_text(self):
+        # parallel lines spread 8 px apart around the middle of the gutter; the text's middle stands
+        # 10 px off the card edge, half the gutter less 10 px from the middle (widget 10, page 12)
+        cases = (
+            # 4 px off the middle away from the card: under the text whatever the mode
+            (exit_model(["f e a? g", "c h d b"],
+                        ["a? -> f : да", "a? -> d : да", "b -> f", "g -> h", "g -> f", "a? -> g : да"]),
+             ("a?", "d"), "B", 4.0, {"widget": False, "page": False}),
+            # 8 px off the middle towards the card: through the text whatever the mode
+            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "b -> e", "g -> c", "d -> h",
+                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e"]),
+             ("a?", "g"), "T", 8.0, {"widget": True, "page": True}),
+            # 4 px towards the card: through the foot of the text in a widget, clear of it on a page
+            (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c", "d -> c"]),
+             ("a?", "d"), "B", -4.0, {"widget": True, "page": False}),
+            # the same over an exit up: through the top of the text in a widget, clear of it on a page
+            (exit_model([". e b c", ". . a? d"], ["c -> e", "d -> c", "c -> a?", "a? -> e : да", "e -> c", "e -> d",
+                                                  "b -> e", "a? -> b : да"]),
+             ("a?", "b"), "T", 4.0, {"widget": True, "page": False}),
+        )
+        for model, edge, side, oy, crosses in cases:
+            for mode, warned in crosses.items():
+                with self.subTest(edge=edge, oy=oy, mode=mode):
+                    layout, warnings = flow.plan(model, mode)
+                    sa, _, near = self.near_label(layout, edge)
+                    self.assertEqual(sa, side)
+                    self.assertEqual([n[1:] for n in near], [("h", oy)], near)
+                    self.assertEqual(len(self.label_warnings(warnings, edge)), int(warned), warnings)
+
+
+class StraightExitRoom(ExitLabelCase):
+    def test_a_label_past_the_right_edge_of_the_diagram_does_not_fit(self):
+        # the last column's card: a card width of room would run the text out of the section
+        model = exit_model(["p q r a?", "s t u b"], ["a? -> b : подтверждено вендором", "a? -> r : нет"])
+        layout, _ = flow.plan(model, "widget", draft=True)
+        geo, sa, x0, x1 = self.text_span(layout, ("a?", "b"))
+        self.assertEqual(sa, "B")
+        self.assertLess(x1 - x0, layout["card_w"])
+        self.assertGreater(x1, geo.total)
+        self.assertIn("не помещается у выхода вниз", self.fit_error(model, ("a?", "b")))
+
+    def test_an_exit_up_that_does_not_fit_is_named_so(self):
+        # the exit-up model on narrow cards: the label is wider than a card
+        model = exit_model(UP["grid"], [e if e != "d -> c : да" else "d -> c : подтверждено вендором"
+                                        for e in UP["edges"]])
+        layout, _ = flow.plan(model, "widget", {"total": 300}, draft=True)
+        _, sa, x0, x1 = self.text_span(layout, ("d", "c"))
+        self.assertEqual(sa, "T")
+        self.assertGreater(x1 - x0, layout["card_w"])
+        self.assertIn("не помещается у выхода вверх", self.fit_error(model, ("d", "c"), {"total": 300}))
+
+
+# Under a card shorter than its row the label of a straight exit down hangs inside the row:
+# template/js/flow.js hangs the text 14 px under the card's own bottom edge, and cards align to the
+# top of their row. A two-line text makes t twice as tall as a? beside it.
+TALL = [{"id": "t", "title": "T", "text": "сверка документов и адреса"}]
+
+
+class UnderShortCard(ExitLabelCase):
+    EDGE = ("a?", "b")
+
+    def plan(self, grid, edges, mode="widget", draft=False):
+        return flow.plan(exit_model(grid, edges, nodes=TALL), mode, draft=draft)
+
+    def in_card_row(self, layout, other):
+        """The segments of `other` in the row of cards a? stands in whose px span meets the label
+        under a?: ("h", oy) along the row, ("v", lo, hi) for a vertical one reaching the row."""
+        geo, _, x0, x1 = self.text_span(layout, self.EDGE)
+        R = layout["cells"]["a?"][0] * 2 + 1
+        path = next(e["path"] for e in layout["edges"] if (e["a"], e["b"]) == other)
+        out = []
+        for (xa, ya, oxa, oya), (xb, yb, oxb, _) in zip(path, path[1:]):
+            pa, pb = geo.x(xa) + oxa, geo.x(xb) + oxb
+            if xa == xb and min(ya, yb) <= R <= max(ya, yb) and x0 < pa < x1:
+                out.append(("v", min(ya, yb), max(ya, yb)))
+            elif ya == yb == R and min(pa, pb) < x1 and max(pa, pb) > x0:
+                out.append(("h", oya))
+        return out
+
+    def test_a_line_turning_into_the_next_card_through_the_label_is_a_warning(self):
+        # p -> t comes down the gutter between a? and t and turns into t's side at the height of t,
+        # through the text under a?; nothing reaches the gutter under a?, where the text would be
+        # beside a card as tall as a?
+        layout, warnings = self.plan(["p q . .", "a? t . .", "b . . ."],
+                                     ["a? -> b : сверка вручную", "a? -> p : нет", "q -> t", "p -> t"])
+        self.assertEqual(self.near_label(layout, self.EDGE)[2], [])
+        self.assertIn(("v", 1, 3), self.in_card_row(layout, ("p", "t")))
+        found = self.label_warnings(warnings, self.EDGE)
+        self.assertEqual(len(found), 1, warnings)
+        self.assertTrue(found[0].startswith("связь a? -> b: подпись 'сверка вручную' у выхода вниз ляжет на другую линию"),
+                        found)
+
+    def test_the_next_card_in_the_row_limits_the_room(self):
+        grid, edges = [". q . .", "a? t . .", "b . . ."], ["a? -> b : ручная сверка данных", "a? -> t : нет", "q -> t"]
+        layout, _ = self.plan(grid, edges, draft=True)
+        geo, _, x0, x1 = self.text_span(layout, self.EDGE)
+        self.assertTrue(x0 < geo.left(1) < x1, (x0, geo.left(1), x1))
+        self.assertIn("не помещается у выхода вниз", self.fit_error(exit_model(grid, edges, nodes=TALL), self.EDGE))
+
+    def test_a_card_alone_in_its_row_keeps_a_card_width(self):
+        # a? is its row's only card, so the row is as tall as a? and the text stays in the gutter
+        layout, warnings = self.plan(["q . . .", "a? . . .", "b . . ."],
+                                     ["a? -> b : ручная сверка данных", "a? -> q : нет"])
+        geo, _, x0, x1 = self.text_span(layout, self.EDGE)
+        self.assertTrue(x0 < geo.left(1) < x1, (x0, geo.left(1), x1))
+        self.assertEqual(self.label_warnings(warnings, self.EDGE), [], warnings)
+
+    def test_lines_at_the_source_cards_own_height_are_no_warning(self):
+        # a line leaving a? sideways, and one coming down the gutter into a?'s side, are drawn within
+        # a?'s height, above the text under it
+        cases = ((["a? . t .", "b . . ."], ["a? -> b : ручная проверка", "a? -> t : нет"], ("a?", "t")),
+                 (["p q . .", "a? . t .", "b . . ."], ["a? -> b : ручная проверка", "a? -> t : нет", "p -> a?", "q -> a?"],
+                  ("q", "a?")))
+        for grid, edges, beside in cases:
+            with self.subTest(grid=grid):
+                layout, warnings = self.plan(grid, edges)
+                self.assertTrue(self.in_card_row(layout, beside), beside)
+                self.assertEqual(self.label_warnings(warnings, self.EDGE), [], warnings)
+
+
+class ScriptOffsets(unittest.TestCase):
+    SCRIPT = (support.SKILL / "template" / "js" / "flow.js").read_text(encoding="utf-8")
+
+    def test_the_check_mirrors_where_the_script_puts_labels(self):
+        # each pattern captures one offset of the label code in template/js/flow.js, and names the
+        # constant diagrams/flow.py measures it with
+        for pattern, name in ((r"lx=rt\?p2\.x-(\d+):", "LABEL_BEND"),
+                              (r"\{lx=p1\.x\+(\d+);ly=my\}", "LABEL_BEND"),
+                              (r"\(p1\.y\+p2\.y\)/2\)\+(\d+);", "LABEL_DROP"),
+                              (r"e\.sa==='B'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
+                              (r"e\.sa==='B'\)\{lx=a0\.x\+\d+;ly=a0\.y\+(\d+)\}", "LABEL_BELOW"),
+                              (r"e\.sa==='T'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
+                              (r"e\.sa==='T'\)\{lx=a0\.x\+\d+;ly=a0\.y-(\d+)\}", "LABEL_ABOVE"),
+                              (r"e\.sa==='R'\)\{lx=a0\.x\+(\d+);", "LABEL_SIDE")):
+            with self.subTest(constant=name, pattern=pattern):
+                found = re.findall(pattern, self.SCRIPT)
+                self.assertEqual(len(found), 1, f"{pattern!r} in template/js/flow.js")
+                self.assertEqual(int(found[0]), getattr(flow, name, None))
 
 
 if __name__ == "__main__":
