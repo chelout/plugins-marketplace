@@ -86,5 +86,100 @@ class SharedStretch(unittest.TestCase):
         self.assertEqual(router.crossings(SWAP_PATHS + [across]), 3)
 
 
+def sides_along(p, q, off_p, off_q):
+    """Per unit step of p that q takes too (either way), the side of q's drawn line against p's,
+    relative to p's direction of travel: 1 or -1, 0 where their offsets are equal."""
+    def steps(path, off):
+        out = {}
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            dx, dy = router._sign(b[0] - a[0]), router._sign(b[1] - a[1])
+            pt = a
+            while pt != b:
+                nxt = (pt[0] + dx, pt[1] + dy)
+                out[pt, nxt] = off[k]
+                pt = nxt
+        return out
+    sp, sq = steps(p, off_p), steps(q, off_q)
+    sides = []
+    for (a, b), (ox, oy) in sp.items():
+        other = sq.get((a, b), sq.get((b, a)))
+        if other is None:
+            continue
+        tx, ty = b[0] - a[0], b[1] - a[1]
+        sides.append(router._sign(tx * (other[1] - oy)) if ty == 0 else router._sign(-ty * (other[0] - ox)))
+    return sides
+
+
+CORNER_NODES = frozenset({(1, 1), (3, 1), (1, 3), (3, 3)})
+# grid ["a b", "c d"], d -> a and a -> d: they share (1,1)-(2,1)-(2,2) and turn together at (2,1)
+CORNER_PATHS = [[(3, 3), (2, 3), (2, 1), (1, 1)], [(1, 1), (2, 1), (2, 2), (3, 2), (3, 3)]]
+
+
+class CornerOrder(unittest.TestCase):
+    """assign_offsets keeps two lines in one order along all of a stretch they share, through the
+    corners they turn together: the line inside a shared corner on one lattice line stays inside on
+    the next."""
+
+    def assert_one_order(self, paths, nodes=frozenset()):
+        offs = router.assign_offsets(paths, nodes=nodes)
+        for i in range(len(paths)):
+            for j in range(i + 1, len(paths)):
+                with self.subTest(pair=(i, j)):
+                    sides = sides_along(paths[i], paths[j], offs[i], offs[j])
+                    # the case exists only if the two lines share a stretch
+                    self.assertTrue(sides, "harness: the lines share no step")
+                    self.assertEqual(len(set(sides)), 1, f"{paths[i]} and {paths[j]} change order: {sides}")
+                    self.assertNotIn(0, sides)
+        return offs
+
+    def test_two_lines_through_one_corner(self):
+        offs = self.assert_one_order(CORNER_PATHS, CORNER_NODES)
+        # they part at (2,2): a -> d turns right there, d -> a goes on down, so a -> d lies to the
+        # right on the gutter between the columns, and outside the corner, above, along y=1
+        self.assertGreater(offs[1][2][0], offs[0][2][0])
+        self.assertLess(offs[1][1][1], offs[0][3][1])
+
+    def test_one_route_between_the_same_nodes(self):
+        # nothing parts them: any order, as long as it holds around both corners
+        route = [(5, 5), (4, 5), (4, 3), (1, 3)]
+        self.assert_one_order([route, route, route[::-1]], frozenset({(5, 5), (1, 3)}))
+
+    def test_order_from_the_far_end_of_two_corners(self):
+        # both come out of (1,1) to the right, turn down at (4,1), right again at (4,5) and part at
+        # (6,5): the one going on to the right keeps the outer side of the first corner
+        p = [(1, 1), (4, 1), (4, 5), (7, 5)]
+        q = [(1, 1), (4, 1), (4, 5), (6, 5), (6, 7)]
+        self.assert_one_order([p, q], frozenset({(1, 1), (7, 5)}))
+        self.assert_one_order([q, p], frozenset({(1, 1), (7, 5)}))
+
+    def test_swap_through_a_corner_keeps_the_order_it_enters_in(self):
+        # up a gutter and along y=1 together, entering and leaving in swapped order: one crossing,
+        # where they leave, so one order along both lattice lines
+        outside = [(1, 5), (2, 5), (2, 1), (4, 1), (4, 2)]
+        inside = [(3, 5), (2, 5), (2, 1), (4, 1), (4, 0)]
+        self.assertEqual(router.crossings([outside, inside]), 1, "harness: the stretch has no swap")
+        self.assert_one_order([outside, inside])
+
+    def test_a_swap_gives_way_to_an_order_without_one(self):
+        # grid ["e b", ". c", "d a"] as routed: along the gutter x=2 the swaps of a -> e with the
+        # others, taken as orders, would close a cycle with the orders of b -> d and d -> c
+        paths = [[(3, 1), (1, 1)], [(3, 1), (2, 1), (2, 4), (1, 4), (1, 5)], [(1, 5), (2, 5), (2, 3), (3, 3)],
+                 [(1, 5), (1, 6), (4, 6), (4, 3), (3, 3)], [(1, 5), (2, 5), (2, 4), (3, 4), (3, 3)],
+                 [(3, 5), (2, 5), (2, 3), (0, 3), (0, 1), (1, 1)], [(3, 1), (2, 1), (2, 5), (1, 5)],
+                 [(3, 1), (4, 1), (4, 5), (3, 5)], [(3, 5), (2, 5), (2, 2), (1, 2), (1, 1)]]
+        offs = router.assign_offsets(paths, nodes=frozenset({(1, 1), (3, 1), (3, 3), (1, 5), (3, 5)}))
+        checked = 0
+        for i in range(len(paths)):
+            for j in range(i + 1, len(paths)):
+                sides = sides_along(paths[i], paths[j], offs[i], offs[j])
+                if not sides or router.shared_swaps(paths[i], paths[j]):
+                    continue
+                checked += 1
+                with self.subTest(pair=(i, j)):
+                    self.assertEqual(len(set(sides)), 1, f"{paths[i]} and {paths[j]} change order: {sides}")
+        # the case exists only if pairs without a swap share the gutter with the swapping ones
+        self.assertGreaterEqual(checked, 5, "harness: too few pairs share a stretch without a swap")
+
+
 if __name__ == "__main__":
     unittest.main()

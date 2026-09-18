@@ -18,13 +18,13 @@ Test cases (written from the declaration of the change, before the implementatio
    card sideways, and that end lies on the card's left or right edge, CLAMP_IN or more inside its
    top and bottom as measured in the page. A straight line between a tall card and a short one,
    drawn from the tall card's row alone, would meet the short card below its bottom edge.
-7. The models in CASES, in both modes, as in 1 and 2: pixel crossings equal lattice crossings
-   (except GUTTER_CROSSINGS), and row-line order follows the offsets. The first four hold five or
-   more lines along one row line beside a card shorter than the row, where lines saturate the band
-   and must merge: straight lines both ways between one pair of cards, and a line clamped at the
-   band's upper or lower limit beside an interior run of another line. A clamp that is not the same
-   along the whole row line (a two-point line's source card, the card at a line's own end, none on
-   an interior run) puts a line past the pill (6) or two lines out of order there.
+7. The models in CASES, in both modes, as in 1 and 2: pixel crossings equal lattice crossings, and
+   row-line order follows the offsets. The first four hold five or more lines along one row line
+   beside a card shorter than the row, where lines saturate the band and must merge: straight lines
+   both ways between one pair of cards, and a line clamped at the band's upper or lower limit beside
+   an interior run of another line. A clamp that is not the same along the whole row line (a
+   two-point line's source card, the card at a line's own end, none on an interior run) puts a line
+   past the pill (6) or two lines out of order there.
 8. Every model, in both modes: a horizontal run on a row line of cards stays within that row line's
    band (CLAMP_IN inside the cards lines enter or leave sideways there), and two runs there with
    different offsets are drawn exactly their offset difference apart unless one sits at the band's
@@ -41,6 +41,8 @@ Test cases (written from the declaration of the change, before the implementatio
     sides along it, one crossing on the lattice, and the page draws exactly that one;
     "gutter-no-swap": a -> d and d -> a share a gutter in one order from end to end, no crossing
     on the lattice, and the page draws none.
+13. "shared-corner", both modes: d -> a and a -> d share a stretch from a through a corner both turn
+    at, and part below it; no crossing on the lattice, and the page draws none.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -153,13 +155,12 @@ CASES = {
     # a -> d and d -> a along the gutter between the rows, d -> a above from end to end
     "gutter-no-swap": {"kind": "flow", "nodes": [{"id": i, "title": i, "text": "Text"} for i in "abcd"],
                        "grid": ["a b .", ". c d"], "edges": ["a -> d", "d -> a"]},
+    # d -> a and a -> d share the stretch (1,1)-(2,1)-(2,2) and turn together at (2,1): no crossing
+    "shared-corner": {"kind": "flow", "nodes": [step(i) for i in "abcd"], "grid": ["a b", "c d"],
+                      "edges": ["d -> a", "a -> d"]},
 }
 # Five or more lines along one row line (docstring case 7).
 SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run", "lower-limit-interior-run")
-# The gutters of this one also hold crossings between d -> f, d -> f and f -> d, three lines on one
-# route that the router's offsets order differently on each lattice line they turn between. No
-# drawing needs them, so router.crossings does not count them, and its crossings are not compared.
-GUTTER_CROSSINGS = ("lower-limit-interior-run",)
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
@@ -552,8 +553,7 @@ class BrowserLines(unittest.TestCase):
         for name in CASES:
             for mode in MODES:
                 with self.subTest(model=name, mode=mode):
-                    if name not in GUTTER_CROSSINGS:
-                        self.check_crossings(name, mode)
+                    self.check_crossings(name, mode)
                     self.check_row_order(name, mode)
                     if name in SATURATED:
                         # the case exists only if five or more lines are drawn along one row line

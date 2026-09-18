@@ -165,7 +165,33 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
     slots follows where each line turns: on a horizontal run the line that
     turns down lies below the one that continues, the line that turns up lies
     above; on a vertical run the line that turns right lies to the right. So
-    a fan of lines leaving one node never crosses itself when it spreads."""
+    a fan of lines leaving one node never crosses itself when it spreads.
+
+    Two lines that share a stretch keep one order along all of it, through
+    the corners they turn together, so the line inside such a corner on one
+    lattice line stays inside on the next: the order they enter and leave
+    the stretch in (stretches), and lines between the same two nodes along
+    one route the order of their indices on the first segment of the route.
+    Two lines that enter and leave in swapped order cross once whatever the
+    order; along several lattice lines they keep the one they enter in, where
+    the others allow it, and cross where they leave."""
+    # per pair of paths, the order their shared stretches put them in on each lattice line:
+    # (axis, line, i, j) -> 1 when path j lies on the higher side of path i there, -1 on the lower;
+    # firm where the stretch has no swap, loose where it has one
+    firm, loose = {}, {}
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            for pts, first, last in stretches(paths[i], paths[j]):
+                swap = first * last < 0
+                if swap and (len({x for x, _ in pts}) == 1 or len({y for _, y in pts}) == 1):
+                    continue  # along one lattice line they cross at an end of it whatever the order
+                side = _sign(first) or _sign(last) or _higher(pts[0], pts[1])
+                order = loose if swap else firm
+                for a, b in zip(pts, pts[1:]):
+                    axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
+                    order[(axis, line, i, j)] = side * _higher(a, b)
+                    order[(axis, line, j, i)] = -side * _higher(a, b)
+
     # per path: segments with the direction of the neighbouring segment at each end
     items = {}  # (axis, line) -> list of dicts
     for i, p in enumerate(paths):
@@ -234,7 +260,20 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
                     sides = [x for x in (d["lo_side"], d["hi_side"]) if x]
                 return sum(sides) / len(sides) if sides else 0
 
-            ordered = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
+            ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
+
+            def free(d, orders):
+                # no line of the group still to place has to lie below d
+                return not any(order.get((axis, line, o["i"], d["i"])) == 1 for order in orders for o in ranked)
+
+            # the order of shared stretches first, a loose one only where the firm ones allow it;
+            # the ranking places the lines they leave free and breaks a cycle among them
+            ordered = []
+            while ranked:
+                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
+                if n is None:
+                    n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
+                ordered.append(ranked.pop(n))
             for n, d in enumerate(ordered):
                 slot[(key[0], key[1], d["i"])] = (n, len(ordered))
 
@@ -281,15 +320,23 @@ def crossings(paths):
 
 def shared_swaps(p, q):
     """Number of stretches the paths p and q share that they enter and leave
-    in swapped order. assign_offsets draws a shared stretch as parallel lines,
-    each at an end of it on the side its path arrives from or leaves to
-    (side_at): p left of q at one end and right of it at the other cross.
-    A stretch runs on through a corner both paths turn together; sides are
-    taken against the direction of travel, which such a corner keeps. An end
-    where both paths meet their node puts no order."""
+    in swapped order (stretches): p left of q at one end and right of it at
+    the other cross, however the stretch is drawn."""
+    return sum(1 for _, first, last in stretches(p, q) if first * last < 0)
+
+
+def stretches(p, q):
+    """The stretches the paths p and q share, as (points, first, last): the
+    points of p along the stretch, and the side of q against p where they
+    enter it and where they leave it, from the points each arrives from or
+    leaves to (side_at), relative to p's direction of travel: positive when q
+    is on the side _side calls 1, negative on the other, 0 where both meet
+    their node. A stretch runs on through a corner both paths turn together;
+    sides are taken against the direction of travel, which such a corner
+    keeps."""
     rp, rq = _refine(p, q), _refine(q, p)
     at = {pt: k for k, pt in enumerate(rq)}
-    n, k = 0, 0
+    k = 0
     while k < len(rp) - 1:
         if rp[k] not in at or rp[k + 1] not in at or abs(at[rp[k + 1]] - at[rp[k]]) != 1:
             k += 1
@@ -302,9 +349,7 @@ def shared_swaps(p, q):
         t1 = (rp[k][0] - rp[k - 1][0], rp[k][1] - rp[k - 1][1])
         first = _side(t0, rp[s], _nth(rq, at[rp[s]] - d)) - _side(t0, rp[s], _nth(rp, s - 1))
         last = _side(t1, rp[k], _nth(rq, at[rp[k]] + d)) - _side(t1, rp[k], _nth(rp, k + 1))
-        if first * last < 0:
-            n += 1
-    return n
+        yield rp[s:k + 1], first, last
 
 
 def _refine(path, other):
@@ -321,6 +366,12 @@ def _refine(path, other):
 
 def _nth(pts, k):
     return pts[k] if 0 <= k < len(pts) else None
+
+
+def _higher(a, b):
+    """Where the side _side calls 1 lies for travel from a to b, on the axis
+    across it: 1 at the higher coordinate (below, right), -1 at the lower."""
+    return _sign(b[0] - a[0]) if a[1] == b[1] else -_sign(b[1] - a[1])
 
 
 def _side(t, pt, other):
