@@ -324,12 +324,11 @@ def _nth(pts, k):
 
 
 def _side(t, pt, other):
-    # which side of the direction t at pt the neighbouring point lies on: 1 or -1; 0 straight
-    # ahead or behind, or where the path ends at pt
+    """Side of the direction t at pt that the neighbouring point `other` lies
+    on: 1 or -1; 0 straight ahead or behind, or where the path ends at pt."""
     if other is None:
         return 0
-    c = t[0] * (other[1] - pt[1]) - t[1] * (other[0] - pt[0])
-    return (c > 0) - (c < 0)
+    return _sign(t[0] * (other[1] - pt[1]) - t[1] * (other[0] - pt[0]))
 
 
 def ascii(lat, ids_at, paths, arrows=True):

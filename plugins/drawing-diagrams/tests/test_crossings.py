@@ -46,15 +46,23 @@ class SharedStretch(unittest.TestCase):
                 self.assertEqual(router.crossings(paths), 1)
 
     def test_same_side_at_both_ends(self):
-        # both come into the gutter from the left, or leave it to the right: no swap
+        # each enters and leaves the gutter on its own side: no swap
         self.assertEqual(router.crossings([[(1, 1), (2, 1), (2, 5), (1, 5)], [(3, 1), (2, 1), (2, 5), (3, 5)]]), 0)
 
     def test_one_line_straight_through(self):
         straight = [(2, 0), (2, 6)]
-        # the other joins from the left and leaves to the right of the straight line: a swap
-        self.assertEqual(router.crossings([straight, [(1, 2), (2, 2), (2, 4), (3, 4)]]), 1)
-        # it joins and leaves on the left: none
-        self.assertEqual(router.crossings([straight, [(1, 2), (2, 2), (2, 4), (1, 4)]]), 0)
+        for other, want in (([(1, 2), (2, 2), (2, 4), (3, 4)], 1),   # joins from the left, leaves to the right
+                            ([(1, 2), (2, 2), (2, 4), (1, 4)], 0)):  # joins and leaves on the left
+            for paths in ([straight, other], [straight, other[::-1]], [straight[::-1], other]):
+                with self.subTest(paths=paths):
+                    self.assertEqual(router.crossings(paths), want)
+
+    def test_two_swaps_between_one_pair(self):
+        # the other line joins the straight one from the left and leaves to the right, then comes
+        # back from the right and leaves to the left: two stretches, a crossing each
+        straight = [(2, 0), (2, 10)]
+        other = [(1, 2), (2, 2), (2, 4), (3, 4), (3, 6), (2, 6), (2, 8), (1, 8)]
+        self.assertEqual(router.crossings([straight, other]), 2)
 
     def test_stretch_through_a_shared_corner(self):
         # both go up a gutter and turn along y=1 together, to the right or to the left; the line
