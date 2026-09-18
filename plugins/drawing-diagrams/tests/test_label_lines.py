@@ -139,6 +139,19 @@ class SidewaysLabel(unittest.TestCase):
                     self.assertTrue(found[0].startswith("связь e -> f: подпись 'да' у выхода вбок ляжет на другую линию"),
                                     found)
 
+    def test_lines_along_the_row_under_the_labels_own_line_are_no_warning(self):
+        # four lines leave or enter c's side along the row, 8 px apart, and the label's own line
+        # c -> a is the topmost, 12 px above the row's base: a -> c, above the base but under c -> a,
+        # passes under the text like c -> e and c -> b below the base
+        model = exit_model(["c . a", "d b e"], ["b -> c", "c -> a : да", "c -> e", "a -> c", "d -> c", "c -> b"])
+        for mode in ("widget", "page"):
+            with self.subTest(mode=mode):
+                layout, warnings = flow.plan(model, mode)
+                oy, near = self.along_the_row(layout, ("c", "a"))
+                self.assertEqual((oy, near), (-12.0, [(("c", "e"), "h", 4.0), (("a", "c"), "h", -4.0),
+                                                      (("c", "b"), "h", 12.0)]))
+                self.assertEqual(self.label_warnings(warnings, ("c", "a")), [], warnings)
+
 
 def exit_model(grid, edges, terminals=(), nodes=()):
     """A flow on `grid`, a node per id titled with it; `terminals` are ids, `nodes` replace the
@@ -383,6 +396,48 @@ class UnderShortCard(ExitLabelCase):
                 layout, warnings = self.plan(grid, edges)
                 self.assertTrue(self.in_card_row(layout, beside), beside)
                 self.assertEqual(self.label_warnings(warnings, self.EDGE), [], warnings)
+
+
+class BesideSecondSegment(unittest.TestCase):
+    """A label beside a vertical second segment, pinned to a row of cards: template/js/flow.js stands
+    the middle of the text on the row's base, LABEL_BEND off the line."""
+
+    def along_the_row(self, layout, edge, Y, side):
+        """The other lines along lattice row Y whose px span meets the text of `edge`'s label
+        beside its vertical second segment on `side`, as (edge, oy)."""
+        geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"])
+        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
+        X, _, ox, _ = own["path"][1]
+        x, need = geo.x(X) + ox, label_width(own["label"])
+        x0, x1 = (x + flow.LABEL_BEND, x + flow.LABEL_BEND + need) if side == "R" else (x - flow.LABEL_BEND - need,
+                                                                                        x - flow.LABEL_BEND)
+        near = []
+        for e in layout["edges"]:
+            for (xa, ya, oxa, oya), (xb, yb, oxb, _) in zip(e["path"], e["path"][1:]):
+                pa, pb = geo.x(xa) + oxa, geo.x(xb) + oxb
+                if ya == yb == Y and min(pa, pb) < x1 and max(pa, pb) > x0:
+                    near.append(((e["a"], e["b"]), oya))
+        return near
+
+    def test_a_line_along_a_row_with_sideways_ends_counts_whatever_its_offset(self):
+        # d -> b leaves d sideways, turns up in the gutter and into b's side. Every other place beside
+        # its second segment is taken; pinned to d's row on the right the text meets only c -> d,
+        # running straight along the row 8 px under its base, LINE_REACH and more from the text's
+        # middle. template/js/flow.js clamps every line on a row line where lines enter or leave cards
+        # sideways into one band, 10 px inside the shortest of those cards, and these cards are one
+        # title line high: c -> d is drawn nearer the base than its offset, through the text
+        model = exit_model(["a b e", "d . c"], ["e -> d", "c -> a", "d -> b : да", "c -> b", "b -> d", "c -> d"])
+        for mode in ("widget", "page"):
+            with self.subTest(mode=mode):
+                layout, warnings = flow.plan(model, mode)
+                own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("d", "b"))
+                self.assertEqual((own["sa"], own["path"][0][1], own["path"][1][1] != own["path"][2][1]), ("R", 3, True))
+                self.assertEqual(self.along_the_row(layout, ("d", "b"), 3, "R"), [(("c", "d"), 8.0)])
+                self.assertGreaterEqual(8.0, flow.LINE_REACH)
+                found = [w for w in warnings if w.startswith("связь d -> b:")]
+                self.assertEqual(len(found), 1, warnings)
+                self.assertTrue(found[0].startswith("связь d -> b: подпись 'да' рядом со вторым отрезком ляжет на другую "
+                                                    "линию"), found)
 
 
 class ScriptOffsets(unittest.TestCase):

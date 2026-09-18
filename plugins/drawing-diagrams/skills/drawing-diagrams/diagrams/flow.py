@@ -104,8 +104,17 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=
     16 px or less. Beside a straight sideways line (-1, minus that line's offset) the text stands
     above that line, so a line along the row with a smaller offset runs through it, a straight
     line between the same two cards included; one with the same offset or a larger one passes
-    under it."""
+    under it.
+    On a row of cards where a line enters or leaves a card sideways, template/js/flow.js then
+    clamps every point into one band, 10 px inside the lowest top and the highest bottom of those
+    cards: the clamp is monotonic, so the order the rule above compares holds, but a line far from
+    the base is drawn nearer it, a few px off it when those cards are one title line high. Card
+    heights are unknown here, so beside a vertical second segment (`half` 0) every line along such
+    a row counts, whatever its offset; along any other row, one whose offset is under LINE_REACH."""
     cards = [(geo.left(c), geo.right(c)) for r, c in occupied if Y % 2 and r == Y // 2]
+    # a path's ends are its cards' points: an end whose segment runs along Y enters or leaves a card
+    # sideways there
+    banded = any(q[0][1] == q[1][1] == Y or q[-1][1] == q[-2][1] == Y for q in paths)
     lines = []
     for j, (q, off) in enumerate(zip(paths, offsets)):
         for k in range(len(q) - 1):
@@ -119,7 +128,7 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=
             elif half and y1 == y2 == Y and off[k][1] * half > reach:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
-            elif not half and horizontal and y1 == y2 == Y and abs(off[k][1]) < LINE_REACH:
+            elif not half and horizontal and y1 == y2 == Y and (banded or abs(off[k][1]) < LINE_REACH):
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
     return cards, lines
