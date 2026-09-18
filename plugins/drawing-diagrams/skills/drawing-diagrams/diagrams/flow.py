@@ -93,14 +93,28 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=
     """Cards and lines in lattice row Y (a row of cards when odd, a gutter when even), as
     px intervals across. `own` = (path index, segment index) is the segment the label
     stands beside and does not count; `horizontal=False` leaves out lines along the row.
-    `half` = -1 or 1 is for a label standing wholly above or below the middle of the row: it
-    keeps only the lines that reach more than `reach` px past the middle into that half. A
-    vertical line ending in the row from the other half turns there and runs along the row,
-    so it counts as that line. Beside a straight sideways line (-1, 0) template/js/flow.js draws
-    that line at the middle of the two cards' overlap, and cards align to the top, so it is
-    never below the row's middle; what is drawn there or lower passes under the text, and so
-    does a straight line between the same two cards, drawn on the label's own line."""
+    `half` = -1 or 1 is for a label standing wholly above or below a height in the row: it keeps
+    the verticals that come into the row from that side or pass it, and the lines along the row
+    whose offset lies more than `reach` px into that half from the row's base (a negative `reach`
+    takes in lines on the other side of the base, up to that far). A vertical line ending in the
+    row from the other half turns there and runs along the row, so it counts as that line.
+    template/js/flow.js draws every point on a lattice row line from one base plus its offset:
+    the middle of a gutter; on a row of cards the middle of the overlap of the cards that lines
+    enter or leave sideways there, or the row's middle when there are none or they overlap by
+    16 px or less. Beside a straight sideways line (-1, minus that line's offset) the text stands
+    above that line, so a line along the row with a smaller offset runs through it, a straight
+    line between the same two cards included; one with the same offset or a larger one passes
+    under it.
+    On a row of cards where a line enters or leaves a card sideways, template/js/flow.js then
+    clamps every point into one band, 10 px inside the lowest top and the highest bottom of those
+    cards: the clamp is monotonic, so the order the rule above compares holds, but a line far from
+    the base is drawn nearer it, a few px off it when those cards are one title line high. Card
+    heights are unknown here, so beside a vertical second segment (`half` 0) every line along such
+    a row counts, whatever its offset; along any other row, one whose offset is under LINE_REACH."""
     cards = [(geo.left(c), geo.right(c)) for r, c in occupied if Y % 2 and r == Y // 2]
+    # a path's ends are its cards' points: an end whose segment runs along Y enters or leaves a card
+    # sideways there
+    banded = any(q[0][1] == q[1][1] == Y or q[-1][1] == q[-2][1] == Y for q in paths)
     lines = []
     for j, (q, off) in enumerate(zip(paths, offsets)):
         for k in range(len(q) - 1):
@@ -111,10 +125,10 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=
             if x1 == x2 and lo <= Y <= hi and not (half and (lo if half < 0 else hi) == Y):
                 x = geo.x(x1) + off[k][0]
                 lines.append((x - 1, x + 1))
-            elif half and y1 == y2 == Y and len(q) > 2 and off[k][1] * half > reach:
+            elif half and y1 == y2 == Y and off[k][1] * half > reach:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
-            elif not half and horizontal and y1 == y2 == Y and abs(off[k][1]) < LINE_REACH:
+            elif not half and horizontal and y1 == y2 == Y and (banded or abs(off[k][1]) < LINE_REACH):
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
     return cards, lines
@@ -211,10 +225,11 @@ def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()
                 spots.append(spot)
         return spots
     if sa in ("L", "R"):
-        # straight sideways: from the card edge towards the next card in the row, which is the target;
-        # another line reaching above the row's middle where the text stands runs through it
+        # straight sideways: from the card edge towards the next card in the row, which is the target,
+        # above the label's own line; another line along the row above that line, where the text
+        # stands, runs through it, and so does a vertical coming into the row from above or passing it
         cards = [(geo.left(cc), geo.right(cc)) for rr, cc in occupied if rr == r and cc != c]
-        _, lines = band_obstacles(p[0][1], (i, 0), paths, offsets, geo, occupied, half=-1)
+        _, lines = band_obstacles(p[0][1], (i, 0), paths, offsets, geo, occupied, half=-1, reach=-off[0][1])
         start = geo.right(c) + LABEL_SIDE if sa == "R" else geo.left(c) - LABEL_SIDE
         room = room_beside(start, sa, cards, geo.gap + card_w - 20)
         return [{"where": "у выхода вбок", "room": room, "line_room": room_beside(start, sa, lines, room),
