@@ -100,10 +100,15 @@ font; a footnote marker such as ① is 10 px, wider than any digit). The text
 keeps 2 px from a card edge.
 
 - A straight line down or up keeps the label at the exit, 5 px beside the
-  line, in the gutter under or over the card: a card width of room. The text
-  stands between the card and the middle of the gutter, where lines turn: a
-  line leaving or entering the same side of the card beside it runs through
-  it, one from the far side that turns along the middle stays clear.
+  line, in the gutter under or over the card: a card width of room, up to the
+  right edge of the diagram. The text stands between the card and the middle
+  of the gutter, where lines turn: a line leaving or entering the same side of
+  the card beside it runs through it, and so does a line along the gutter
+  moved towards the card (4 px is enough in a widget, 8 px on a page); a line
+  from the far side that turns along the middle stays clear. A card shorter
+  than its row hangs the text inside the row, so when the row holds other
+  cards the next card to the right ends the room, and a line drawn there at
+  another card's height lies on the label.
 - A straight sideways exit starts the label 3 px from the card edge. Into an
   occupied neighbour the room is the gutter less 5 px: 23 px in a widget flow,
   state or blocks (gutter 28), 27 px on a page (gutter 32), 13 px in a widget
