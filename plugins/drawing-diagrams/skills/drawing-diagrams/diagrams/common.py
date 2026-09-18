@@ -165,6 +165,22 @@ def wrap_lines(text, width, scale=0.88):
     return lines
 
 
+def too_wide_word(text, width, scale=0.88):
+    """The first word of `text` whose own width exceeds `width` px, as `(word, budget)`, or None.
+    `wrap_lines` starts a line with a word without measuring it, and the card CSS sets no
+    `overflow-wrap`, so a word wider than its box is clipped rather than broken: the line count
+    says nothing about such a text. The budget is `fit_prefix`'s, so cutting the word to it
+    passes this check."""
+
+    def fits(s):
+        return text_width(s, scale) * 1.05 <= width  # the factor wrap_lines applies to a word
+
+    for word in text.split():
+        if not fits(word):
+            return word, fit_prefix(word, fits)
+    return None
+
+
 def fit_prefix(text, fits):
     """Budget of a text-fit message: the length of the longest prefix of `text` that `fits` accepts,
     so cutting the text to it passes the same check. 0 when not even one character fits."""

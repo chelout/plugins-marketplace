@@ -36,7 +36,8 @@ no groups.
   (вебхук, вариант). `states` lists only what changed; a missing entity
   keeps its previous value. A chip whose value changed is highlighted.
 - Checks: unknown entity in `states`, duplicate ids, a title that wraps, text
-  over two lines, a chip value over 28 characters (warning).
+  over two lines, a single word in the text wider than the card (it would be
+  clipped, not wrapped), a chip value over 28 characters (warning).
 - `--format mermaid` writes a mermaid `timeline` with the title, the text and
   the changed states as events; colons are replaced because mermaid splits
   events on them. `--format ascii` prints a table of moments by entity with

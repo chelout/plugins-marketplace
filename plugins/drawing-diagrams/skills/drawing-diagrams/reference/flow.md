@@ -152,7 +152,9 @@ reviewer will ask about ("проведи Марка по правилам").
 | flow, page, 6 | 151 px | 16 | 36 | — |
 
 Counts assume Cyrillic; Latin fits about a fifth more. A title never wraps,
-text wraps by words, so one long word costs a line. A hub state or step
+text wraps by words, and a word wider than the box is refused: the card
+clips such a word instead of breaking it, so shorten it or spell it in
+words. A hub state or step
 with many transitions goes in a middle column, never the first: its lines
 must be able to leave left, down and right, or they bunch into one gutter
 and their labels collide.
@@ -165,7 +167,8 @@ described or the reverse, a node placed twice, a decision with fewer than two
 exits or an unlabeled branch, a label over the limit without a footnote, a
 route through a pair without an edge, an unroutable line, more nodes or
 columns than the mode allows, a title, text, item or label that does not fit (the message names its length and how many
-characters fit). Warnings:
+characters fit), a single word in a text or item wider than its box (the
+message names that word's length instead). Warnings:
 a node with no incoming edge outside the first row, a non-terminal with no
 exit, three or more crossings, empty rows or columns, an unused footnote.
 `--draft` turns the layout errors (routing, limits, width) into warnings,

@@ -110,6 +110,100 @@ class FitMessages(unittest.TestCase):
         msg = next(w for w in warnings if w.startswith("таблица t.x:"))
         self.assertIn("имя 1 симв., влезает ~0", msg)
 
+    # -- word-overflow class: a word wider than its box is clipped, not wrapped --
+
+    URL = "https://kyc.example.com/v2/applicants/verification_status_callback"
+
+    def budget_of(self, message, pattern):
+        self.assertBudget(message, pattern)
+        return int(re.search(pattern, message).group(2))
+
+    def assertNoMessage(self, exc, pattern):
+        hit = [e for e in exc.errors if re.search(pattern, e)]
+        self.assertFalse(hit, f"{pattern!r} should not be reported for a too-wide word: {hit}")
+
+    def test_node_text_long_word(self):
+        # the text box is 120 px on four widget columns; the token measures about 408
+        nodes = [{"id": n, "title": n.upper(), **({"text": self.URL} if n == "a" else {})} for n in "abcd"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c d"]))
+        msg = self.message(exc, "узел a: слово")
+        budget = self.budget_of(msg, r"слово (\d+) симв\., влезает ~(\d+)")
+        self.assertIn(msg, exc.fit)
+        self.assertIn(msg, exc.layout)
+        self.assertNoMessage(exc, r"узел a: текст")
+        nodes[0]["text"] = self.URL[:budget]
+        self.rerun_without(flow, flow_model(nodes, ["a b c d"]), "узел a:")
+
+    def test_block_item_long_word(self):
+        nodes = [{"id": n, "title": n.upper(), "items": [self.URL] if n == "a" else []} for n in "abc"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c"], kind="blocks"))
+        msg = self.message(exc, "узел a: пункт 1 — слово")
+        budget = self.budget_of(msg, r"пункт 1 — слово (\d+) симв\., влезает ~(\d+)")
+        self.assertIn(msg, exc.fit)
+        self.assertIn(msg, exc.layout)
+        self.assertNoMessage(exc, r"пункт 1 — \d+ симв\.")
+        nodes[0]["items"] = [self.URL[:budget]]
+        self.rerun_without(flow, flow_model(nodes, ["a b c"], kind="blocks"), "узел a:")
+
+    def timeline_model(self, text):
+        return {"kind": "timeline", "entities": [{"id": "e", "label": "e"}],
+                "moments": [{"id": "m1", "label": "t1", "title": "ок", "text": text, "states": {"e": "x"}},
+                            {"id": "m2", "label": "t2", "title": "ок", "states": {"e": "y"}}]}
+
+    def test_timeline_text_long_word(self):
+        url = self.URL + "?attempt=4b&reason=document_unreadable"
+        exc = self.failure(timeline, self.timeline_model(url))
+        msg = self.message(exc, "момент m1: слово")
+        budget = self.budget_of(msg, r"слово (\d+) симв\., влезает ~(\d+)")
+        self.assertIn(msg, exc.fit)
+        self.assertIn(msg, exc.layout)
+        self.assertNoMessage(exc, r"момент m1: текст")
+        self.rerun_without(timeline, self.timeline_model(url[:budget]), "момент m1:")
+
+    def test_first_too_wide_word_only(self):
+        second = self.URL + "/and_one_more_segment"
+        nodes = [{"id": n, "title": n.upper(), **({"text": f"{self.URL} {second}"} if n == "a" else {})}
+                 for n in "abcd"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c d"]))
+        words = [e for e in exc.errors if e.startswith("узел a: слово")]
+        self.assertEqual(len(words), 1, exc.errors)
+        self.assertIn(f"слово {len(self.URL)} симв.", words[0])
+
+    # -- the same class where the line count actually disagrees: one or two too-wide words wrap to
+    # one and two lines, which the two-line check accepts anyway, so only three of them reach the
+    # case where that check fails on its own and skipping it is what keeps its message away.
+
+    def three_wide_words(self, base):
+        """Three words, each wider than the box on its own, so each starts a line of its own."""
+        return [base, base + "/second_segment", base + "/third_segment"]
+
+    def assertOnlyFirstWord(self, exc, prefix, words):
+        found = [e for e in exc.errors if e.startswith(prefix)]
+        self.assertEqual(len(found), 1, exc.errors)
+        self.assertIn(f"слово {len(words[0])} симв.", found[0])
+
+    def test_node_text_three_wide_words(self):
+        words = self.three_wide_words(self.URL)
+        nodes = [{"id": n, "title": n.upper(), **({"text": " ".join(words)} if n == "a" else {})}
+                 for n in "abcd"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c d"]))
+        self.assertOnlyFirstWord(exc, "узел a: слово", words)
+        self.assertNoMessage(exc, r"узел a: текст")
+
+    def test_block_item_three_wide_words(self):
+        words = self.three_wide_words(self.URL)
+        nodes = [{"id": n, "title": n.upper(), "items": [" ".join(words)] if n == "a" else []}
+                 for n in "abc"]
+        exc = self.failure(flow, flow_model(nodes, ["a b c"], kind="blocks"))
+        self.assertOnlyFirstWord(exc, "узел a: пункт 1 — слово", words)
+        self.assertNoMessage(exc, r"пункт 1 — \d+ симв\.")
+
+    def test_timeline_text_three_wide_words(self):
+        words = self.three_wide_words(self.URL + "?attempt=4b&reason=document_unreadable")
+        exc = self.failure(timeline, self.timeline_model(" ".join(words)))
+        self.assertOnlyFirstWord(exc, "момент m1: слово", words)
+        self.assertNoMessage(exc, r"момент m1: текст")
+
     # -- round trip: cutting a text to its reported budget must pass the same check again --
 
     def assertGone(self, errors, prefix):
