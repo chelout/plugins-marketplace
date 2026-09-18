@@ -35,18 +35,21 @@ CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 # Where drawFlow in template/js/flow.js puts a label, in px; keep the two in step.
 LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
 LABEL_SIDE = 3    # from the card edge at a straight sideways exit
+LABEL_EXIT = 10   # from the card edge to the middle of the text at a straight exit down or up
 LABEL_CLEAR = 2   # the text box keeps this far from a card edge or a line
-LINE_REACH = 7.5  # a horizontal line nearer than this to a label's row runs through the text
+LINE_REACH = 7.5  # a horizontal line nearer than this to the middle of the text runs through it
 LABEL_WORD = 8    # two labels in one row keep this much more apart, or they read as one phrase
 
 
 class Geometry:
     """Pixel x of cards and lattice lines, relative to the grid box, as template/js/flow.js derives
-    them (tracks, bx, clampX). Card heights are unknown here, so there is no y."""
+    them (tracks, bx, clampX). Card heights are unknown here, so there is no y, only the gutter
+    between two rows of cards, `row_gap` high, whose middle by() puts lines in."""
 
     def __init__(self, mode, card_w, cols):
         self.w = float(f"{card_w:.0f}")  # --dg-w is written rounded
         self.gap, self.pad_l, self.cols, self.total = mode["gap"], mode["pad_l"], cols, mode["total"]
+        self.row_gap = mode["row_gap"]
         self.margin = max(8, mode["pad_l"] - 6)
 
     def left(self, c):
@@ -82,15 +85,17 @@ def room_beside(start, side, obstacles, limit):
     return room
 
 
-def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, above=False):
+def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=0, reach=0):
     """Cards and lines in lattice row Y (a row of cards when odd, a gutter when even), as
     px intervals across. `own` = (path index, segment index) is the segment the label
     stands beside and does not count; `horizontal=False` leaves out lines along the row.
-    `above=True` keeps only the lines that reach above the middle of the row, for a label
-    standing on a straight sideways line: template/js/flow.js draws that line at the middle of
-    the two cards' overlap, and cards align to the top, so it is never below the row's middle;
-    what is drawn there or lower passes under the text, and so does a straight line between
-    the same two cards, drawn on the label's own line."""
+    `half` = -1 or 1 is for a label standing wholly above or below the middle of the row: it
+    keeps only the lines that reach more than `reach` px past the middle into that half. A
+    vertical line ending in the row from the other half turns there and runs along the row,
+    so it counts as that line. Beside a straight sideways line (-1, 0) template/js/flow.js draws
+    that line at the middle of the two cards' overlap, and cards align to the top, so it is
+    never below the row's middle; what is drawn there or lower passes under the text, and so
+    does a straight line between the same two cards, drawn on the label's own line."""
     cards = [(geo.left(c), geo.right(c)) for r, c in occupied if Y % 2 and r == Y // 2]
     lines = []
     for j, (q, off) in enumerate(zip(paths, offsets)):
@@ -98,13 +103,14 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, above
             if (j, k) == own:
                 continue
             (x1, y1), (x2, y2) = q[k], q[k + 1]
-            if x1 == x2 and min(y1, y2) <= Y <= max(y1, y2) and not (above and min(y1, y2) == Y):
+            lo, hi = min(y1, y2), max(y1, y2)
+            if x1 == x2 and lo <= Y <= hi and not (half and (lo if half < 0 else hi) == Y):
                 x = geo.x(x1) + off[k][0]
                 lines.append((x - 1, x + 1))
-            elif above and y1 == y2 == Y and len(q) > 2 and off[k][1] < 0:
+            elif half and y1 == y2 == Y and len(q) > 2 and off[k][1] * half > reach:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
-            elif not above and horizontal and y1 == y2 == Y and abs(off[k][1]) < LINE_REACH:
+            elif not half and horizontal and y1 == y2 == Y and abs(off[k][1]) < LINE_REACH:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
                 lines.append((min(xa, xb), max(xa, xb)))
     return cards, lines
@@ -113,8 +119,8 @@ def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, above
 def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()):
     """Places template/js/flow.js can give the label of routed edge i, each with its room in px:
     `room` counts cards, `line_room` other lines too (and, beside a vertical second segment, the
-    `labels` already placed). A straight exit down or up has no `line_room`, and neither has a
-    label above a horizontal second segment, whose lines plan() checks after placing it.
+    `labels` already placed). A label above a horizontal second segment has no `line_room`:
+    plan() checks its lines after placing it.
     Only a label beside a vertical second segment has a choice (its row `ly` and side);
     every other shape has one place. A spot also says where its text lies: the lattice rows
     it can fall in, `band` = (first, last), its near edge `start` and the direction `grow`
@@ -178,14 +184,23 @@ def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()
         # straight sideways: from the card edge towards the next card in the row, which is the target;
         # another line reaching above the row's middle where the text stands runs through it
         cards = [(geo.left(cc), geo.right(cc)) for rr, cc in occupied if rr == r and cc != c]
-        _, lines = band_obstacles(p[0][1], (i, 0), paths, offsets, geo, occupied, above=True)
+        _, lines = band_obstacles(p[0][1], (i, 0), paths, offsets, geo, occupied, half=-1)
         start = geo.right(c) + LABEL_SIDE if sa == "R" else geo.left(c) - LABEL_SIDE
         room = room_beside(start, sa, cards, geo.gap + card_w - 20)
         return [{"where": "у выхода вбок", "room": room, "line_room": room_beside(start, sa, lines, room),
                  "band": (p[0][1], p[0][1]), "start": start, "grow": sa, "key": (e["a"], sa)}]
-    # straight down or up: the text stands in the gutter under or over the card, clear of cards
-    return [{"where": "у выхода вниз", "room": card_w, "band": (p[0][1] + (1 if sa == "B" else -1),) * 2,
-             "start": geo.clamp(c, geo.x(p[1][0]) + off[1][0]) + 5, "grow": "R", "key": (e["a"], sa)}]
+    # straight down or up: the text stands in the gutter under or over the card, clear of cards,
+    # its middle LABEL_EXIT off the card edge, between the card and the middle of the gutter. A line
+    # from the card's side to that middle runs through it, and so does a line along the gutter less
+    # than LINE_REACH from the text's middle, or nearer the card: under a card shorter than its
+    # row the text stands higher, never lower
+    Y, half = (p[0][1] + 1, -1) if sa == "B" else (p[0][1] - 1, 1)
+    _, lines = band_obstacles(Y, (i, 0), paths, offsets, geo, occupied, half=half,
+                              reach=geo.row_gap / 2 - LABEL_EXIT - LINE_REACH)
+    start = geo.clamp(c, geo.x(p[1][0]) + off[1][0]) + 5
+    return [{"where": "у выхода вниз" if sa == "B" else "у выхода вверх", "room": card_w,
+             "line_room": room_beside(start, "R", lines, card_w), "band": (Y, Y), "start": start, "grow": "R",
+             "key": (e["a"], sa)}]
 
 
 def mode_for(kind, mode_name, overrides):
