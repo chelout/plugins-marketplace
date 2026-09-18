@@ -28,6 +28,17 @@ WIDE = {"kind": "flow", "id": "wide", "groups": GROUPS, "grid": ["a b c d e"],
 WIDE_DUP = {**WIDE, "id": "wide_dup",
             "nodes": WIDE["nodes"] + [{"id": "a", "kind": "terminal", "title": "A2"}]}
 EXAMPLES = ("kyc-module", "resolver-rules", "kyc-trace", "verdict-row-lifecycle", "four-blocks", "mark-timeline")
+# A flow whose only problem is one unbroken 66-character word in node a's text: in a four-column
+# grid it is wider than the text box. Nodes a-c are steps because a terminal shows no text (that
+# is a warning of its own), and d is the terminal so no node is left without an outgoing edge.
+LONG_WORD = {"kind": "flow", "id": "long_word", "groups": GROUPS, "grid": ["a b c d"],
+             "nodes": [{"id": "a", "kind": "step", "group": "g", "title": "A",
+                        "text": "https://kyc.example.com/v2/applicants/verification_status_callback"},
+                       {"id": "b", "kind": "step", "group": "g", "title": "B"},
+                       {"id": "c", "kind": "step", "group": "g", "title": "C"},
+                       {"id": "d", "kind": "terminal", "group": "g", "title": "D"}],
+             "edges": ["a -> b", "b -> c", "c -> d"]}
+LONG_WORD_MESSAGE = r"узел a: слово 66 симв\., влезает ~\d+"
 
 
 class RenderCli(unittest.TestCase):
@@ -128,6 +139,46 @@ class RenderCli(unittest.TestCase):
             sizes.append(len(out))
         print(f"\ncdn widget fragments of the examples: {dict(zip(EXAMPLES, sizes))}, median {statistics.median(sizes)}")
         self.assertLessEqual(statistics.median(sizes), 6000, sizes)
+
+    # Every model under examples/ renders in both modes. The models are found by walking the
+    # directory, never by name, so one added later is covered without editing this test; EXAMPLES
+    # above stays the population of the size budget only.
+    def test_every_example_renders_in_both_modes(self):
+        self.publish()
+        examples = support.SKILL / "examples"
+        paths = sorted(examples.rglob("*.json"))
+        found = {path.stem for path in paths}
+        # An empty or non-recursive walk would pass by checking nothing: it must reach at least the
+        # budget's six, kyc-module under full/ among them.
+        self.assertLessEqual(set(EXAMPLES), found, f"{examples}: the walk found {sorted(found)}")
+        for path in paths:
+            for mode in ("widget", "page"):
+                where = f"{path.relative_to(support.SKILL)} --mode {mode}"
+                with self.subTest(model=where):
+                    code, out, err = self.run_cli(str(path), "--mode", mode)
+                    self.assertEqual(code, 0, f"{where}: {err}")
+                    self.assertTrue(out, f"{where}: empty output")
+
+    # --draft turns a too-wide word, a layout error, into a warning: exit 0, the output is produced
+    # and stamped as a draft. Without --draft the same model is refused with the message as its
+    # only error.
+    def test_draft_downgrades_a_too_wide_word_to_a_warning(self):
+        self.publish()
+        path = self.model(LONG_WORD)
+
+        code, out, err = self.run_cli(path)
+        self.assertEqual((code, out), (1, ""), err)
+        errors = [line for line in err.splitlines() if line.startswith("ошибка:")]
+        self.assertEqual(len(errors), 1, err)
+        self.assertRegex(errors[0], rf"^ошибка: {LONG_WORD_MESSAGE}$")
+
+        code, out, err = self.run_cli(path, "--draft")
+        self.assertEqual(code, 0, err)
+        self.assertIn('<span class="dg-draft">', out)
+        self.assertNotIn("ошибка:", err)
+        warnings = [line for line in err.splitlines() if line.startswith("предупреждение:")]
+        self.assertEqual(len(warnings), 1, err)
+        self.assertRegex(warnings[0], rf"^предупреждение: черновик: {LONG_WORD_MESSAGE}$")
 
     # --- G4 (gate.md): every successful render that is not --check prints one summary line to
     # stderr in the --check shape; stdout stays exactly the rendered fragment.
