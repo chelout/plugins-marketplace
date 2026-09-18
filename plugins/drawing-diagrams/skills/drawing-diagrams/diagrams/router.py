@@ -255,8 +255,10 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
 
 
 def crossings(paths):
-    """Number of places where a vertical segment of one path crosses a
-    horizontal segment of another."""
+    """Number of places where two paths cross however their lines are spread:
+    a vertical segment of one through a horizontal segment of another, and a
+    stretch two paths share that they enter and leave in swapped order
+    (shared_swaps)."""
     segs = [segments(p) for p in paths]
     n = 0
     for i in range(len(paths)):
@@ -271,7 +273,62 @@ def crossings(paths):
                         continue
                     if b[2] < a[1] < b[3] and a[2] < b[1] < a[3]:
                         n += 1
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            n += shared_swaps(paths[i], paths[j])
     return n
+
+
+def shared_swaps(p, q):
+    """Number of stretches the paths p and q share that they enter and leave
+    in swapped order. assign_offsets draws a shared stretch as parallel lines,
+    each at an end of it on the side its path arrives from or leaves to
+    (side_at): p left of q at one end and right of it at the other cross.
+    A stretch runs on through a corner both paths turn together; sides are
+    taken against the direction of travel, which such a corner keeps. An end
+    where both paths meet their node puts no order."""
+    rp, rq = _refine(p, q), _refine(q, p)
+    at = {pt: k for k, pt in enumerate(rq)}
+    n, k = 0, 0
+    while k < len(rp) - 1:
+        if rp[k] not in at or rp[k + 1] not in at or abs(at[rp[k + 1]] - at[rp[k]]) != 1:
+            k += 1
+            continue
+        d, s = at[rp[k + 1]] - at[rp[k]], k
+        while k + 1 < len(rp) and rp[k + 1] in at and at[rp[k + 1]] - at[rp[k]] == d:
+            k += 1
+        # the stretch is rp[s..k], and rq walked from at[rp[s]] in steps of d
+        t0 = (rp[s + 1][0] - rp[s][0], rp[s + 1][1] - rp[s][1])
+        t1 = (rp[k][0] - rp[k - 1][0], rp[k][1] - rp[k - 1][1])
+        first = _side(t0, rp[s], _nth(rq, at[rp[s]] - d)) - _side(t0, rp[s], _nth(rp, s - 1))
+        last = _side(t1, rp[k], _nth(rq, at[rp[k]] + d)) - _side(t1, rp[k], _nth(rp, k + 1))
+        if first * last < 0:
+            n += 1
+    return n
+
+
+def _refine(path, other):
+    """`path` with every vertex of `other` that lies inside one of its
+    segments added, so that a stretch both share has the same points in both."""
+    out = [path[0]]
+    for a, b in zip(path, path[1:]):
+        inner = [v for v in other if v != a and v != b and min(a[0], b[0]) <= v[0] <= max(a[0], b[0])
+                 and min(a[1], b[1]) <= v[1] <= max(a[1], b[1])]
+        out.extend(sorted(inner, key=lambda v: abs(v[0] - a[0]) + abs(v[1] - a[1])))
+        out.append(b)
+    return out
+
+
+def _nth(pts, k):
+    return pts[k] if 0 <= k < len(pts) else None
+
+
+def _side(t, pt, other):
+    """Side of the direction t at pt that the neighbouring point `other` lies
+    on: 1 or -1; 0 straight ahead or behind, or where the path ends at pt."""
+    if other is None:
+        return 0
+    return _sign(t[0] * (other[1] - pt[1]) - t[1] * (other[0] - pt[0]))
 
 
 def ascii(lat, ids_at, paths, arrows=True):

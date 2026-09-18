@@ -37,6 +37,10 @@ Test cases (written from the declaration of the change, before the implementatio
 11. "label-over-row-line", both modes: the label over a horizontal second segment that runs along a
     row line of a pill and a taller step card has its baseline LABEL_OVER above that row line's base
     as drawn, not above the row's middle.
+12. "gutter-swap", both modes: a -> d and c -> b go corner to opposite corner up one gutter and swap
+    sides along it, one crossing on the lattice, and the page draws exactly that one;
+    "gutter-no-swap": a -> d and d -> a share a gutter in one order from end to end, no crossing
+    on the lattice, and the page draws none.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -142,11 +146,20 @@ CASES = {
     "label-over-row-line": {"kind": "flow", "grid": ["a x .", ". b c"], "edges": ["a -> b : да", "b -> c", "x -> c"],
                             "nodes": [step("a"), step("x"), pill("b"),
                                       {"id": "c", "title": STEP["title"], "text": STEP["text"] + ", и ещё строка"}]},
+    # a -> d comes into the gutter between the columns from the left and leaves it to the right,
+    # c -> b the other way round: the two lines along it must swap sides
+    "gutter-swap": {"kind": "flow", "nodes": [{"id": i, "title": i, "text": "Text"} for i in "bdac"],
+                    "grid": ["b d", "a c"], "edges": ["a -> d", "c -> b"]},
+    # a -> d and d -> a along the gutter between the rows, d -> a above from end to end
+    "gutter-no-swap": {"kind": "flow", "nodes": [{"id": i, "title": i, "text": "Text"} for i in "abcd"],
+                       "grid": ["a b .", ". c d"], "edges": ["a -> d", "d -> a"]},
 }
-# The gutters of these two also hold crossings that the router's offsets make where a line turns
-# off a shared lattice line and that router.crossings does not count; that is not a row line's
-# drawing, so their crossings are not compared.
-GUTTER_CROSSINGS = ("upper-limit-interior-run", "lower-limit-interior-run")
+# Five or more lines along one row line (docstring case 7).
+SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run", "lower-limit-interior-run")
+# The gutters of this one also hold crossings between d -> f, d -> f and f -> d, three lines on one
+# route that the router's offsets order differently on each lattice line they turn between. No
+# drawing needs them, so router.crossings does not count them, and its crossings are not compared.
+GUTTER_CROSSINGS = ("lower-limit-interior-run",)
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
@@ -542,7 +555,7 @@ class BrowserLines(unittest.TestCase):
                     if name not in GUTTER_CROSSINGS:
                         self.check_crossings(name, mode)
                     self.check_row_order(name, mode)
-                    if name in GUTTER_CROSSINGS or name.startswith("two-point"):
+                    if name in SATURATED:
                         # the case exists only if five or more lines are drawn along one row line
                         layout, _, lines = self.measured(name, mode)
                         most = max(Counter(r[0] for r in row_runs(layout, lines)).values())
@@ -589,6 +602,21 @@ class BrowserLines(unittest.TestCase):
                 layout, _, _ = self.measured("planned-crossing", mode)
                 self.assertEqual(router.crossings(layout["paths"]), 1, f"harness: {mode}: the crossing is not planned")
                 self.check_crossings("planned-crossing", mode)
+
+    def test_shared_gutter(self):
+        for name, drawn in (("gutter-swap", 1), ("gutter-no-swap", 0)):
+            for mode in MODES:
+                with self.subTest(model=name, mode=mode):
+                    layout, names, lines = self.measured(name, mode)
+                    p, q = (router.segments(x) for x in layout["paths"])
+                    shared = [(a, n) for a, n, lo, hi in p for b, m, lo2, hi2 in q
+                              if (a, n) == (b, m) and max(lo, lo2) < min(hi, hi2)]
+                    # the case exists only if the two lines run along one lattice segment and the page
+                    # draws them crossing there as many times as their ends demand
+                    self.assertTrue(shared, f"harness: {name} {mode}: the lines share no lattice segment")
+                    self.assertEqual(len(pixel_crossings(names, lines)), drawn,
+                                     f"harness: {name} {mode}: the page draws another number of crossings")
+                    self.check_crossings(name, mode)
 
     def test_examples_found(self):
         self.assertTrue(self.examples, f"no example of kind {', '.join(KINDS)} under {EXAMPLES}")
