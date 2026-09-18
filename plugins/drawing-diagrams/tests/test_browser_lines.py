@@ -34,6 +34,9 @@ Test cases (written from the declaration of the change, before the implementatio
    stands LABEL_DROP below that row line's base as drawn, not below the row's middle.
 10. "planned-crossing", both modes: two straight lines cross in an empty cell, one crossing on the
     lattice, and the page draws exactly that one.
+11. "label-over-row-line", both modes: the label over a horizontal second segment that runs along a
+    row line of a pill and a taller step card has its baseline LABEL_OVER above that row line's base
+    as drawn, not above the row's middle.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -69,6 +72,9 @@ AXIS_TOL = 0.5
 # pixels: template/js/flow.js clamps the y of a line on a row line this far inside a card's top and
 # bottom edges (clampY, and the row line's own clamp)
 CLAMP_IN = 10
+# pixels: template/js/flow.js stands the baseline of a label over a horizontal second segment this far
+# above the base of the lattice line that segment runs along
+LABEL_OVER = 9
 BROWSER_TIMEOUT = 60  # seconds per page; a launch takes about 3 s
 
 # The reported case: `write -> both` leaves the step card `write` straight sideways into the
@@ -104,7 +110,7 @@ def pill(i):
     return {"id": i, "kind": "terminal", "title": "итог " + i}
 
 
-# Models drawn next to the reported one (docstring cases 7 to 10).
+# Models drawn next to the reported one (docstring cases 7 to 11).
 CASES = {
     # six straight lines between a and the pill b, offsets -20..20: the outer ones saturate
     "two-point-side-miss": {"kind": "flow", "nodes": [step("a", True), pill("b")], "grid": ["a b"],
@@ -131,6 +137,11 @@ CASES = {
                          "edges": ["s -> t", "t -> p", "a -> b : да"]},
     "planned-crossing": {"kind": "flow", "nodes": [step(i) for i in "abcd"], "grid": [". a .", "b . c", ". d ."],
                          "edges": ["a -> d", "b -> c"]},
+    # a -> b leaves a down and runs along the row line of the pill b and the taller c into b's side,
+    # b -> c straight between them: that row line's base is b's middle, above the row's middle
+    "label-over-row-line": {"kind": "flow", "grid": ["a x .", ". b c"], "edges": ["a -> b : да", "b -> c", "x -> c"],
+                            "nodes": [step("a"), step("x"), pill("b"),
+                                      {"id": "c", "title": STEP["title"], "text": STEP["text"] + ", и ещё строка"}]},
 }
 # The gutters of these two also hold crossings that the router's offsets make where a line turns
 # off a shared lattice line and that router.crossings does not count; that is not a row line's
@@ -377,6 +388,31 @@ def pinned_label_misses(layout, names, lines, texts, cards):
     return misses, checked
 
 
+def second_run_label_misses(layout, names, lines, texts, cards):
+    """(misses, checked): labels over a horizontal second segment on a lattice row line (odd Y) whose
+    baseline does not stand LABEL_OVER above that row line's base as drawn: the y, less its offset,
+    of that second segment, away from the band's limits."""
+    bands = row_bands(layout, cards)
+    misses, checked = [], 0
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if not e["label"] or len(path) < 3 or path[1][1] != path[2][1] or path[1][1] % 2 == 0:
+            continue
+        if len(path) != len(lines[i]) + 1 or lines[i][1][0] != "h":
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        Y, y = path[1][1], lines[i][1][1]
+        if at_limit(y, bands.get(Y)):
+            continue
+        if texts[i] is None:
+            raise HarnessError(f"{names[i]} has a label over its second segment and no text in the page")
+        checked += 1
+        base = y - path[1][3]
+        if abs(texts[i][1] + LABEL_OVER - base) > AXIS_TOL:
+            misses.append(f"{names[i]}: label over its second segment on row line {Y} has its baseline at y "
+                          f"{texts[i][1]:.2f}; the row line's base, from that segment, is {base:.2f}")
+    return misses, checked
+
+
 def row_order_swaps(layout, names, lines):
     """(swaps, compared): pairs of horizontal runs of different edges on one lattice row line (odd
     Y) whose lattice spans overlap and whose router offsets differ, drawn in the opposite order of
@@ -533,6 +569,19 @@ class BrowserLines(unittest.TestCase):
                 self.assertEqual(misses, [], f"pinned-label-row {mode}: a label pinned to a row off its base")
                 # the case exists only if a -> b pins its label to the row line of t and p
                 self.assertEqual(checked, 1, f"harness: {mode}: no label pinned to a row of cards was checked")
+
+    def test_label_over_second_run(self):
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                layout, names, lines = self.measured("label-over-row-line", mode)
+                got = self.results["label-over-row-line", mode]
+                try:
+                    misses, checked = second_run_label_misses(layout, names, lines, got["texts"], got["cards"])
+                except HarnessError as exc:
+                    self.fail(f"harness: label-over-row-line {mode}: {exc}")
+                self.assertEqual(misses, [], f"label-over-row-line {mode}: a label over a second segment off its base")
+                # the case exists only if a -> b runs its second segment along the row line of b and c
+                self.assertEqual(checked, 1, f"harness: {mode}: no label over a second segment on a row line was checked")
 
     def test_planned_crossing(self):
         for mode in MODES:

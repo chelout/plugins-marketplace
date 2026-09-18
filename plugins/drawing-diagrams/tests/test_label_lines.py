@@ -439,6 +439,24 @@ class BesideSecondSegment(unittest.TestCase):
                 self.assertTrue(found[0].startswith("связь d -> b: подпись 'да' рядом со вторым отрезком ляжет на другую "
                                                     "линию"), found)
 
+    def test_a_line_along_a_gutter_row_counts_by_its_offset(self):
+        # a -> d leaves a sideways, turns up and pins its label to gutter row 4 on the left of its
+        # second segment, then turns along that row 8 px above its base. No card stands on a gutter
+        # row, so no line enters or leaves a card sideways there and template/js/flow.js draws a line
+        # along it at its own offset, unclamped: LINE_REACH and more from the text's middle, clear of it
+        model = exit_model([". . d e", ". . . .", ". b c a"],
+                           ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c"], terminals=("e",))
+        for mode in ("widget", "page"):
+            with self.subTest(mode=mode):
+                layout, warnings = flow.plan(model, mode)
+                own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("a", "d"))
+                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 4, "L"))
+                self.assertEqual(self.along_the_row(layout, ("a", "d"), 4, "L"), [(("a", "d"), -8.0)])
+                self.assertGreaterEqual(8.0, flow.LINE_REACH)
+                self.assertEqual([e for e in layout["edges"]
+                                  if e["path"][0][1] == e["path"][1][1] == 4 or e["path"][-1][1] == e["path"][-2][1] == 4], [])
+                self.assertEqual([w for w in warnings if w.startswith("связь a -> d:")], [], warnings)
+
 
 class ScriptOffsets(unittest.TestCase):
     SCRIPT = (support.SKILL / "template" / "js" / "flow.js").read_text(encoding="utf-8")
