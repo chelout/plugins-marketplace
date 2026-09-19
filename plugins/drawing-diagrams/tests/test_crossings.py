@@ -1,6 +1,7 @@
 import unittest
 
 import support
+import bench_routing
 from diagrams import flow, router
 
 
@@ -179,6 +180,89 @@ class CornerOrder(unittest.TestCase):
                     self.assertEqual(len(set(sides)), 1, f"{paths[i]} and {paths[j]} change order: {sides}")
         # the case exists only if pairs without a swap share the gutter with the swapping ones
         self.assertGreaterEqual(checked, 5, "harness: too few pairs share a stretch without a swap")
+
+
+# Defect A: path 1 has two runs on x = 7 with a detour between them. One slot per (line, path)
+# gives both of them one offset, so they lie on the same line as path 0 and path 2 and the crossing
+# that is counted is drawn as an overlap instead.
+RUN_A_PATHS = [[(9, 1), (8, 1), (8, 4), (7, 4), (7, 5), (5, 5)],
+               [(7, 3), (7, 5), (8, 5), (8, 8), (7, 8), (7, 9)],
+               [(7, 3), (7, 5), (5, 5)]]
+RUN_A_NODES = frozenset({(9, 1), (5, 5), (7, 3), (7, 9)})
+# Defect C: the pair shares two stretches on x = 4, entering the first left of each other and the
+# second right. One order per (line, pair) keeps only the second, so both runs of the first path
+# take the side the second stretch asks for and the pair crosses twice where it is drawn.
+RUN_C_PATHS = [[(3, 1), (4, 1), (4, 3), (2, 3), (2, 5), (6, 5), (6, 7), (4, 7), (4, 9), (5, 9)],
+               [(5, 1), (4, 1), (4, 3), (6, 3), (6, 4), (0, 4), (0, 7), (4, 7), (4, 9), (3, 9)]]
+RUN_C_NODES = frozenset({(3, 1), (5, 1), (3, 9), (5, 9)})
+
+
+class RunKeys(unittest.TestCase):
+    """A slot and a pair order belong to a run — a maximal straight piece of one path on one
+    lattice line — and not to the whole path: a path with two runs on one line gets a slot for
+    each, and a pair with two stretches on one line keeps the order of each."""
+
+    def test_two_runs_of_one_path_on_one_line_get_a_slot_each(self):
+        offs = router.assign_offsets(RUN_A_PATHS, nodes=RUN_A_NODES)
+        # the case exists only if the count sees one crossing there
+        self.assertEqual(router.crossings(RUN_A_PATHS), 1, "harness: nothing to draw")
+        self.assertEqual(router.drawn_overlaps(RUN_A_PATHS, offs, RUN_A_NODES), 0)
+        self.assertEqual(router.drawn_crossings(RUN_A_PATHS, offs, RUN_A_NODES), 1)
+
+    def test_each_stretch_of_one_pair_keeps_its_own_order(self):
+        offs = router.assign_offsets(RUN_C_PATHS, nodes=RUN_C_NODES)
+        self.assertEqual(router.crossings(RUN_C_PATHS), 1, "harness: nothing to draw")
+        self.assertEqual(router.drawn_crossings(RUN_C_PATHS, offs, RUN_C_NODES), 1)
+        # x = 4 carries a run of each path twice: the first path enters the earlier stretch left of
+        # the second and the later one right of it, so it lies left at y = 1 and right at y = 9
+        self.assertLess(offs[0][1][0], offs[1][1][0])
+        self.assertGreater(offs[0][8][0], offs[1][8][0])
+
+    def test_collinear_points_are_one_run(self):
+        # the middle point lies on the straight, so x = 1 carries one run and not two: alone on its
+        # line it needs no offset, and both its segments keep the same one
+        offs = router.assign_offsets([[(1, 1), (1, 3), (1, 5), (3, 5)]])
+        self.assertEqual([ox for ox, _ in offs[0][:3]], [0.0, 0.0, 0.0])
+
+
+# Defect B: on y = 4 two runs meet end to end at (2, 4) and two more at (4, 4), in a gutter and
+# with their arms pointing opposite ways. Neither pair shares a stretch, so no order holds them
+# apart, and each pair that takes the wrong slot crosses twice where nothing is counted.
+END_TO_END_PATHS = [[(1, 3), (1, 4), (2, 4), (2, 6), (6, 6), (6, 9), (7, 9)],
+                    [(7, 5), (4, 5), (4, 4), (2, 4), (2, 3), (1, 3)],
+                    [(1, 7), (2, 7), (2, 3), (3, 3)],
+                    [(5, 3), (4, 3), (4, 4), (0, 4), (0, 11), (1, 11)]]
+END_TO_END_NODES = frozenset({(1, 3), (7, 9), (7, 5), (1, 7), (3, 3), (5, 3), (1, 11)})
+
+
+class EndToEnd(unittest.TestCase):
+    """Two runs of one group that meet end to end at a gutter point with their arms pointing to
+    opposite sides take the slots their arms point to: the weakest of the three strengths of
+    order, recorded only where a shared stretch has said nothing."""
+
+    def test_the_four_paths_draw_the_crossings_they_count(self):
+        offs = router.assign_offsets(END_TO_END_PATHS, nodes=END_TO_END_NODES)
+        # the case exists only if the count sees five crossings there
+        self.assertEqual(router.crossings(END_TO_END_PATHS), 5, "harness: nothing to draw")
+        self.assertEqual(router.drawn_crossings(END_TO_END_PATHS, offs, END_TO_END_NODES), 5)
+        self.assertEqual(router.drawn_overlaps(END_TO_END_PATHS, offs, END_TO_END_NODES), 0)
+
+
+class PlanReportsWhatIsDrawn(unittest.TestCase):
+    """What flow.plan counts is what the reader sees: the crossings of the lines with the offsets
+    the edges carry into the script, not of the lattice paths behind them."""
+
+    def test_every_flow_like_example_reports_the_crossings_it_draws(self):
+        found = bench_routing.examples()
+        self.assertEqual({m["kind"] for _, m in found}, set(flow.MODES), "harness: a kind lost its example")
+        for path, model in found:
+            for mode in bench_routing.MODES:
+                with self.subTest(example=path.name, mode=mode):
+                    layout, _ = flow.plan(model, mode)
+                    offs = [[(ox, oy) for _, _, ox, oy in e["path"]] for e in layout["edges"]]
+                    nodes = frozenset(layout["lattice"].blocked)
+                    self.assertEqual(layout["crossings"],
+                                     router.drawn_crossings(layout["paths"], offs, nodes))
 
 
 if __name__ == "__main__":

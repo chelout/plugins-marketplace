@@ -70,7 +70,7 @@ def route(lat, src, dst, labelled=False, traffic=None):
     prefers gutters and straight lines. A labelled edge avoids leaving
     sideways into an occupied neighbour: its label would have no room.
     With `traffic`, crossing an earlier line costs +10, running along one +1,
-    passing through another line's corner +4,
+    passing through another line's corner +3,
     leaving through a side another line uses +3 per line, entering beside
     another arrow +3 per arrow: exits spread out and bundles break up."""
     best, prev = {}, {}
@@ -186,15 +186,70 @@ def segments(path):
     return out
 
 
+def _along(pt, axis):
+    """The coordinate of `pt` along a line of this axis: Y on a vertical line, X on a horizontal."""
+    return pt[1] if axis == "v" else pt[0]
+
+
+def _across_to(pt, other, axis):
+    """Which side of a line of this axis the path continues to at `pt`, given the point it goes on
+    to: -1 towards the lower coordinate across the line (up or left), +1 towards the higher (down
+    or right), 0 where the path stops at `pt` or goes straight on."""
+    if other is None:
+        return 0
+    return _sign(other[1] - pt[1]) if axis == "h" else _sign(other[0] - pt[0])
+
+
+def _runs(path):
+    """The runs of one path and the run of each of its segments.
+
+    A run is a maximal straight piece of the path on one lattice line, so consecutive segments on
+    that line are one run. A zero-length segment — two equal consecutive points, which schema.plan
+    produces — is a run of its own, on the vertical line through it as today, and does not break
+    the piece it lies in. A run carries the interval it covers on its line and the side the path
+    leaves to at each of its ends, which is what orders the slots of a group."""
+    segs = list(zip(path, path[1:]))
+    runs, of_seg, open_run = [], [], None
+    for k, (a, b) in enumerate(segs):
+        axis = "v" if a[0] == b[0] else "h"
+        line = a[0] if axis == "v" else a[1]
+        lo, hi = sorted((_along(a, axis), _along(b, axis)))
+        going_on = (open_run is not None and a != b
+                    and runs[open_run]["axis"] == axis and runs[open_run]["line"] == line)
+        if going_on:
+            d = runs[open_run]
+            d["lo"], d["hi"], d["k1"] = min(d["lo"], lo), max(d["hi"], hi), k
+        else:
+            runs.append({"axis": axis, "line": line, "lo": lo, "hi": hi, "k0": k, "k1": k})
+            if a != b:
+                open_run = len(runs) - 1
+        of_seg.append(open_run if going_on else len(runs) - 1)
+    for d in runs:
+        head, tail = path[d["k0"]], path[d["k1"] + 1]
+        lo_side = _across_to(head, path[d["k0"] - 1] if d["k0"] else None, d["axis"])
+        hi_side = _across_to(tail, _nth(path, d["k1"] + 2), d["axis"])
+        if _along(head, d["axis"]) > _along(tail, d["axis"]):
+            lo_side, hi_side = hi_side, lo_side
+        elif head == tail:
+            # a run of no length has both its arms at one point, and either of them tells which
+            # side the path leaves to there
+            lo_side = hi_side = lo_side or hi_side
+        d["lo_side"], d["hi_side"] = lo_side, hi_side
+    return runs, of_seg
+
+
 def assign_offsets(paths, step=8, nodes=frozenset()):
     """Spread edges that share a line. Returns, per path, a list of (ox, oy)
     pixel offsets for each of its points.
 
-    Overlapping segments on one line get distinct slots. The order of the
-    slots follows where each line turns: on a horizontal run the line that
-    turns down lies below the one that continues, the line that turns up lies
-    above; on a vertical run the line that turns right lies to the right. So
-    a fan of lines leaving one node never crosses itself when it spreads.
+    The unit is the run: a maximal straight piece of one path on one lattice
+    line (_runs). Runs of one line that overlap or meet end to end in a
+    gutter form a group and get distinct slots, so a path with two runs on
+    one line gets one slot for each of them. The order of the slots follows
+    where each line turns: on a horizontal run the line that turns down lies
+    below the one that continues, the line that turns up lies above; on a
+    vertical run the line that turns right lies to the right. So a fan of
+    lines leaving one node never crosses itself when it spreads.
 
     Two lines that share a stretch keep one order along all of it, through
     the corners they turn together, so the line inside such a corner on one
@@ -203,10 +258,28 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
     one route the order of their indices on the first segment of the route.
     Two lines that enter and leave in swapped order cross once whatever the
     order; along several lattice lines they keep the one they enter in, where
-    the others allow it, and cross where they leave."""
-    # per pair of paths, the order their shared stretches put them in on each lattice line:
-    # (axis, line, i, j) -> 1 when path j lies on the higher side of path i there, -1 on the lower;
-    # firm where the stretch has no swap, loose where it has one
+    the others allow it, and cross where they leave. A pair that shares two
+    stretches on one line keeps the order of each: the order belongs to the
+    two runs the stretch runs on, not to the two paths.
+
+    Two runs that share no stretch but meet end to end at a gutter point,
+    their arms there pointing opposite ways, take the slots their arms point
+    to. That is the weakest of the three strengths of order and is recorded
+    only where a shared stretch has said nothing, so it never displaces one
+    and cannot close a cycle among them."""
+    runs = [_runs(p) for p in paths]
+
+    def covering(i, axis, line, lo, hi):
+        """The run of path i on this line whose interval covers [lo, hi]: a straight piece of a
+        stretch belongs to exactly one run of each path it lies on."""
+        for r, d in enumerate(runs[i][0]):
+            if d["axis"] == axis and d["line"] == line and d["lo"] <= lo and hi <= d["hi"]:
+                return (i, r)
+        return None
+
+    # per pair of runs of two paths, the order their shared stretch puts them in:
+    # (u, v) -> 1 when run v lies on the higher side of run u, -1 on the lower; firm where the
+    # stretch has no swap, loose where it has one
     firm, loose = {}, {}
     for i in range(len(paths)):
         for j in range(i + 1, len(paths)):
@@ -218,40 +291,21 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
                 order = loose if swap else firm
                 for a, b in zip(pts, pts[1:]):
                     axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
-                    order[(axis, line, i, j)] = side * _higher(a, b)
-                    order[(axis, line, j, i)] = -side * _higher(a, b)
+                    lo, hi = sorted((_along(a, axis), _along(b, axis)))
+                    u, v = covering(i, axis, line, lo, hi), covering(j, axis, line, lo, hi)
+                    if u is None or v is None:
+                        continue
+                    order[(u, v)] = side * _higher(a, b)
+                    order[(v, u)] = -side * _higher(a, b)
 
-    # per path: segments with the direction of the neighbouring segment at each end
-    items = {}  # (axis, line) -> list of dicts
-    for i, p in enumerate(paths):
-        segs = list(zip(p, p[1:]))
-        for k, (a, b) in enumerate(segs):
-            axis = "v" if a[0] == b[0] else "h"
-            line = a[0] if axis == "v" else a[1]
-            lo_pt, hi_pt = (a, b) if (a[1] if axis == "v" else a[0]) <= (b[1] if axis == "v" else b[0]) else (b, a)
-            lo = lo_pt[1] if axis == "v" else lo_pt[0]
-            hi = hi_pt[1] if axis == "v" else hi_pt[0]
+    items = {}  # (axis, line) -> the runs on that line, each knowing its path and its index in it
+    for i, (rs, _) in enumerate(runs):
+        for r, d in enumerate(rs):
+            items.setdefault((d["axis"], d["line"]), []).append(dict(d, i=i, r=r))
 
-            def side_at(pt):
-                # which side of the line the path continues to at this endpoint: -1 up/left, +1 down/right, 0 none
-                for j in (k - 1, k + 1):
-                    if 0 <= j < len(segs):
-                        c, d = segs[j]
-                        other = d if c == pt else c if d == pt else None
-                        if other is None:
-                            continue
-                        val = (other[1] - pt[1]) if axis == "h" else (other[0] - pt[0])
-                        if val:
-                            return 1 if val > 0 else -1
-                return 0
-
-            items.setdefault((axis, line), []).append(
-                {"i": i, "lo": lo, "hi": hi, "lo_side": side_at(lo_pt), "hi_side": side_at(hi_pt)})
-
-    slot = {}   # (axis, line, path index) -> (slot, width)
-    for key, segs in items.items():
-        segs.sort(key=lambda d: (d["lo"], d["hi"]))
-        axis, line = key
+    slot = {}   # (path index, run index) -> (slot, width)
+    for (axis, line), on_line in items.items():
+        on_line.sort(key=lambda d: (d["lo"], d["hi"]))
 
         def touches_in_gutter(d, reach):
             # two lines meeting end to end: at a node they simply join it, in a gutter they form a
@@ -263,7 +317,7 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
 
         # connected groups of overlapping intervals
         groups, cur, reach = [], [], None
-        for d in segs:
+        for d in on_line:
             if cur and (d["lo"] < reach or touches_in_gutter(d, reach)):
                 cur.append(d)
                 reach = max(reach, d["hi"])
@@ -275,7 +329,7 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
             groups.append(cur)
         for g in groups:
             if len(g) == 1:
-                slot[(key[0], key[1], g[0]["i"])] = (0, 1)
+                slot[(g[0]["i"], g[0]["r"])] = (0, 1)
                 continue
 
             def pref(d):
@@ -291,23 +345,44 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
 
             ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
 
-            def free(d, orders):
-                # no line of the group still to place has to lie below d
-                return not any(order.get((axis, line, o["i"], d["i"])) == 1 for order in orders for o in ranked)
+            # two runs that meet end to end at a gutter point with their arms there pointing to
+            # opposite sides: the one whose arm points to the lower coordinate takes the lower
+            # slot, so each corner moves towards its own arms and the pair does not cross twice.
+            # They share no stretch, so nothing above says anything about them.
+            soft = {}
+            for u in g:
+                for v in g:
+                    if u is v or u["hi"] != v["lo"] or not u["hi_side"] or not v["lo_side"]:
+                        continue
+                    if u["hi_side"] == v["lo_side"]:
+                        continue
+                    pt = (line, u["hi"]) if axis == "v" else (u["hi"], line)
+                    ku, kv = (u["i"], u["r"]), (v["i"], v["r"])
+                    if pt in nodes or (ku, kv) in firm or (ku, kv) in loose:
+                        continue
+                    soft[(ku, kv)], soft[(kv, ku)] = -u["hi_side"], u["hi_side"]
 
-            # the order of shared stretches first, a loose one only where the firm ones allow it;
-            # the ranking places the lines they leave free and breaks a cycle among them
+            def free(d, orders):
+                # no run of the group still to place has to lie below d
+                return not any(order.get(((o["i"], o["r"]), (d["i"], d["r"]))) == 1
+                               for order in orders for o in ranked)
+
+            # the order of shared stretches first, a loose one only where the firm ones allow it
+            # and the end-to-end one only where both do; the ranking places the lines they leave
+            # free and breaks a cycle among them
             ordered = []
             while ranked:
-                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
+                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose, soft))), None)
+                if n is None:
+                    n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
                 if n is None:
                     n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
                 ordered.append(ranked.pop(n))
             for n, d in enumerate(ordered):
-                slot[(key[0], key[1], d["i"])] = (n, len(ordered))
+                slot[(d["i"], d["r"])] = (n, len(ordered))
 
-    def off(axis, line, i):
-        sw = slot.get((axis, line, i))
+    def off(key):
+        sw = slot.get(key)
         if sw is None:
             return 0.0
         n, w = sw
@@ -315,9 +390,17 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
 
     result = []
     for i, p in enumerate(paths):
+        rs, of_seg = runs[i]
         pts = []
-        for (x, y) in p:
-            pts.append((off("v", x, i), off("h", y, i)))
+        for m in range(len(p)):
+            # ox from the vertical run through the point, oy from the horizontal one: the run of
+            # the segment that ends at the point, else of the one that starts there. So both points
+            # of a segment read one offset on that segment's own axis.
+            here = {}
+            for k in (m - 1, m):
+                if 0 <= k < len(of_seg) and rs[of_seg[k]]["axis"] not in here:
+                    here[rs[of_seg[k]]["axis"]] = off((i, of_seg[k]))
+            pts.append((here.get("v", 0.0), here.get("h", 0.0)))
         result.append(pts)
     return result
 

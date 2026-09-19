@@ -67,10 +67,6 @@ class DrawnEqualsCounted(unittest.TestCase):
     def setUpClass(cls):
         cls.surveyed = survey()
 
-    # Defects A, B and C of the design: `assign_offsets` keys a slot and a pair order by path, so a
-    # path with two runs on one lattice line overwrites its own, and two runs that meet end to end
-    # in a gutter have no order at all. Tasks 4 and 5 fix them and remove this decorator.
-    @unittest.expectedFailure
     def test_every_instance_draws_what_it_counts(self):
         bad = [row for row in self.surveyed if row.drawn != row.counted or row.overlaps]
         if bad:

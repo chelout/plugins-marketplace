@@ -568,7 +568,9 @@ def plan(model, mode_name, overrides=None, draft=False):
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors if x not in " ".join(warnings)] + warnings
 
-    n_cross = router.crossings(paths)
+    # what the reader sees, not what the lattice paths would cross: with the offsets assigned the
+    # two are the same number, and where they are not the author is told about the drawing
+    n_cross = router.drawn_crossings(paths, offsets, frozenset(lat.blocked))
     if n_cross >= 3:
         warnings.append(f"пересечений линий: {n_cross}; переставьте узлы, чтобы их стало меньше")
     out_edges = []
