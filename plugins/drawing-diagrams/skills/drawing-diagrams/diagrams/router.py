@@ -137,6 +137,35 @@ def simplify(pts):
     return out
 
 
+def route_all(lat, ends, labelled):
+    """Route a whole diagram: one path per entry of `ends`, None where there is no route.
+    `ends[i]` is (source point, target point) and `labelled[i]` says whether the edge carries a
+    label or a footnote, which `route` prices.
+
+    One pass in the given order with accumulating traffic, then two rip-up passes: the first pass
+    is greedy in that order, so early lines take the easy exits and late ones detour, and the two
+    passes let every line see all the others. An edge with no route stays None and takes no part
+    in them."""
+    paths, live = [], []
+    traffic = Traffic()
+    for i, (src, dst) in enumerate(ends):
+        p = route(lat, src, dst, labelled=labelled[i], traffic=traffic)
+        paths.append(p)
+        if p is not None:
+            traffic.add(p)
+            live.append(i)
+    for _ in range(2):
+        for i in live:
+            others = Traffic()
+            for j in live:
+                if j != i:
+                    others.add(paths[j])
+            p = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=others)
+            if p is not None:
+                paths[i] = p
+    return paths
+
+
 def side_of(a, b):
     """Side of the node at lattice point `a` that the step towards `b` leaves."""
     dx, dy = b[0] - a[0], b[1] - a[1]

@@ -46,31 +46,6 @@ def examples():
     return out
 
 
-def route_all(lat, ends, labelled):
-    """The routing loop of flow.plan, so that the benchmark times routing without the checks
-    around it: one pass in the given order with accumulating traffic, then two rip-up passes; an
-    edge with no route stays None and takes no part in them. Task 1 of the routing plan moves this
-    loop into router.route_all, and then this becomes one call of it."""
-    paths, live = [], []
-    traffic = router.Traffic()
-    for i, (src, dst) in enumerate(ends):
-        p = router.route(lat, src, dst, labelled=labelled[i], traffic=traffic)
-        paths.append(p)
-        if p is not None:
-            traffic.add(p)
-            live.append(i)
-    for _ in range(2):
-        for i in live:
-            others = router.Traffic()
-            for j in live:
-                if j != i:
-                    others.add(paths[j])
-            p = router.route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=others)
-            if p is not None:
-                paths[i] = p
-    return paths
-
-
 def best_of(fn, repeats=REPEATS):
     """Milliseconds of the fastest of `repeats` runs: the machine's noise only ever adds."""
     return min(_timed(fn) for _ in range(repeats))[0]
@@ -103,7 +78,7 @@ def dense_numbers():
         labelled = [False] * len(ends)
 
         def run():
-            paths = [p for p in route_all(lat, ends, labelled) if p is not None]
+            paths = [p for p in router.route_all(lat, ends, labelled) if p is not None]
             router.assign_offsets(paths, nodes=frozenset(lat.blocked))
             return len(paths), router.crossings(paths)
 

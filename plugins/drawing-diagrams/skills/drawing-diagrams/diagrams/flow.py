@@ -490,30 +490,16 @@ def plan(model, mode_name, overrides=None, draft=False):
 
     # routing
     lat = router.Lattice(grid_cols, grid_rows, {nid: rc for nid, rc in cells.items() if nid in by_id})
+    ends = [(router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]])) for e in edges]
+    labelled = [bool(e["label"] or e["note"]) for e in edges]
     paths, routed = [], []
-    traffic = router.Traffic()
-    for e in edges:
-        p = router.route(lat, router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]]),
-                         labelled=bool(e["label"] or e["note"]), traffic=traffic)
+    for e, p in zip(edges, router.route_all(lat, ends, labelled)):
         if p is None:
             layout_errors.append(f"связь {e['a']} -> {e['b']}: нет маршрута, не проходящего сквозь узлы; "
                                  f"освободите ячейку между ними или переставьте узлы")
             continue
-        traffic.add(p)
         paths.append(p)
         routed.append(e)
-    # rip up and reroute: the first pass is greedy in model order, so early lines take the easy
-    # exits and late ones detour; two more passes let every line see all the others
-    for _ in range(2):
-        for i, e in enumerate(routed):
-            others = router.Traffic()
-            for j, q in enumerate(paths):
-                if j != i:
-                    others.add(q)
-            p = router.route(lat, router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]]),
-                             labelled=bool(e["label"] or e["note"]), traffic=others)
-            if p is not None:
-                paths[i] = p
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
