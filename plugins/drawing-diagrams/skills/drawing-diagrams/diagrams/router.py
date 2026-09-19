@@ -268,10 +268,12 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
     such a pair shares no piece of a stretch it has no firm or loose order,
     so the weakest is recorded wherever two runs meet end to end. Through a
     third run it can still close a cycle with firm or loose orders; where it
-    does, no run of the group is free under all three, the pick order falls
-    to firm and loose, and the soft order is the one dropped. So it never
-    displaces a firm or a loose order, and that step of the pick order is
-    what the guarantee rests on."""
+    does, no run of that cycle is ever free under all three strengths, so
+    once the runs of the cycle are what remains to place, the pick order
+    falls to firm and loose and the soft order is the one dropped; a run
+    outside the cycle is placed before that with the soft order honoured. So
+    it never displaces a firm or a loose order, and that step of the pick
+    order is what the guarantee rests on."""
     runs = [_runs(p) for p in paths]
 
     def covering(i, axis, line, lo, hi):

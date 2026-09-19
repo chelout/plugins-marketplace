@@ -167,14 +167,16 @@ line's own group, so each corner moves towards its own arms.
 
 The rule is the **weakest** order, a third strength `soft` beside `firm` and `loose`: the group loop
 looks for a run free under all three, then under `firm` and `loose`, then under `firm`, then takes
-`ranked[0]` as today. It is recorded only where the two runs have no firm or loose order — which is always, since two runs
-that meet end to end share no piece of a stretch. It can still close a cycle with firm or loose
-orders through a third run; where it does, no run is free under all three, the pick order falls to
-`firm` and `loose`, and the soft order is the one dropped. So it never displaces a firm or a loose
-order, and that step of the pick order is what the guarantee rests on. Measured in a scratch copy:
-both regression cases pass and 1 500 of 1 500 instances agree; the invariant cannot see a displaced
-loose order, so a hand-made case guards this rule. This is the end-to-end case of `segCmp` in
-Graphviz `lib/ortho/ortho.c`, re-implemented from its description; no code is copied.
+`ranked[0]` as today. It is recorded only where the two runs have no firm or loose order — which is
+always, since two runs that meet end to end share no piece of a stretch. It can still close a cycle
+with firm or loose orders through a third run. No run of such a cycle is ever free under all three
+strengths, so once the runs of the cycle are what remains to place, the pick order falls to `firm`
+and `loose`, and the soft order is the one dropped; a run outside the cycle is placed before that
+with the soft order honoured. So the rule never displaces a firm or a loose order, and that step of
+the pick order is what the guarantee rests on. Measured in a scratch copy: both regression cases
+pass and 1 500 of 1 500 instances agree; the invariant cannot see a displaced loose order, so a
+hand-made case guards this rule. This is the end-to-end case of `segCmp` in Graphviz
+`lib/ortho/ortho.c`, re-implemented from its description; no code is copied.
 
 Regression case B: `[(1,3),(1,4),(2,4),(2,6),(6,6),(6,9),(7,9)]`,
 `[(7,5),(4,5),(4,4),(2,4),(2,3),(1,3)]`, `[(1,7),(2,7),(2,3),(3,3)]`,
@@ -261,8 +263,8 @@ proposer: it makes overflow rare and guarantees nothing; §4.4 is the guarantee.
 
 A group that does not fit at 5 px is a layout error (it prints the map, `--draft` downgrades it):
 "между столбцами 2 и 3 идут 5 линий, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
-переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Per Q1 of §12 it
-is an error.
+переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Per
+Q1 of §12 it is an error.
 
 ## 5. Stage C — routing with an objective
 
@@ -469,7 +471,9 @@ case is not supported.
 ## 10. Done when
 
 Stage A
-- A1. The cases A, B and C of §3 are tests that fail at the governing base and pass: test names in
+- A1. The cases A, B and C of §3 are tests that fail at the governing base and pass, and the cycle
+  case of §3.2 — the end-to-end rule gives way to the orders it closes a cycle with — is a test that
+  fails without the `firm` and `loose` step of the pick order: test names in
   `tests/test_crossings.py`.
 - A2. The property test of §3.4 passes on at least 300 instances in under 20 s: test output.
 - A3. Every shipped example renders byte-identical HTML in both modes before and after the stage:
