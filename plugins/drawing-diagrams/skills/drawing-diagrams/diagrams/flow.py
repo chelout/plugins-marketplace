@@ -606,19 +606,28 @@ def plan(model, mode_name, overrides=None, draft=False):
     if errors:
         raise ModelError(errors + layout_errors, layout=layout_errors, fit=fit_errors)
 
+    # The lattice ends where the page's rows end. tracks() of template/js/head.js takes its row
+    # count from the cards — the last occupied row plus one — and invents a track for an empty row
+    # above or between them, never for one after the last, so a line under the last card row is a
+    # line by() of template/js/flow.js has no y for. Rows after it are no part of the lattice, of
+    # the geometry (whose bottom margin is then the line the page really draws as one), or of the
+    # row count a capacity error names lines by. The rows above stay: an empty one among them has
+    # its track. The author still hears about every empty row of the grid, that one included.
+    placed = {nid: rc for nid, rc in cells.items() if nid in by_id}
+    drawn_rows = max((r for r, _ in placed.values()), default=-1) + 1
+
     # every gutter and margin knows its room, so the router prices a step along a full one and a
     # group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
     # card edge or out of the grid box
     top, bottom = margin_room(kind, mode_name, footnotes)
-    geo = Geometry(mode, card_w, grid_cols, grid_rows, top, bottom)
+    geo = Geometry(mode, card_w, grid_cols, drawn_rows, top, bottom)
 
     def line_capacity(axis, line):
         room = geo.room(axis, line)
         return None if room is None else router.capacity(room)
 
     # routing
-    lat = router.Lattice(grid_cols, grid_rows, {nid: rc for nid, rc in cells.items() if nid in by_id},
-                         capacity=line_capacity)
+    lat = router.Lattice(grid_cols, drawn_rows, placed, capacity=line_capacity)
     ends = [(router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]])) for e in edges]
     labelled = [bool(e["label"] or e["note"]) for e in edges]
     paths, routed = [], []
@@ -641,8 +650,8 @@ def plan(model, mode_name, overrides=None, draft=False):
     # fit at the smallest pitch is refused here, one error per group, so the author moves nodes
     # instead of reading a line drawn over a card
     for group in router.overfull(paths, on_cards, geo.room):
-        layout_errors.append(overfull_error(group, routed, grid_cols, grid_rows))
-    occupied = {rc for nid, rc in cells.items() if nid in by_id}
+        layout_errors.append(overfull_error(group, routed, grid_cols, drawn_rows))
+    occupied = set(placed.values())
 
     # where a label goes and how much room it has, from the shape of the route and the
     # pixels template/js/flow.js will use: straight line: at the exit; horizontal second segment: above
@@ -723,7 +732,9 @@ def plan(model, mode_name, overrides=None, draft=False):
             out["ly"] = e["ly"]  # lattice row of a label beside a vertical second segment
         out_edges.append(out)
 
-    layout = {"kind": kind, "edges": out_edges, "card_w": card_w, "grid_cols": grid_cols, "grid_rows": grid_rows,
+    # grid_rows is the drawn count: a swimlane's lane background, which render() spans from it, ends
+    # with the last card row, where the tracks and the lattice end
+    layout = {"kind": kind, "edges": out_edges, "card_w": card_w, "grid_cols": grid_cols, "grid_rows": drawn_rows,
               "cells": cells, "mode": mode, "nodes": by_id, "lanes": lanes, "lattice": lat, "paths": paths,
               "crossings": n_cross, "draft": bool(layout_errors), "routes": routes, "footnotes": footnotes}
     return layout, warnings

@@ -222,3 +222,13 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   as every other message counts them. The count is the width of the group, the list names at most
   four edges once each, and where the line holds nothing the advice is to move the nodes instead,
   since no cell freed beside it would help.
+- The lattice ends where the page's rows end. `tracks()` of `template/js/head.js` takes its row count
+  from the cards and invents a track for an empty row above or between occupied ones, never for one
+  after the last, so `flow.plan` builds the lattice, the `Geometry` and the row count of its
+  capacity messages from the last occupied row (`drawn_rows`), and `layout["grid_rows"]` is that
+  count too. A line under the last card row was a line the script had no y for: it aborted and drew
+  no edge at all. The defect was latent before this stage — three parallel edges over a trailing
+  empty row reached it — and the price on a flow's top margin made it frequent; the branch gate
+  found it. `tests/test_trailing_rows.py` holds the property that matters: an empty row the browser
+  never creates does not change the drawing. Columns need no such rule, `tracks()` fills every
+  column up to `--dg-cols`.

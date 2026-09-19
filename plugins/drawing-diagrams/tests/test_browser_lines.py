@@ -58,6 +58,12 @@ Test cases (written from the declaration of the change, before the implementatio
     keeps EDGE_CLEAR from the first content the section goes on with. This is what makes the
     capacity a number a diagram can be refused on: a group drawn as wide as its line allows is
     still a group the page draws clear of everything.
+16. An empty row at the foot of the grid, in a flow and in a swimlane, both modes: the page draws a
+    line for every edge, they cross as the lattice says and keep the router's order. `tracks()`
+    invents a track for an empty row above or between the cards and none for one after the last, so
+    a line planned under the last card row is a line `by()` has no y for: the script stops there and
+    the page keeps only the lines it had already drawn. The flow's grid has a leading empty row as
+    well, which does get a track, and one of its three lines runs along it.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -245,6 +251,21 @@ CAPACITY = {"capacity-at-pitch": (
 # pixels: a line keeps LINE_CLEAR from a card edge by construction; the browser is asked for this
 # much, which leaves a pixel for the layout's own rounding
 CARD_CLEAR = 3.0
+
+# Docstring case 16. Three lines that have to leave the row of cards they run between: a flow's top
+# margin holds none, so they went down, and the empty row at the foot of the grid is where they went
+# — into its own cells or along the margin under it, neither of which the page has a track for. The
+# flow's leading empty row is the other half of the rule: that one does get a track, and the third
+# line runs along it. The models are the branch gate's, with the room a page needs to hold three
+# lines that all go around.
+TRAILING_LANES = {"lanes": ["one", "two", "three"],
+                  "groups": {**MARGIN_LANES["groups"], "three": {"label": "Третий", "ramp": "purple"}}}
+TRAILING = {
+    "trailing-row-flow": {"kind": "flow", "nodes": [step(i) for i in "abc"],
+                          "grid": [". . .", "a b c", ". . ."], "edges": ["a -> c"] * 3},
+    "trailing-row-swimlane": {"kind": "swimlane", "nodes": [step(i) for i in "abc"],
+                              "grid": ["a b c", ". . ."], "edges": ["a -> c"] * 3, **TRAILING_LANES},
+}
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
@@ -652,7 +673,7 @@ class BrowserLines(unittest.TestCase):
         cls.addClassCleanup(tmp.cleanup)
         root = Path(tmp.name)
         cls.examples = flow_like_examples()
-        cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + cls.examples
+        cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + list(TRAILING.items()) + cls.examples
         # the margin and capacity models are routed by hand, so they stand beside the models the
         # router routed; the capacity one is a page's, and its groups are over a widget's capacity
         drawn = [(name, model, None, MODES) for name, model in cls.models]
@@ -918,6 +939,27 @@ class BrowserLines(unittest.TestCase):
                                 f"{name}: the line under the grid is {higher:.2f} px from the {by}")
         self.assertGreaterEqual(lower, CARD_CLEAR - AXIS_TOL,
                                 f"{name}: the line under the grid is {lower:.2f} px from the cards")
+
+    def test_a_trailing_empty_row_leaves_every_line_drawn(self):
+        """Docstring case 16: an empty row under the last card row is no part of the lattice, so
+        every line is drawn where the page has a track for it. A line planned under that row stops
+        the script at the row it cannot read, and the page then holds only the lines before it."""
+        for name, model in TRAILING.items():
+            for mode in MODES:
+                with self.subTest(model=name, mode=mode):
+                    got = self.results[name, mode]
+                    if isinstance(got, Exception):
+                        self.fail(f"harness: {name} {mode}: {got}")
+                    layout = self.layouts[name, mode]
+                    want = [f"{e['a']} {e['b']}" for e in layout["edges"]]
+                    drawn = [n for n, d in got["lines"] if d]
+                    self.assertEqual(drawn, want, f"{name} {mode}: the page draws {len(drawn)} of "
+                                                  f"{len(want)} lines; one was planned where it has no row")
+                    # the case exists only if the grid's last row is the empty one that is left out
+                    self.assertEqual(layout["grid_rows"], len(model["grid"]) - 1,
+                                     f"harness: {name}: the grid's last row is not an empty one")
+                    self.check_crossings(name, mode)
+                    self.check_row_order(name, mode)
 
     def test_examples_found(self):
         self.assertTrue(self.examples, f"no example of kind {', '.join(KINDS)} under {EXAMPLES}")
