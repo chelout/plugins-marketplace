@@ -325,6 +325,67 @@ def shared_swaps(p, q):
     return sum(1 for _, first, last in stretches(p, q) if first * last < 0)
 
 
+BIG = 10000  # one lattice step in the half-pixel units of the two counters below
+
+
+def drawn_crossings(paths, offsets, nodes):
+    """Number of places where the lines as they are drawn cross: a vertical
+    segment of one displaced centreline through a horizontal segment of
+    another. `offsets` are what assign_offsets returns, `nodes` the lattice
+    points the cards sit on. The mapping from lattice to pixels in flow.js is
+    monotone per coordinate, so a strict crossing here is one on the page;
+    rounded corners, arrowheads and clipping are not modelled."""
+    segs = [segments(_drawn_points(p, o, nodes)) for p, o in zip(paths, offsets)]
+    n = 0
+    for i in range(len(segs)):
+        for j in range(len(segs)):
+            if i == j:
+                continue
+            for a in segs[i]:
+                if a[0] != "v":
+                    continue
+                for b in segs[j]:
+                    if b[0] == "h" and b[2] < a[1] < b[3] and a[2] < b[1] < a[3]:
+                        n += 1
+    return n
+
+
+def drawn_overlaps(paths, offsets, nodes):
+    """Number of pairs of segments of two drawn lines that run along one
+    coordinate over a stretch of it: two lines sharing a slot, which the
+    reader sees as one line."""
+    segs = [segments(_drawn_points(p, o, nodes)) for p, o in zip(paths, offsets)]
+    n = 0
+    for i in range(len(segs)):
+        for j in range(i + 1, len(segs)):
+            for a in segs[i]:
+                for b in segs[j]:
+                    if a[0] == b[0] and a[1] == b[1] and max(a[2], b[2]) < min(a[3], b[3]):
+                        n += 1
+    return n
+
+
+def _drawn_points(path, offs, nodes):
+    """`path` as integer points in half-pixel units: a lattice step is BIG and
+    half a pixel is 1, so the .5 of a 5 px pitch stays exact. An end that lies
+    on a node moves half a lattice step towards its neighbour and takes the
+    neighbour's cross coordinate, as anchor() in flow.js does, so two lines
+    that reach one node from different sides do not meet at its centre."""
+    pts = [(x * BIG + round(2 * ox), y * BIG + round(2 * oy))
+           for (x, y), (ox, oy) in zip(path, offs)]
+    out = list(pts)
+    for end, nb in ((0, 1), (-1, -2)):
+        if len(pts) < 2 or path[end] not in nodes:
+            continue
+        dx = _sign(path[nb][0] - path[end][0])
+        dy = _sign(path[nb][1] - path[end][1])
+        if dx:
+            out[end] = (pts[end][0] + dx * (BIG // 2), pts[nb][1])
+        elif dy:
+            out[end] = (pts[nb][0], pts[end][1] + dy * (BIG // 2))
+    return out
+
+
 def stretches(p, q):
     """The stretches the paths p and q share, as (points, first, last): the
     points of p along the stretch, and the side of q against p where they
