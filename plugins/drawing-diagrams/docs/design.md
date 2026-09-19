@@ -137,7 +137,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - The unit of a slot and of an order is the run — a maximal straight piece of one path on one
   lattice line (`router._runs`) — and not the path. So a path with two runs on one line gets a slot
   for each instead of overwriting its own, and a pair that shares two stretches on one line keeps
-  the order of each. The signature of `assign_offsets` and the shape of its result do not change:
+  the order of each. A zero-length segment — two equal consecutive points, which `schema.plan`
+  produces — stays a run of its own and does not break the straight piece it lies in, so no output
+  of `schema.plan` moves: its `cross_count`, the `off` and `via` of its edges and its warnings are
+  what they were. The signature of `assign_offsets` and the shape of its result do not change:
   one `(ox, oy)` per point, read from the runs through that point, and `schema.plan` reads them as
   before.
 - Three strengths of order, weakest last: `firm`, from a stretch two runs share and enter and leave
