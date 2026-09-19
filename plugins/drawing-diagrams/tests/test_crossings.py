@@ -224,6 +224,17 @@ class RunKeys(unittest.TestCase):
         offs = router.assign_offsets([[(1, 1), (1, 3), (1, 5), (3, 5)]])
         self.assertEqual([ox for ox, _ in offs[0][:3]], [0.0, 0.0, 0.0])
 
+    def test_a_zero_length_segment_is_a_run_of_its_own(self):
+        # two equal consecutive points, which schema.plan produces: that segment is a run of its
+        # own on the vertical line through it, and the collinear pieces on either side of it stay
+        # one run, so a path alone on both its lines takes no offset anywhere
+        path = [(1, 1005), (2, 1005), (2, 1005), (3, 1005)]
+        runs, of_seg = router._runs(path)
+        self.assertEqual([(d["axis"], d["line"], d["lo"], d["hi"]) for d in runs],
+                         [("h", 1005, 1, 3), ("v", 2, 1005, 1005)])
+        self.assertEqual(of_seg, [0, 1, 0])
+        self.assertEqual(router.assign_offsets([path])[0], [(0.0, 0.0)] * 4)
+
 
 # Defect B: on y = 4 two runs meet end to end at (2, 4) and two more at (4, 4), in a gutter and
 # with their arms pointing opposite ways. Neither pair shares a stretch, so no order holds them
@@ -235,10 +246,21 @@ END_TO_END_PATHS = [[(1, 3), (1, 4), (2, 4), (2, 6), (6, 6), (6, 9), (7, 9)],
 END_TO_END_NODES = frozenset({(1, 3), (7, 9), (7, 5), (1, 7), (3, 3), (5, 3), (1, 11)})
 
 
+# On y = 4 the stretch path 0 shares with path 1 and the one path 1 shares with path 2 order the
+# three runs 0, 1, 2 from the top. The runs of path 2 and path 0 meet end to end at (3, 4), where
+# path 2's arm points up and path 0's down, so the end-to-end rule asks for path 2 above path 0 and
+# closes a cycle with the two stretches. Being the weakest, it is the order that gives way.
+CYCLE_PATHS = [[(5, 1), (4, 1), (4, 4), (3, 4), (3, 5)],
+               [(1, 7), (2, 7), (2, 4), (4, 4), (4, 3), (5, 3)],
+               [(3, 7), (2, 7), (2, 4), (3, 4), (3, 3)]]
+CYCLE_NODES = frozenset({(5, 1), (3, 5), (1, 7), (5, 3), (3, 7), (3, 3)})
+
+
 class EndToEnd(unittest.TestCase):
     """Two runs of one group that meet end to end at a gutter point with their arms pointing to
     opposite sides take the slots their arms point to: the weakest of the three strengths of
-    order, recorded only where a shared stretch has said nothing."""
+    order, recorded only where a shared stretch has said nothing, and dropped where it closes a
+    cycle with the orders of the stretches."""
 
     def test_the_four_paths_draw_the_crossings_they_count(self):
         offs = router.assign_offsets(END_TO_END_PATHS, nodes=END_TO_END_NODES)
@@ -247,10 +269,55 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(router.drawn_crossings(END_TO_END_PATHS, offs, END_TO_END_NODES), 5)
         self.assertEqual(router.drawn_overlaps(END_TO_END_PATHS, offs, END_TO_END_NODES), 0)
 
+    def test_it_gives_way_to_the_orders_it_closes_a_cycle_with(self):
+        # the case exists only if both orders on y = 4 come from a stretch with a swap — the
+        # weakest is dropped for them, not for a firmer kind — and the pair whose runs meet end to
+        # end shares no stretch, so nothing but the end-to-end rule speaks about it
+        for i, j in ((0, 1), (1, 2)):
+            with self.subTest(pair=(i, j)):
+                self.assertEqual(router.shared_swaps(CYCLE_PATHS[i], CYCLE_PATHS[j]), 1,
+                                 "harness: the pair shares no stretch with a swap")
+        self.assertEqual(list(router.stretches(CYCLE_PATHS[0], CYCLE_PATHS[2])), [],
+                         "harness: the ends of the cycle share a stretch")
+        offs = router.assign_offsets(CYCLE_PATHS, nodes=CYCLE_NODES)
+        # the run on y = 4 is the third segment of each path, so its oy sits on points 2 and 3
+        for m in (2, 3):
+            with self.subTest(point=m):
+                self.assertLess(offs[0][m][1], offs[1][m][1])
+                self.assertLess(offs[1][m][1], offs[2][m][1])
+
+
+def plan_with_drawn_crossings(model, mode, n):
+    """What flow.plan takes from router.drawn_crossings, per call: the counter is swapped for a spy
+    that returns `n`, so the layout and the warning are read from this seam alone and not from a
+    count taken again behind it."""
+    seen = []
+    real = router.drawn_crossings
+
+    def spy(paths, offsets, nodes):
+        seen.append((paths, offsets, nodes))
+        return n
+
+    router.drawn_crossings = spy
+    try:
+        layout, warnings = flow.plan(model, mode)
+    finally:
+        router.drawn_crossings = real
+    return layout, warnings, seen
+
 
 class PlanReportsWhatIsDrawn(unittest.TestCase):
     """What flow.plan counts is what the reader sees: the crossings of the lines with the offsets
     the edges carry into the script, not of the lattice paths behind them."""
+
+    def test_the_count_and_the_warning_come_from_drawn_crossings(self):
+        # a number no count of these two lines could reach, and above the threshold of the warning
+        layout, warnings, seen = plan_with_drawn_crossings(SWAP, "page", 97)
+        self.assertEqual(len(seen), 1, "flow.plan counts a layout once")
+        self.assertEqual(seen[0][0], layout["paths"])
+        self.assertEqual(seen[0][2], frozenset(layout["lattice"].blocked))
+        self.assertEqual(layout["crossings"], 97)
+        self.assertIn("пересечений линий: 97", " ".join(warnings))
 
     def test_every_flow_like_example_reports_the_crossings_it_draws(self):
         found = bench_routing.examples()
