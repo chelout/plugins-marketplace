@@ -1,8 +1,8 @@
 # drawing-diagrams: routing and label quality — design
 
-Date: 2026-09-19. Status: draft, waiting for the owner's acceptance. Documents branch:
-`docs/drawing-diagrams-routing-quality`; every stage below is implemented on a branch of its own.
-Governing base: `main` at `d67f1a50e405d022717b2ba7dcbf82260bbf15ef` (PR #8 merged).
+Date: 2026-09-19. Status: accepted by the owner on 2026-09-19, with the defaults of §12. Documents
+branch: `docs/drawing-diagrams-routing-quality`; every stage below is implemented on a branch of its
+own. Governing base: `main` at `d67f1a50e405d022717b2ba7dcbf82260bbf15ef` (PR #8 merged).
 
 ## Stream slots
 
@@ -257,8 +257,8 @@ proposer: it makes overflow rare and guarantees nothing; §4.4 is the guarantee.
 
 A group that does not fit at 5 px is a layout error (it prints the map, `--draft` downgrades it):
 "между столбцами 2 и 3 идут 5 линий, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
-переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Open
-question Q1 in §12 is whether this is an error or a warning.
+переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Per Q1 of §12 it
+is an error.
 
 ## 5. Stage C — routing with an objective
 
@@ -542,9 +542,9 @@ names the criterion that proves the guarantee.
 | The label optimiser's bound is undefined | lexicographic cost, owner counting, greedy incumbent over the same candidates, best complete on exhaustion | §7.3 | E4 |
 | Work exceeds the stated envelope | starts complete, descent budget shared, advice bounded in plans, label search per plan, generator published | §5.3, §6, §7.3, slots | C3, D2, E4, task 0 |
 
-## 12. Open questions
+## 12. Resolved questions
 
-Each has a default that the plan follows until the owner says otherwise.
+The owner took the default of each on 2026-09-19.
 
 - **Q1.** A group over capacity: layout error (default) or warning?
 - **Q2.** Advice: on whenever it is triggered, with `--no-advice` (default), or opt-in `--advise`?
