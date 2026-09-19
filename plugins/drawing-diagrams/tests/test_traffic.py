@@ -15,12 +15,15 @@ import support  # noqa: F401
 import instances
 from diagrams import router
 from reference import OldTraffic, reference_route_all
+from test_drawn_property import DENSE, SMALL
 
 
 def identical_runs():
-    """The instances both classes route, to compare the paths they give."""
-    yield from instances.small(7, 120)
-    yield from instances.dense(8, 30)
+    """The instances both classes route, to compare the paths they give: the 300 of the property
+    test, whose seeds and counts are imported from `tests/test_drawn_property.py` so that the
+    population the criterion names and the one this file samples cannot drift apart."""
+    yield from instances.small(*SMALL)
+    yield from instances.dense(*DENSE)
 
 
 def swept_runs():
@@ -130,6 +133,12 @@ class RoutesIdentically(unittest.TestCase):
     """The paths do not move. The reference loop routes with `OldTraffic`, so a difference here is
     the new class answering differently, and every one of these paths is a diagram that would be
     drawn differently."""
+
+    def test_it_compares_the_instances_the_criterion_names(self):
+        """The criterion names the property test's instances, so a seed or a count of this file's
+        own would answer for a population nobody measured. Kept out of the comparison below so a
+        population that drifted fails as itself and not as a path that moved."""
+        self.assertEqual(len(list(identical_runs())), SMALL[1] + DENSE[1])
 
     def test_seeded_small_and_dense_grids(self):
         for cols, rows, cells, edges in identical_runs():
