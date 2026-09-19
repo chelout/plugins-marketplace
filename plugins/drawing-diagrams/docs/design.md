@@ -186,10 +186,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   of reaching over a card edge, and `router.capacity(room)` is the width the smallest pitch allows.
   Without the room — `schema.plan` passes none — every group keeps 8 px and no output moves.
 - Where the room comes from, per lattice line, is `flow.Geometry.room`: `gap / 2` in a column
-  gutter, `row_gap / 2` in a row gutter and, in the side margins, `Geometry.margin` towards the
-  cards and `pad − margin` towards the grid box, all of it from the mode tables `flow.MODES` and
-  `common.BASE_MODES`. So a column gutter holds five lines at `gap` 28 or 32 and three at 18, a row
-  gutter seven at `row_gap` 40 and eight at 44, a side margin three in either mode. The two outer
+  gutter, `row_gap / 2` in a row gutter between two rows of cards (a gutter beside an empty row is
+  the exception, in the last bullet of this section) and, in the side margins, `Geometry.margin`
+  towards the cards and `pad − margin` towards the grid box, all of it from the mode tables
+  `flow.MODES` and `common.BASE_MODES`. So a column gutter holds five lines at `gap` 28 or 32 and
+  three at 18, such a row gutter seven at `row_gap` 40 and eight at 44, a side margin three in
+  either mode. The two outer
   row margins follow from no table: `.dg-grid` pads 8 px vertically while `by()` of
   `template/js/flow.js` puts a margin line `margin` px outside the cards, so both fall outside the
   grid box, where what clips or covers a line is the section, the title above it or the content the
@@ -199,7 +201,7 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   a line there when the model has one. A swimlane's top margin, a row gap under the lane headers,
   holds four lines in a widget and six on a page; the bottom margin holds three in a widget and one
   on a page, two and none under a footnote list.
-- Two of those rooms hold **nothing at all**, and the renderer says so rather than drawing a line
+- Two of the measured rooms hold **nothing at all**, and the renderer says so rather than drawing a line
   no reader will see: a flow's top margin, where a widget's section clips the line
   (`overflow-x:auto` makes `overflow-y` compute to `auto`) and a page's `h3` title lies over it, and
   a page's bottom margin under a footnote list, which starts above where the line would be drawn.
@@ -232,3 +234,31 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   found it. `tests/test_trailing_rows.py` holds the property that matters: an empty row the browser
   never creates does not change the drawing. Columns need no such rule, `tracks()` fills every
   column up to `--dg-cols`.
+- An empty row inside the drawn extent does get a track, and the band around it is not a row gap
+  wide. `tracks()` of `template/js/head.js` invents one track per such row and fills them in
+  ascending order, so each sees the ones already invented above it: the first row of the grid lands
+  `flow.TRACK_LEAD` = 20 px over the first cards and every empty row after it halves what is left of
+  the way down to the next row of cards. An empty implicit grid row is 0 px high and both of its row
+  gaps stay, so the span a run of k empty rows halves between two rows of cards is (k + 1) row gaps.
+  `by()` of `template/js/flow.js` then puts a row line on its own track, a gutter halfway between two
+  tracks and the top margin `Geometry.margin` over the first. So a page flow with one leading empty
+  row draws the gutter above its cards 10 px from them, not 22, and the four lines the stage had put
+  there at the 8 px pitch reached 2 px inside a card with no capacity error — the branch gate found
+  it. `flow.Geometry` now takes the empty rows of the drawn extent and `Geometry._band` answers from
+  the measured rule: towards a card edge the distance to it less `LINE_CLEAR`, towards another
+  lattice line half the distance to it, because the two groups share the space between their lines.
+  The row line of a fully empty row states a room like a gutter, since nothing but `by()` places it,
+  while a row of cards keeps stating none; `router.Lattice` therefore resolves the capacity of every
+  line and not only the even ones, so the +20 prices a step along a full row of empty cells too, and
+  `flow.line_name` names such a line "в пустом ряду N" with "уберите пустой ряд" for advice — beside
+  an empty row the cells are free already and what leaves no room is the row. The halving makes the
+  band tight fast: on a page an empty row between two rows of cards turns one gutter that held eight
+  lines into three lines of five, and under a run of three leading empty rows the last gutter lies
+  2.5 px over the cards and holds nothing at all. Case 17 of `tests/test_browser_lines.py` holds the
+  rule against the page — a flow and a swimlane, both modes, a run of one empty row and a run of two,
+  leading and interior — and case 18 draws a group at the capacity of every line of two such bands.
+  Above a leading empty row the top margin has more room than `flow.TOP_ROOM` states, because the
+  grid box starts a row gap higher while the line itself sits only 20 px over that row's track: 14 px
+  under the box's top edge in a page flow, where the constant says 10 px above it, and 50 px under the
+  lane headers in a page swimlane, where it says 26. The constant is kept there as the conservative
+  number rather than a second table measured; case 17 checks that it is the conservative one.

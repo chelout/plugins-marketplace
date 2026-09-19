@@ -81,6 +81,16 @@ BOTTOM_ROOM = {("flow", "widget", False): (12, 8), ("flow", "widget", True): (12
                ("swimlane", "widget", False): (12, 8), ("swimlane", "widget", True): (12, 4),
                ("swimlane", "page", False): (18, 2), ("swimlane", "page", True): (18, -2)}
 
+# Where tracks() of template/js/head.js puts the track of the first row of the grid when that row
+# holds no card, in px above the top of the first cards: `rows[dn].t - 20`, whatever the kind and the
+# mode. Also measured by tests/test_browser_lines.py (case 17), which holds the whole band of an
+# empty row against the page.
+TRACK_LEAD = 20
+
+# Stands, inside Geometry.band, for the top margin's away-from-the-cards side: the one side of a line
+# of such a band that no rule here derives, because only the browser measurement states it.
+MEASURED = object()
+
 
 def margin_room(kind, mode_name, footnotes):
     """(top, bottom) raw room of the outer margins for this kind and mode: only a swimlane carries
@@ -97,15 +107,22 @@ class Geometry:
 
     `top` and `bottom` are the measured raw room of the outer row margins, which no rule here
     derives; a geometry built without them answers None for those two lines, which is what a
-    caller with no capacity to enforce needs."""
+    caller with no capacity to enforce needs.
 
-    def __init__(self, mode, card_w, cols, rows=0, top=None, bottom=None):
+    `empty` names the rows of the drawn extent that hold no card. They have no card edge for a line
+    beside them to keep clear of, and their own row line carries lines, so the band around such a row
+    is the one place where the distances between row lines are not a row gap (see `_band`). The last
+    row of the drawn extent always holds cards, so it is never among them."""
+
+    def __init__(self, mode, card_w, cols, rows=0, top=None, bottom=None, empty=()):
         self.w = float(f"{card_w:.0f}")  # --dg-w is written rounded
         self.gap, self.pad_l, self.cols, self.total = mode["gap"], mode["pad_l"], cols, mode["total"]
         self.pad_r, self.rows = mode["pad_r"], rows
         self.row_gap = mode["row_gap"]
         self.margin = max(8, mode["pad_l"] - 6)
         self.top_room, self.bottom_room = top, bottom
+        self.empty = sorted(r for r in empty if 0 <= r < rows - 1)
+        self.band = self._band()
 
     def left(self, c):
         return self.pad_l + c * (self.w + self.gap)
@@ -126,16 +143,72 @@ class Geometry:
     def clamp(self, c, x):
         return min(max(x, self.left(c) + 12), self.right(c) - 12)
 
+    def _band(self):
+        """The room of every lattice row line an empty row governs: {line: (lower side, higher side)},
+        with MEASURED in place of the top margin's away-from-the-cards side, which only the browser
+        measurement states.
+
+        tracks() of template/js/head.js gives an empty row of the drawn extent a track at one y and
+        fills the empty rows in ascending order, so each of them sees the tracks already invented
+        above it: the first row of the grid lands TRACK_LEAD px above the first cards, and every other
+        empty row halfway between the row above it and the top of the next row of cards. So a run of
+        k empty rows halves what is left of the span below it, k times. An empty implicit grid row is
+        0 px high and both of its row gaps stay, so that span is (k + 1) row gaps between two rows of
+        cards. by() then puts a row line in the middle of its own track, a gutter in the middle
+        between two tracks, and the top margin `margin` above the first track.
+
+        Each run is measured in px from the card edge that ends it, downwards, so its own lines are
+        negative and the cards below it are at 0. A side facing a card edge keeps LINE_CLEAR off the
+        distance to it; a side facing another lattice line takes half the distance, the two groups
+        sharing the space between their lines."""
+        runs = []
+        for r in self.empty:
+            if runs and runs[-1][-1] == r - 1:
+                runs[-1].append(r)
+            else:
+                runs.append([r])
+        out = {}
+        for run in runs:
+            a, b = run[0], run[-1]
+            if a == 0:
+                # a leading run: nothing occupied above it, and the top margin is what bounds it
+                ys = [-TRACK_LEAD / 2 ** j for j in range(len(run))]
+                above, first = None, ys[0] - self.margin
+            else:
+                span = (len(run) + 1) * self.row_gap
+                ys = [-span / 2 ** (j + 1) for j in range(len(run))]
+                above, first = -span, (-span + ys[0]) / 2
+            # gutters[k] is the lattice line 2 * (a + k), the one above the empty row a + k
+            gutters = [first] + [(ys[j - 1] + ys[j]) / 2 for j in range(1, len(ys))] + [ys[-1] / 2]
+            for j, y in enumerate(ys):
+                out[2 * (a + j) + 1] = ((y - gutters[j]) / 2, (gutters[j + 1] - y) / 2)
+            out[2 * a] = (MEASURED if above is None else first - above - LINE_CLEAR,
+                          (ys[0] - first) / 2)
+            for k in range(1, len(run)):
+                out[2 * (a + k)] = ((gutters[k] - ys[k - 1]) / 2, (ys[k] - gutters[k]) / 2)
+            out[2 * (b + 1)] = ((gutters[-1] - ys[-1]) / 2, -gutters[-1] - LINE_CLEAR)
+        return out
+
     def room(self, axis, line):
         """The px the lines of one group on this lattice line may spread over, on each side of it,
         lower coordinate first, with LINE_CLEAR already taken off towards a card and EDGE_CLEAR
         towards whatever bounds them on the other side — the edge that clips or covers them, or,
-        under the bottom margin, the content the section goes on with. A negative number says a
-        line on the lattice line itself is already past that bound.
+        under the bottom margin, the content the section goes on with. Towards another lattice line
+        the room is half the distance to it (`_band`). A negative number says a line on the lattice
+        line itself is already past that bound.
 
-        None where there is no room to state: an odd line, which runs through the cards and is
-        placed against their heights by the script, and an outer row margin this geometry was not
-        given the measurement of."""
+        None where there is no room to state: a column of cards, a row of cards — both placed against
+        card heights by the script, which this side knows nothing of — and an outer row margin this
+        geometry was not given the measurement of."""
+        if axis == "h":
+            found = self.band.get(line)
+            if found is not None:
+                lo, hi = found
+                if lo is not MEASURED:
+                    return (lo, hi)
+                if self.top_room is None:
+                    return None
+                return (self.top_room[0] - EDGE_CLEAR, hi)
         if line % 2:
             return None
         g = line // 2
@@ -158,14 +231,17 @@ OVERFULL_NAMED = 4  # edges a capacity error names before it ends the list with 
 
 
 def line_name(axis, line, cols, rows):
-    """How a message names an even lattice line: an inner gutter by the two columns or rows it
-    lies between, an outer one by its margin. Columns and rows are counted from zero, as `grid,
-    ряд N` and the two cells of a node placed twice count them."""
+    """How a message names a lattice line: an inner gutter by the two columns or rows it lies
+    between, an outer one by its margin, and the row line of an empty row — the one odd line that
+    states a room — by that row. Columns and rows are counted from zero, as `grid, ряд N` and the two
+    cells of a node placed twice count them."""
     g = line // 2
     if axis == "v":
         if g == 0:
             return "по левому полю"
         return "по правому полю" if g == cols else f"между столбцами {g - 1} и {g}"
+    if line % 2:
+        return f"в пустом ряду {g}"
     if g == 0:
         return "по верхнему полю"
     return "по нижнему полю" if g == rows else f"между рядами {g - 1} и {g}"
@@ -180,11 +256,17 @@ def overfull_error(group, edges, cols, rows):
     once. At most OVERFULL_NAMED of them, in the order of the model's edges.
 
     Where the line holds nothing at all — a flow's top margin, a page's bottom margin under a
-    footnote list — freeing a cell beside it would not help: no pitch puts a line there."""
+    footnote list — freeing a cell beside it would not help: no pitch puts a line there.
+
+    Along an empty row the cells are free already, and what leaves the lines no room is the row
+    itself: `tracks()` of template/js/head.js draws the whole band of such a row inside what would
+    otherwise be one gutter, so the advice there is to take the row out."""
     axis, line, idx, cap = group
     named = [f"{edges[i]['a']} -> {edges[i]['b']}" for i in sorted(set(idx))]
     shown = ", ".join(named[:OVERFULL_NAMED]) + (", …" if len(named) > OVERFULL_NAMED else "")
-    if cap:
+    if axis == "h" and line % 2:
+        advice = "уберите пустой ряд или переставьте узлы"
+    elif cap:
         advice = "освободите ячейку рядом или переставьте узлы"
     elif axis == "h":
         away = "ниже" if line == 0 else "выше"
@@ -615,12 +697,13 @@ def plan(model, mode_name, overrides=None, draft=False):
     # its track. The author still hears about every empty row of the grid, that one included.
     placed = {nid: rc for nid, rc in cells.items() if nid in by_id}
     drawn_rows = max((r for r, _ in placed.values()), default=-1) + 1
+    drawn_empty = [r for r in er if r < drawn_rows]
 
-    # every gutter and margin knows its room, so the router prices a step along a full one and a
-    # group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
+    # every gutter, margin and empty row knows its room, so the router prices a step along a full one
+    # and a group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
     # card edge or out of the grid box
     top, bottom = margin_room(kind, mode_name, footnotes)
-    geo = Geometry(mode, card_w, grid_cols, drawn_rows, top, bottom)
+    geo = Geometry(mode, card_w, grid_cols, drawn_rows, top, bottom, drawn_empty)
 
     def line_capacity(axis, line):
         room = geo.room(axis, line)
@@ -733,8 +816,10 @@ def plan(model, mode_name, overrides=None, draft=False):
         out_edges.append(out)
 
     # grid_rows is the drawn count: a swimlane's lane background, which render() spans from it, ends
-    # with the last card row, where the tracks and the lattice end
+    # with the last card row, where the tracks and the lattice end. empty_rows are the rows inside it
+    # that hold no card, which is what the Geometry needs besides the count to answer for their band
     layout = {"kind": kind, "edges": out_edges, "card_w": card_w, "grid_cols": grid_cols, "grid_rows": drawn_rows,
+              "empty_rows": drawn_empty,
               "cells": cells, "mode": mode, "nodes": by_id, "lanes": lanes, "lattice": lat, "paths": paths,
               "crossings": n_cross, "draft": bool(layout_errors), "routes": routes, "footnotes": footnotes}
     return layout, warnings

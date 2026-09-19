@@ -10,6 +10,11 @@ top and bottom margins is measured in the browser (tests/test_browser_lines.py) 
 diagrams/flow.py, and the table below is the hand-computed copy that a change of a mode table has
 to move too.
 
+An empty row of the drawn extent has no cards for a gutter beside it to keep clear of, and the lines
+of the band around it do not stand a row gap apart: `tracks()` of template/js/head.js invents a
+track for such a row, and `by()` places the lines from it. Where those lines land is measured in the
+browser too (case 17 there), and EMPTY_BAND below is the hand-computed copy.
+
 The two halves of the capacity rule are below the room: the price `route` puts on a step along a
 line that already carries as many lines as it holds (spec 4.3), which makes overflow rare, and the
 layout error `flow.plan` writes when a group overflows anyway (spec 4.4), which is the guarantee.
@@ -70,11 +75,70 @@ ROOMS = {
 # message will print when a group does not fit there.
 BOTTOM_CAPACITY = {("widget", False): 3, ("widget", True): 2, ("page", False): 1, ("page", True): 0}
 
+# The band around a run of empty rows, hand-computed from the browser measurement (case 17 of
+# tests/test_browser_lines.py). `tracks()` of template/js/head.js invents one track per empty row of
+# the drawn extent and fills them in ascending order, so each sees the tracks already invented above
+# it: the first row of a leading run lands flow.TRACK_LEAD px above the first cards and every row
+# after it halves what is left, and a run between two occupied rows halves the span between their
+# card edges the same way. That span is (k + 1) row gaps for k empty rows, because an empty implicit
+# grid row is 0 px high and both of its row gaps stay. `by()` of template/js/flow.js then puts a
+# gutter halfway between two tracks and the top margin `Geometry.margin` px above the first one.
+#
+# Per shape: (rows of the drawn extent, the empty ones among them, {mode: {lattice row line: room}}),
+# each room the pair (towards the lower coordinate, towards the higher). Towards a card edge the room
+# is the distance to it less LINE_CLEAR, towards another lattice line half the distance to it — two
+# groups share the space between their lines — and the away-from-the-cards side of the top margin
+# stays the measured TOP_ROOM of the kind (TOPWARD below), which a leading empty row only pushes the
+# line further from.
+TOPWARD = "TOP_ROOM"
+EMPTY_BAND = {
+    "one leading": (2, (0,), {
+        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 5.0), 2: (5.0, 6.0)},
+        "page": {0: (TOPWARD, 9.0), 1: (9.0, 5.0), 2: (5.0, 6.0)}}),
+    "two leading": (3, (0, 1), {
+        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 2.5), 4: (2.5, 1.0)},
+        "page": {0: (TOPWARD, 9.0), 1: (9.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 2.5), 4: (2.5, 1.0)}}),
+    "three leading": (4, (0, 1, 2), {
+        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 1.25),
+                   4: (1.25, 1.25), 5: (1.25, 1.25), 6: (1.25, -1.5)},
+        "page": {0: (TOPWARD, 9.0), 1: (9.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 1.25),
+                 4: (1.25, 1.25), 5: (1.25, 1.25), 6: (1.25, -1.5)}}),
+    "one interior": (3, (1,), {
+        "widget": {2: (16.0, 10.0), 3: (10.0, 10.0), 4: (10.0, 16.0)},
+        "page": {2: (18.0, 11.0), 3: (11.0, 11.0), 4: (11.0, 18.0)}}),
+    "two interior": (4, (1, 2), {
+        "widget": {2: (26.0, 15.0), 3: (15.0, 7.5), 4: (7.5, 7.5), 5: (7.5, 7.5), 6: (7.5, 11.0)},
+        "page": {2: (29.0, 16.5), 3: (16.5, 8.25), 4: (8.25, 8.25), 5: (8.25, 8.25),
+                 6: (8.25, 12.5)}}),
+}
+
+# The model the branch gate reported, and the px the browser showed between the gutter above the
+# first cards and their top edge when the row above them is empty: the leading row's track lies
+# flow.TRACK_LEAD px over the cards and by() puts the gutter halfway between, so that gutter is
+# nowhere near row_gap / 2 from them.
+GATE = {"kind": "flow", "nodes": [{"id": i, "title": i.upper()} for i in "abc"],
+        "grid": [". . .", "a b c"], "edges": ["a -> c"] * 6}
+OVER_THE_CARDS = 10.0
+
+# Three cards in the second row of a two-row grid, the first row empty: a line from the first card to
+# the last can run along the gutter above them (lattice row line Y = 2), along the cells of the empty
+# row (Y = 1) or under the bottom margin (Y = 4). The gutter is the cheapest and the empty row the
+# dearest — its cells cost a line +1 each — so the empty row is where a line goes only once the
+# other two are full, which is what the price on an odd line has to be measured against.
+EMPTY_ROW_CELLS = {"a": (1, 0), "b": (1, 1), "c": (1, 2)}
+A_TO_C = (router.Lattice.point(1, 0), router.Lattice.point(1, 2))
+
 
 def room_of(pair):
     """A room callable that gives every even lattice line the same pair, and, as `Geometry.room`
     does, no room at all for an odd one, which runs through the cards."""
     return lambda axis, line: None if line % 2 else pair
+
+
+def room_at(axis, line, pair):
+    """A room callable that states one lattice line's room and leaves every other unstated, so that
+    an odd line can be given one too — as `Geometry.room` gives the row line of an empty row."""
+    return lambda a, l: pair if (a, l) == (axis, line) else None
 
 
 def spread(paths, offsets, axis, line):
@@ -98,10 +162,24 @@ def widest(pitch, room):
     return w
 
 
+def stated(caps):
+    """A capacity callable that states the capacity of the lines of `caps`, a {(axis, line): count}
+    map, and leaves every other line unstated, as `Geometry.room` leaves the lines it knows nothing
+    about."""
+    return lambda axis, line: caps.get((axis, line))
+
+
 def only(axis, line, cap):
-    """A capacity callable that states one lattice line's capacity and leaves every other unstated,
-    as `Geometry.room` leaves the lines it knows nothing about."""
-    return lambda a, l: cap if (a, l) == (axis, line) else None
+    """A capacity callable that states one lattice line's capacity and leaves every other unstated."""
+    return stated({(axis, line): cap})
+
+
+def geometry_of(layout, mode):
+    """The `Geometry` a plan was made with, rebuilt from the plan: the drawn row count, the measured
+    outer rooms of its kind and the rows of the drawn extent that hold no card."""
+    return flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                         *flow.margin_room(layout["kind"], mode, layout["footnotes"]),
+                         empty=layout["empty_rows"])
 
 
 def group_on(axis, line, count):
@@ -178,6 +256,79 @@ class GeometryRoom(unittest.TestCase):
         self.assertIsNone(geo.room("h", 0))
         self.assertIsNone(geo.room("h", 4))
         self.assertEqual(geo.room("h", 2), (16, 16))
+
+
+class EmptyRowRoom(unittest.TestCase):
+    """What `Geometry.room` states around an empty row of the drawn extent, against the browser
+    measurement. Such a row has no cards, so the gutters beside it are not a row gap from anything
+    and its own odd line is placed by `by()` alone, where a row of cards leaves the placing to the
+    script and states no room at all."""
+
+    def geo(self, kind, mode, rows, empty, footnotes=False):
+        return flow.Geometry(flow.mode_for(kind, mode, None), 100.0, 3, rows,
+                             *flow.margin_room(kind, mode, footnotes), empty=empty)
+
+    def test_every_line_of_the_band_against_the_measurement(self):
+        for shape, (rows, empty, per_mode) in sorted(EMPTY_BAND.items()):
+            for kind in ("flow", "swimlane"):
+                for mode, want in sorted(per_mode.items()):
+                    with self.subTest(shape=shape, kind=kind, mode=mode):
+                        geo = self.geo(kind, mode, rows, empty)
+                        topward = flow.TOP_ROOM[kind, mode][0] - flow.EDGE_CLEAR
+                        got = {line: geo.room("h", line) for line in want}
+                        self.assertEqual(got, {line: ((topward if lo == TOPWARD else lo), hi)
+                                               for line, (lo, hi) in want.items()})
+
+    def test_a_row_of_cards_states_no_room_for_its_own_line(self):
+        for shape, (rows, empty, _) in sorted(EMPTY_BAND.items()):
+            with self.subTest(shape=shape):
+                geo = self.geo("flow", "page", rows, empty)
+                self.assertEqual([2 * r + 1 for r in range(rows) if geo.room("h", 2 * r + 1) is None],
+                                 [2 * r + 1 for r in range(rows) if r not in empty])
+
+    def test_a_column_of_cards_states_no_room_either(self):
+        # only rows can be empty on the lattice: `tracks()` fills every column up to --dg-cols at
+        # the regular pitch, so an empty column's gutters are where they always were
+        geo = self.geo("flow", "page", 3, (1,))
+        self.assertIsNone(geo.room("v", 1))
+        self.assertIsNone(geo.room("v", 3))
+
+    def test_the_outer_margins_move_only_where_the_first_row_is_empty(self):
+        # the last row of the drawn extent always holds cards, so the bottom margin never moves
+        plain = self.geo("flow", "page", 3, ())
+        interior = self.geo("flow", "page", 3, (1,))
+        self.assertEqual(interior.room("h", 0), plain.room("h", 0))
+        self.assertEqual(interior.room("h", 6), plain.room("h", 6))
+        self.assertNotEqual(self.geo("flow", "page", 3, (0,)).room("h", 0), plain.room("h", 0))
+
+    def test_an_empty_row_leaves_the_gutters_it_does_not_touch(self):
+        geo = self.geo("flow", "page", 4, (2,))
+        self.assertEqual(geo.room("h", 2), (18, 18))  # between the two rows of cards above it
+
+    def test_without_the_measurement_only_the_top_margin_stays_unstated(self):
+        # the away-from-the-cards side of that one line is the browser's; the rest of the band is
+        # geometry and is stated either way
+        geo = flow.Geometry(flow.mode_for("flow", "page", None), 100.0, 3, 2, empty=(0,))
+        self.assertIsNone(geo.room("h", 0))
+        self.assertEqual(geo.room("h", 1), (9.0, 5.0))
+        self.assertEqual(geo.room("h", 2), (5.0, 6.0))
+
+    def test_how_many_lines_the_band_holds(self):
+        # what a capacity message prints for these lines. A row gutter between two rows of cards
+        # holds eight on a page; with an empty row between them the three lines of the band hold
+        # five each, and a leading empty row leaves three above the cards instead of none.
+        self.assertEqual([router.capacity(self.geo("flow", "page", 3, (1,)).room("h", y))
+                          for y in (2, 3, 4)], [5, 5, 5])
+        self.assertEqual([router.capacity(self.geo("flow", "page", 2, (0,)).room("h", y))
+                          for y in (0, 1, 2)], [0, 3, 3])
+
+    def test_a_deep_leading_run_ends_in_a_gutter_that_holds_nothing(self):
+        # the halving puts the last gutter of a run of three 2.5 px over the cards, inside
+        # LINE_CLEAR of them: no pitch draws a line there, and the message says to move the nodes
+        geo = self.geo("flow", "page", 4, (0, 1, 2))
+        self.assertEqual(geo.room("h", 6), (1.25, -1.5))
+        self.assertEqual(router.capacity(geo.room("h", 6)), 0)
+        self.assertEqual([router.capacity(geo.room("h", y)) for y in range(7)], [0, 2, 2, 1, 1, 1, 0])
 
 
 class AdaptivePitch(unittest.TestCase):
@@ -282,6 +433,74 @@ class FullGutterCost(unittest.TestCase):
                          GUTTER_ROUTE)
 
 
+class EmptyRowPrice(unittest.TestCase):
+    """The cells of an empty row carry lines along its odd line, so `Lattice` resolves the capacity of
+    every line that states one — the odd ones among them — and `route` prices a step along a full one
+    as it prices a step along a full gutter. A row or a column of cards states none, and that is what
+    leaves the lines through the cards unpriced."""
+
+    def lattice(self, capacity=None):
+        return router.Lattice(3, 2, EMPTY_ROW_CELLS, capacity=capacity)
+
+    def rows_of(self, path):
+        return {y for _, y in path}
+
+    def test_every_lattice_line_is_asked_once(self):
+        asked = []
+        self.lattice(lambda axis, line: asked.append((axis, line)))
+        self.assertEqual(sorted(asked),
+                         sorted([("h", y) for y in range(5)] + [("v", x) for x in range(7)]))
+
+    def test_an_odd_row_line_keeps_the_capacity_it_states(self):
+        self.assertEqual(self.lattice(only("h", 1, 3)).cap_h, [None, 3, None, None, None])
+
+    def test_a_lattice_without_a_capacity_states_none_anywhere(self):
+        lat = self.lattice()
+        self.assertEqual((lat.cap_h, lat.cap_v), ([None] * lat.H, [None] * lat.W))
+
+    def test_the_line_takes_the_empty_row_when_the_gutter_and_the_margin_are_full(self):
+        # the case exists only if the empty row is where the line goes once nothing cheaper is left
+        got = router.route(self.lattice(stated({("h", 2): 0, ("h", 4): 0})), *A_TO_C)
+        self.assertIn(1, self.rows_of(got), got)
+
+    def test_and_leaves_it_when_the_empty_row_is_full_as_well(self):
+        got = router.route(self.lattice(stated({("h", 1): 0, ("h", 2): 0, ("h", 4): 0})), *A_TO_C)
+        self.assertNotIn(1, self.rows_of(got), got)
+
+
+class TheGateModel(unittest.TestCase):
+    """The model the branch gate reported: a flow with one leading empty row and six lines between the
+    outer cards. The gutter above those cards is drawn OVER_THE_CARDS px from them rather than
+    row_gap / 2, so the four lines the plan put there at the 8 px pitch reached 2 px inside the middle
+    card on a page, and no capacity error said so."""
+
+    def planned(self, mode):
+        return flow.plan(json.loads(json.dumps(GATE)), mode)
+
+    def test_no_line_is_drawn_into_a_card(self):
+        for mode in bench_routing.MODES:
+            with self.subTest(mode=mode):
+                try:
+                    layout, _ = self.planned(mode)
+                except flow.ModelError:
+                    continue  # refused: the author moves the nodes and nothing is drawn
+                widest = max((abs(oy) for e in layout["edges"] for _, y, _, oy in e["path"] if y == 2),
+                             default=0.0)
+                self.assertLessEqual(widest, OVER_THE_CARDS - flow.LINE_CLEAR)
+
+    def test_it_is_refused_or_every_group_fits_its_line(self):
+        for mode in bench_routing.MODES:
+            with self.subTest(mode=mode):
+                try:
+                    layout, _ = self.planned(mode)
+                except flow.ModelError as exc:
+                    self.assertTrue([m for m in exc.layout if "помещается" in m], exc.layout)
+                    continue
+                geo = geometry_of(layout, mode)
+                self.assertEqual(router.overfull(layout["paths"], frozenset(layout["lattice"].blocked),
+                                                 geo.room), [])
+
+
 class CapacityMessage(unittest.TestCase):
     """Spec 4.4, criterion B2: the layout error a group over its line's capacity becomes. It names
     the line the way the rest of the renderer names a column or a row, how many lines are drawn
@@ -290,7 +509,7 @@ class CapacityMessage(unittest.TestCase):
     def error(self, axis, line, count, cols=3, rows=3, room=(5, 5)):
         paths = group_on(axis, line, count)
         edges = [{"a": f"n{k}", "b": f"m{k}"} for k in range(count)]
-        (group,) = router.overfull(paths, frozenset(), room_of(room))
+        (group,) = router.overfull(paths, frozenset(), room_at(axis, line, room))
         return flow.overfull_error(group, edges, cols, rows)
 
     def test_a_column_gutter(self):
@@ -325,6 +544,20 @@ class CapacityMessage(unittest.TestCase):
         self.assertEqual(self.error("h", 6, 1, room=(14, -3)),
                          "по нижнему полю линий 1, помещается 0: n0 -> m0; линии здесь не проходят, "
                          "переставьте узлы так, чтобы связи шли выше или между рядами")
+
+    def test_the_row_line_of_an_empty_row(self):
+        # room (2.5, 2.5) is the row line of the second of two leading empty rows on a page: the
+        # cells beside it are free already, so freeing another would not help and the advice is to
+        # take the row out
+        self.assertEqual(self.error("h", 3, 4, room=(2.5, 2.5)),
+                         "в пустом ряду 1 линий 4, помещается 2: n0 -> m0, n1 -> m1, n2 -> m2, "
+                         "n3 -> m3; уберите пустой ряд или переставьте узлы")
+
+    def test_the_row_line_of_an_empty_row_that_holds_no_line_at_all(self):
+        # even where no pitch puts a line there, taking the row out is what frees the band
+        self.assertEqual(self.error("h", 1, 1, room=(1.0, -1.5)),
+                         "в пустом ряду 0 линий 1, помещается 0: n0 -> m0; уберите пустой ряд или "
+                         "переставьте узлы")
 
     def test_a_side_margin_that_holds_no_line_at_all(self):
         # no mode table gives a side margin as little room as that, and the message has to make
@@ -368,13 +601,20 @@ class ShippedExamples(unittest.TestCase):
             for mode in bench_routing.MODES:
                 with self.subTest(example=path.name, mode=mode):
                     layout, _ = flow.plan(json.loads(json.dumps(model)), mode)
-                    geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"],
-                                        layout["grid_rows"],
-                                        *flow.margin_room(layout["kind"], mode, layout["footnotes"]))
+                    geo = geometry_of(layout, mode)
                     nodes = frozenset(layout["lattice"].blocked)
                     self.assertEqual(router.overfull(layout["paths"], nodes, geo.room), [])
                     self.assertEqual(router.assign_offsets(layout["paths"], nodes=nodes, room=geo.room),
                                      router.assign_offsets(layout["paths"], nodes=nodes))
+
+    def test_no_example_has_an_empty_row_in_its_drawn_extent(self):
+        # which is why the band of an empty row leaves every shipped render where it was: the rooms
+        # it changes are rooms no example asks for
+        for path, model in bench_routing.examples():
+            for mode in bench_routing.MODES:
+                with self.subTest(example=path.name, mode=mode):
+                    layout, _ = flow.plan(json.loads(json.dumps(model)), mode)
+                    self.assertEqual(layout["empty_rows"], [])
 
 
 class StressModels(unittest.TestCase):
