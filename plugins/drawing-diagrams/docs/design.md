@@ -146,8 +146,11 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - Three strengths of order, weakest last: `firm`, from a stretch two runs share and enter and leave
   in one order; `loose`, from one they enter and leave in swapped order; and the end-to-end rule —
   two runs that meet at a gutter point with their arms there pointing opposite ways take the slots
-  their arms point to. The weakest is recorded only where the other two say nothing about the pair,
-  so it never displaces one and cannot close a cycle among them.
+  their arms point to. The weakest is recorded wherever two runs meet end to end: such a pair shares
+  no piece of a stretch, so it has no firm or loose order. Through a third run it can still close a
+  cycle with firm or loose orders; where it does, no run of the group is free under all three, the
+  pick order falls to `firm` and `loose`, and the end-to-end order is the one dropped. So it never
+  displaces a firm or a loose order, and that step of the pick order is what the guarantee rests on.
 - `tests/test_drawn_property.py` is the guard of any later ordering algorithm, this one included:
   it routes 300 seeded instances of `tools/instances.py` as `flow.plan` routes a model and asserts
   the invariant on every one, knowing `route_all`, `assign_offsets`, `crossings` and the two

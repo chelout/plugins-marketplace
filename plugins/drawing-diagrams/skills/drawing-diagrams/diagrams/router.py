@@ -264,9 +264,14 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
 
     Two runs that share no stretch but meet end to end at a gutter point,
     their arms there pointing opposite ways, take the slots their arms point
-    to. That is the weakest of the three strengths of order and is recorded
-    only where a shared stretch has said nothing, so it never displaces one
-    and cannot close a cycle among them."""
+    to. That is the weakest of the three strengths of order, and because
+    such a pair shares no piece of a stretch it has no firm or loose order,
+    so the weakest is recorded wherever two runs meet end to end. Through a
+    third run it can still close a cycle with firm or loose orders; where it
+    does, no run of the group is free under all three, the pick order falls
+    to firm and loose, and the soft order is the one dropped. So it never
+    displaces a firm or a loose order, and that step of the pick order is
+    what the guarantee rests on."""
     runs = [_runs(p) for p in paths]
 
     def covering(i, axis, line, lo, hi):

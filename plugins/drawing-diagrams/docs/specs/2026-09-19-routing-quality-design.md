@@ -167,9 +167,13 @@ line's own group, so each corner moves towards its own arms.
 
 The rule is the **weakest** order, a third strength `soft` beside `firm` and `loose`: the group loop
 looks for a run free under all three, then under `firm` and `loose`, then under `firm`, then takes
-`ranked[0]` as today. It is recorded only where the two runs have no firm or loose order, and it
-never displaces one, so it cannot close a cycle among them. Measured in a scratch copy: both
-regression cases pass and 1 500 of 1 500 instances agree. This is the end-to-end case of `segCmp` in
+`ranked[0]` as today. It is recorded only where the two runs have no firm or loose order — which is always, since two runs
+that meet end to end share no piece of a stretch. It can still close a cycle with firm or loose
+orders through a third run; where it does, no run is free under all three, the pick order falls to
+`firm` and `loose`, and the soft order is the one dropped. So it never displaces a firm or a loose
+order, and that step of the pick order is what the guarantee rests on. Measured in a scratch copy:
+both regression cases pass and 1 500 of 1 500 instances agree; the invariant cannot see a displaced
+loose order, so a hand-made case guards this rule. This is the end-to-end case of `segCmp` in
 Graphviz `lib/ortho/ortho.c`, re-implemented from its description; no code is copied.
 
 Regression case B: `[(1,3),(1,4),(2,4),(2,6),(6,6),(6,9),(7,9)]`,
@@ -531,7 +535,7 @@ names the criterion that proves the guarantee.
 | Class | Guarantee | Closer | Carried by |
 |---|---|---|---|
 | Run identity does not survive the offset interface | every point knows its runs; signature and result shape unchanged; schema reads as today | one run table with point membership (§3.1) | A1, A3 |
-| Local order rules need not give one complete order | the end-to-end rule never displaces a firm or loose order | the rule is the weakest strength (§3.2); the invariant guards the rest | A1, A2 |
+| Local order rules need not give one complete order | the end-to-end rule never displaces a firm or loose order | the rule is the weakest strength and is dropped where it closes a cycle (§3.2); a hand-made cycle case guards that, the invariant the rest | A1, A2 |
 | Abstract and browser geometry are different objects | the counters claim centrelines only; margins top and bottom are measured, not assumed | §3.3 scope; assumption of §4.1 | A2, B0, B2 |
 | Capacity has two units | capacity, the check and `overflow` all use the groups of `assign_offsets`; `+20` is a heuristic | §4.1, §4.3, §5.2 | B1, B4, C2 |
 | The objective is not the router's cost | `own` is `route`'s cost by replay; `pair` is declared different; fast `Traffic` keeps boolean semantics | §5.1, §5.2 | C1, C2 |
