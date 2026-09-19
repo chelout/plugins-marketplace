@@ -121,3 +121,40 @@ renders were texts that did not fit.
 - Skill-level effort and a delegated agent are decided by the experiment of the spec (§6); the outcome
   is recorded below.
 - Outcome of the experiment (2026-09-17): neither skill-level effort nor delegation paid off at equal quality; the session's effort and model stay. Against the previous version the changes above cut output tokens by 26–42% and cache reads by 47–56% on four benchmark tasks. `effort: high` in the frontmatter cut output further but applied in only two of three runs and led the model to inline assets, tripling widget size; `effort: medium` dropped required states from a model twice; a delegated `sonnet` agent raised cache reads by 49% on the schema task.
+
+## 14. Routing quality (amendment, 2026-09-19)
+
+Spec: `docs/specs/2026-09-19-routing-quality-design.md`. Decided after measuring the renderer against
+its own count: over 1 500 random grids the lines drawn once `router.assign_offsets` had spread them
+crossed more often than `router.crossings` reported, in 0.9% of them.
+
+- The invariant, stage A: for every set of paths the router can produce, with `offs =
+  assign_offsets(paths, nodes=nodes)`, `drawn_crossings(paths, offs, nodes) == crossings(paths)` and
+  `drawn_overlaps(paths, offs, nodes) == 0` (all four in `diagrams/router.py`). What the renderer
+  reports is what the reader sees: `flow.plan` counts `drawn_crossings`, and the warning
+  "пересечений линий: N" with it. A break of the invariant is a defect of the renderer, never a
+  message to the author.
+- The unit of a slot and of an order is the run — a maximal straight piece of one path on one
+  lattice line (`router._runs`) — and not the path. So a path with two runs on one line gets a slot
+  for each instead of overwriting its own, and a pair that shares two stretches on one line keeps
+  the order of each. A zero-length segment — two equal consecutive points, which `schema.plan`
+  produces — stays a run of its own and does not break the straight piece it lies in, so no output
+  of `schema.plan` moves: its `cross_count`, the `off` and `via` of its edges and its warnings are
+  what they were. The signature of `assign_offsets` and the shape of its result do not change:
+  one `(ox, oy)` per point, read from the runs through that point, and `schema.plan` reads them as
+  before.
+- Three strengths of order, weakest last: `firm`, from a stretch two runs share and enter and leave
+  in one order; `loose`, from one they enter and leave in swapped order; and the end-to-end rule —
+  two runs that meet at a gutter point with their arms there pointing opposite ways take the slots
+  their arms point to. The weakest is recorded wherever two runs meet end to end: such a pair shares
+  no piece of a stretch, so it has no firm or loose order. Through a third run it can still close a
+  cycle with firm or loose orders; where it does, no run of that cycle is ever free under all three
+  strengths, so once the runs of the cycle are what remains to place, the pick order falls to `firm`
+  and `loose` and the end-to-end order is the one dropped; a run outside the cycle is placed before
+  that with the end-to-end order honoured. So it never displaces a firm or a loose order, and that
+  step of the pick order is what the guarantee rests on.
+- `tests/test_drawn_property.py` is the guard of any later ordering algorithm, this one included:
+  it routes 300 seeded instances of `tools/instances.py` as `flow.plan` routes a model and asserts
+  the invariant on every one, knowing `route_all`, `assign_offsets`, `crossings` and the two
+  counters and nothing about how the offsets are found. All 300 agree, and the 14 renders of the
+  shipped examples are byte-identical to the ones before the stage.
