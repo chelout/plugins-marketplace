@@ -158,3 +158,19 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   the invariant on every one, knowing `route_all`, `assign_offsets`, `crossings` and the two
   counters and nothing about how the offsets are found. All 300 agree, and the 14 renders of the
   shipped examples are byte-identical to the ones before the stage.
+- Fast `Traffic`, stage C1: `router.Traffic` keeps a reference count per thing a path occupies — the
+  points strictly inside its horizontal and vertical segments, the unit edges it runs along, its
+  corners, its exits and its entries per node side — moved by `add` and `remove`, and a count that
+  reaches zero drops its key. `route` reads `crosses`, `shares` and corner membership as booleans,
+  so two earlier lines on one step cost the one surcharge one of them costs, and reads exits and
+  entries as counts, which multiply theirs. `route_all` keeps one `Traffic` for the whole run: a
+  rip-up removes its own line, routes it against what is left and puts back the path it keeps,
+  instead of building the traffic of all the other lines again. `shares` answers for one step of
+  `route` — a lattice point and a neighbour — where the class it replaced answered for any interval
+  inside a run; a longer stretch is asked of the unit-edge table `units`, edge by edge, which the
+  full-gutter price of stage B and the objective of stage C will read directly (tasks 9, 11 and 12
+  of `docs/plans/2026-09-19-routing-quality.md`). No path moves: `reference_route_all` of
+  `tests/reference.py` routes with `OldTraffic`, the class as it was, and `RoutesIdentically` of
+  `tests/test_traffic.py` holds the two equal over the 300 instances of the property test above. The
+  dense scenario of `tools/bench_routing.py` fell from a median of 298 ms to 70 ms on the measuring
+  machine, 4.3 times faster.

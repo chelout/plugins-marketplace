@@ -26,38 +26,75 @@ class Lattice:
 
 
 class Traffic:
-    """What earlier routes already occupy: segments, exits per node side,
-    entries per node side. Later routes pay to cross, share or bunch."""
+    """What earlier routes already occupy: the points inside their segments,
+    the unit edges they run along, their corners, their exits per node side
+    and their entries per node side. Later routes pay to cross, share or
+    bunch.
+
+    Every mapping is a reference count, so `remove` takes one path back out
+    of a traffic that holds many and a rip-up pass reroutes one line against
+    all the others without building the others again. A count that reaches
+    zero drops its key, so membership answers "is there a line here at all":
+    `route` reads the crossing, the sharing and the corner as booleans — two
+    earlier lines on one step cost the one surcharge one of them costs — and
+    only exits and entries as counts, which multiply theirs."""
 
     def __init__(self):
-        self.segs = []      # (axis, line, lo, hi)
+        self.inner_h = {}   # point -> horizontal segments holding it strictly inside
+        self.inner_v = {}   # point -> vertical segments holding it strictly inside
+        self.units = {}     # (axis, line, k) -> lines along the unit edge from k to k + 1
+        self.corners = {}   # point -> paths with a vertex there: where lines turn, start or end
         self.exits = {}     # (point, dir) -> count
         self.entries = {}   # (point, dir) -> count
-        self.corners = set()  # every vertex of every path: where lines turn, start or end
 
     def add(self, path):
-        self.segs.extend(segments(path))
-        self.corners.update(path[1:-1])
+        self._hold(path, 1)
+
+    def remove(self, path):
+        """Take back out a path this traffic was given. The counts of a path
+        added twice go back to one and everything it occupies stays occupied,
+        so a diagram with two edges along one route loses nothing when one of
+        them is rerouted."""
+        self._hold(path, -1)
+
+    def _hold(self, path, d):
+        """Move every reference one path holds: d is 1 for `add`, -1 for `remove`."""
+        for axis, line, lo, hi in segments(path):
+            for k in range(lo, hi):
+                _count(self.units, (axis, line, k), d)
+            inner = self.inner_v if axis == "v" else self.inner_h
+            for k in range(lo + 1, hi):
+                _count(inner, (line, k) if axis == "v" else (k, line), d)
+        for pt in path[1:-1]:
+            _count(self.corners, pt, d)
         if len(path) >= 2:
             d0 = STEPS[(_sign(path[1][0] - path[0][0]), _sign(path[1][1] - path[0][1]))]
             d1 = STEPS[(_sign(path[-1][0] - path[-2][0]), _sign(path[-1][1] - path[-2][1]))]
-            self.exits[(path[0], d0)] = self.exits.get((path[0], d0), 0) + 1
-            self.entries[(path[-1], d1)] = self.entries.get((path[-1], d1), 0) + 1
+            _count(self.exits, (path[0], d0), d)
+            _count(self.entries, (path[-1], d1), d)
 
     def crosses(self, nx, ny, vertical):
-        for axis, line, lo, hi in self.segs:
-            if vertical and axis == "h" and line == ny and lo < nx < hi:
-                return True
-            if not vertical and axis == "v" and line == nx and lo < ny < hi:
-                return True
-        return False
+        """Does a step onto (nx, ny) cross an earlier line? A vertical step
+        crosses a horizontal segment that holds the point strictly inside, and
+        a horizontal step a vertical one; a line that turns or ends there
+        meets it at a corner instead, which `route` prices separately."""
+        return (nx, ny) in (self.inner_h if vertical else self.inner_v)
 
     def shares(self, x, y, nx, ny):
+        """Does an earlier line run along this step? The step is one of
+        `route`'s, from a lattice point to a neighbour, which is a unit edge."""
         if x == nx:
-            lo, hi = min(y, ny), max(y, ny)
-            return any(a == "v" and l == x and s <= lo and hi <= h for a, l, s, h in self.segs)
-        lo, hi = min(x, nx), max(x, nx)
-        return any(a == "h" and l == y and s <= lo and hi <= h for a, l, s, h in self.segs)
+            return ("v", x, min(y, ny)) in self.units
+        return ("h", y, min(x, nx)) in self.units
+
+
+def _count(table, key, d):
+    """Move a reference count by d, dropping the key at zero."""
+    n = table.get(key, 0) + d
+    if n:
+        table[key] = n
+    else:
+        del table[key]
 
 
 def _sign(v):
@@ -145,7 +182,10 @@ def route_all(lat, ends, labelled):
     One pass in the given order with accumulating traffic, then two rip-up passes: the first pass
     is greedy in that order, so early lines take the easy exits and late ones detour, and the two
     passes let every line see all the others. An edge with no route stays None and takes no part
-    in them."""
+    in them.
+
+    One traffic serves the whole run: a rip-up takes its line out, routes it against what is left,
+    and puts back the path it keeps — the new one, or the old one where there is no new one."""
     paths, live = [], []
     traffic = Traffic()
     for i, (src, dst) in enumerate(ends):
@@ -156,13 +196,11 @@ def route_all(lat, ends, labelled):
             live.append(i)
     for _ in range(2):
         for i in live:
-            others = Traffic()
-            for j in live:
-                if j != i:
-                    others.add(paths[j])
-            p = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=others)
+            traffic.remove(paths[i])
+            p = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=traffic)
             if p is not None:
                 paths[i] = p
+            traffic.add(paths[i])
     return paths
 
 
