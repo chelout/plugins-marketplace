@@ -174,3 +174,51 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `tests/test_traffic.py` holds the two equal over the 300 instances of the property test above. The
   dense scenario of `tools/bench_routing.py` fell from a median of 298 ms to 70 ms on the measuring
   machine, 4.3 times faster.
+- Gutter capacity, stage B: a gutter and a margin hold a stated number of lines, and a diagram that
+  wants more is refused. The unit is the **group** of `router.assign_offsets` — the runs on one
+  lattice line that overlap or meet end to end in a gutter, formed once in `router._line_groups` —
+  because a group of `w` runs is drawn `w` slots wide wherever it reaches, whatever its load at any
+  one point. At pitch `s` its outermost line lies `(w − 1) · s / 2` from the lattice line, and it
+  fits while that line keeps `flow.LINE_CLEAR` = 4 px from the nearest card edge and
+  `flow.EDGE_CLEAR` = 1 px from whatever bounds it on the other side (`router.fits`).
+  `router.PITCHES` is 8, 6, 5 px: with the room in hand `assign_offsets` gives a group the first
+  pitch that fits and the smallest where none does, so a group too wide for 8 px closes up instead
+  of reaching over a card edge, and `router.capacity(room)` is the width the smallest pitch allows.
+  Without the room — `schema.plan` passes none — every group keeps 8 px and no output moves.
+- Where the room comes from, per lattice line, is `flow.Geometry.room`: `gap / 2` in a column
+  gutter, `row_gap / 2` in a row gutter and, in the side margins, `Geometry.margin` towards the
+  cards and `pad − margin` towards the grid box, all of it from the mode tables `flow.MODES` and
+  `common.BASE_MODES`. So a column gutter holds five lines at `gap` 28 or 32 and three at 18, a row
+  gutter seven at `row_gap` 40 and eight at 44, a side margin three in either mode. The two outer
+  row margins follow from no table: `.dg-grid` pads 8 px vertically while `by()` of
+  `template/js/flow.js` puts a margin line `margin` px outside the cards, so both fall outside the
+  grid box, where what clips or covers a line is the section, the title above it or the content the
+  section goes on with below. `flow.TOP_ROOM` and `flow.BOTTOM_ROOM` carry what the browser
+  measured (case 14 of `tests/test_browser_lines.py`, which fails when a change of the CSS moves
+  them); the bottom one is keyed by the footnotes as well, because a `.dg-foot` list is what bounds
+  a line there when the model has one. A swimlane's top margin, a row gap under the lane headers,
+  holds four lines in a widget and six on a page; the bottom margin holds three in a widget and one
+  on a page, two and none under a footnote list.
+- Two of those rooms hold **nothing at all**, and the renderer says so rather than drawing a line
+  no reader will see: a flow's top margin, where a widget's section clips the line
+  (`overflow-x:auto` makes `overflow-y` compute to `auto`) and a page's `h3` title lies over it, and
+  a page's bottom margin under a footnote list, which starts above where the line would be drawn.
+  Giving `.dg-grid` more vertical padding would buy that room back; it is a template change with a
+  CDN release behind it, and it is left to the owner rather than taken here.
+- The price, and what it does not promise: `router.Lattice(cols, rows, occupied, capacity=…)`
+  resolves the capacity of every line once, W + H answers, and in `route` a step along a unit edge
+  of an even line whose load in `Traffic.units` already equals that line's capacity costs +20 —
+  more than a crossing, so a full gutter is left to the lines in it wherever anything cheaper
+  exists. A line that holds none prices every step along it with or without traffic, which is why
+  the router now leaves a flow's top margin alone. It is a heuristic of the proposer: the load of a
+  unit edge is not the width of a group, so a chain of runs that only meet end to end loads nothing
+  and is still drawn as wide as it is long.
+- The guarantee is the check. After the offsets, `router.overfull(paths, nodes, room)` names every
+  group that does not fit at the smallest pitch — the same groups `assign_offsets` drew, so the
+  width priced is the width drawn — and `flow.overfull_error` turns each into a layout error, which
+  prints the map and which `--draft` downgrades: "между столбцами 0 и 1 линий 4, помещается 3:
+  a -> b, …; освободите ячейку рядом или переставьте узлы", with "между рядами" for a row gutter
+  and "по левому полю" and its three siblings for the margins, columns and rows counted from zero
+  as every other message counts them. The count is the width of the group, the list names at most
+  four edges once each, and where the line holds nothing the advice is to move the nodes instead,
+  since no cell freed beside it would help.

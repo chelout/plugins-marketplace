@@ -240,10 +240,19 @@ gutter, and in the left and right margins `Geometry.margin` towards the cards an
 towards the box. At `gap` 28 that is 3, 4 and 5 lines at 8, 6 and 5 px; at `gap` 18, 2, 2 and 3; in
 a widget side margin (12 px and 6 px), 2, 2 and 3.
 
-Assumption: the top and bottom margins are not like the side ones — `.dg-grid` in
-`template/css/base.css` pads 8 px vertically, so `by` of `flow.js` puts an unoffset top-margin line
-4 px (widget) or 10 px (page) above the grid box, and swimlane headers sit there too. Their room is
-measured in the browser harness by the first task of the stage and set from that measurement.
+The top and bottom margins are not like the side ones — `.dg-grid` in `template/css/base.css` pads
+8 px vertically, so `by` of `flow.js` puts an unoffset margin line 4 px (widget) or 10 px (page)
+outside the grid box, above it and below it. Their room was an assumption of this design until the
+first task of the stage measured it in the browser harness (2026-09-19), and the measurement
+replaced it: the bound of such a line is not the grid box, which does not clip (`.dg-svg` is
+`overflow:visible`), but what actually clips or covers it. Above the box that is the section's top
+edge in a widget and the title in a page, so a flow's top margin holds no line at all; a swimlane's
+top margin lies a row gap under the lane headers and holds 4 lines (widget) or 6 (page). Below the
+box it is the first content after the grid — the footnote list when the model has one, else the
+legend's text — so the bottom margin holds 3 lines in a widget and 1 in a page, 2 and 0 under
+footnotes. `flow.TOP_ROOM` and `flow.BOTTOM_ROOM` carry the measured px and a browser test holds
+them against the page. More vertical padding in `.dg-grid` would give these margins real room; it
+is a template change with a CDN release behind it and is the owner's to take, not this stage's.
 
 ### 4.2 Adaptive pitch
 
@@ -262,9 +271,13 @@ proposer: it makes overflow rare and guarantees nothing; §4.4 is the guarantee.
 ### 4.4 Check and message
 
 A group that does not fit at 5 px is a layout error (it prints the map, `--draft` downgrades it):
-"между столбцами 2 и 3 идут 5 линий, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
+"между столбцами 2 и 3 линий 5, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
 переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Per
-Q1 of §12 it is an error.
+Q1 of §12 it is an error. The noun comes first in the genitive plural, as in the renderer's other
+messages ("узлов 17"), because the first wording of this design, "идут 5 линий", is not Russian for
+1 to 4 lines; columns and rows count from zero, as those messages count them; the count is the
+width of the group, the list names at most four edges; and where the line holds nothing (§4.1) the
+advice is to move the nodes so the edges run elsewhere, since no freed cell would help.
 
 ## 5. Stage C — routing with an objective
 
@@ -540,7 +553,7 @@ names the criterion that proves the guarantee.
 |---|---|---|---|
 | Run identity does not survive the offset interface | every point knows its runs; signature and result shape unchanged; schema reads as today | one run table with point membership (§3.1) | A1, A3 |
 | Local order rules need not give one complete order | the end-to-end rule never displaces a firm or loose order | the rule is the weakest strength and is dropped where it closes a cycle (§3.2); a hand-made cycle case guards that, the invariant the rest | A1, A2 |
-| Abstract and browser geometry are different objects | the counters claim centrelines only; margins top and bottom are measured, not assumed | §3.3 scope; assumption of §4.1 | A2, B0, B2 |
+| Abstract and browser geometry are different objects | the counters claim centrelines only; margins top and bottom are measured, not assumed | §3.3 scope; measurement of §4.1 | A2, B0, B2 |
 | Capacity has two units | capacity, the check and `overflow` all use the groups of `assign_offsets`; `+20` is a heuristic | §4.1, §4.3, §5.2 | B1, B4, C2 |
 | The objective is not the router's cost | `own` is `route`'s cost by replay; `pair` is declared different; fast `Traffic` keeps boolean semantics | §5.1, §5.2 | C1, C2 |
 | Canonical order is narrower than the output | the promise is routes per (source, target, labelled) only | §2 non-goal, §5.4 | C3 |
