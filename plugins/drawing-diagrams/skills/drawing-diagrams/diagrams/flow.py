@@ -154,6 +154,46 @@ class Geometry:
         return (self.row_gap / 2 - LINE_CLEAR, self.row_gap / 2 - LINE_CLEAR)
 
 
+OVERFULL_NAMED = 4  # edges a capacity error names before it ends the list with an ellipsis
+
+
+def line_name(axis, line, cols, rows):
+    """How a message names an even lattice line: an inner gutter by the two columns or rows it
+    lies between, an outer one by its margin. Columns and rows are counted from zero, as `grid,
+    ряд N` and the two cells of a node placed twice count them."""
+    g = line // 2
+    if axis == "v":
+        if g == 0:
+            return "по левому полю"
+        return "по правому полю" if g == cols else f"между столбцами {g - 1} и {g}"
+    if g == 0:
+        return "по верхнему полю"
+    return "по нижнему полю" if g == rows else f"между рядами {g - 1} и {g}"
+
+
+def overfull_error(group, edges, cols, rows):
+    """The layout error for one group of `router.overfull`: where it lies, how many lines are drawn
+    there against how many fit, the edges among them, and what the author can do about it.
+
+    The count is the width of the group — one line per run, which is what has to fit — while the
+    list is who to move, so an edge that comes into the gutter twice counts twice and is named
+    once. At most OVERFULL_NAMED of them, in the order of the model's edges.
+
+    Where the line holds nothing at all — a flow's top margin, a page's bottom margin under a
+    footnote list — freeing a cell beside it would not help: no pitch puts a line there."""
+    axis, line, idx, cap = group
+    named = [f"{edges[i]['a']} -> {edges[i]['b']}" for i in sorted(set(idx))]
+    shown = ", ".join(named[:OVERFULL_NAMED]) + (", …" if len(named) > OVERFULL_NAMED else "")
+    if cap:
+        advice = "освободите ячейку рядом или переставьте узлы"
+    elif axis == "h":
+        away = "ниже" if line == 0 else "выше"
+        advice = f"линии здесь не проходят, переставьте узлы так, чтобы связи шли {away} или между рядами"
+    else:
+        advice = "линии здесь не проходят, переставьте узлы так, чтобы связи шли между столбцами"
+    return f"{line_name(axis, line, cols, rows)} линий {len(idx)}, помещается {cap}: {shown}; {advice}"
+
+
 def room_beside(start, side, obstacles, limit):
     """Free px from a label's near edge `start` outwards (R: rightwards, L: leftwards)
     to the first obstacle interval, keeping LABEL_CLEAR; at most `limit`. Negative
@@ -566,8 +606,19 @@ def plan(model, mode_name, overrides=None, draft=False):
     if errors:
         raise ModelError(errors + layout_errors, layout=layout_errors, fit=fit_errors)
 
+    # every gutter and margin knows its room, so the router prices a step along a full one and a
+    # group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
+    # card edge or out of the grid box
+    top, bottom = margin_room(kind, mode_name, footnotes)
+    geo = Geometry(mode, card_w, grid_cols, grid_rows, top, bottom)
+
+    def line_capacity(axis, line):
+        room = geo.room(axis, line)
+        return None if room is None else router.capacity(room)
+
     # routing
-    lat = router.Lattice(grid_cols, grid_rows, {nid: rc for nid, rc in cells.items() if nid in by_id})
+    lat = router.Lattice(grid_cols, grid_rows, {nid: rc for nid, rc in cells.items() if nid in by_id},
+                         capacity=line_capacity)
     ends = [(router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]])) for e in edges]
     labelled = [bool(e["label"] or e["note"]) for e in edges]
     paths, routed = [], []
@@ -583,11 +634,14 @@ def plan(model, mode_name, overrides=None, draft=False):
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
 
-    # every gutter and margin knows its room, so a group of lines too wide for the 8 px pitch
-    # closes up to 6 or 5 rather than reaching over a card edge or out of the grid box
-    top, bottom = margin_room(kind, mode_name, footnotes)
-    geo = Geometry(mode, card_w, grid_cols, grid_rows, top, bottom)
-    offsets = router.assign_offsets(paths, nodes=frozenset(lat.blocked), room=geo.room)
+    on_cards = frozenset(lat.blocked)
+    offsets = router.assign_offsets(paths, nodes=on_cards, room=geo.room)
+    # the price above makes a full gutter rare and promises nothing: a chain of lines that only
+    # meet end to end loads no unit edge and is still drawn as wide as it is long. What does not
+    # fit at the smallest pitch is refused here, one error per group, so the author moves nodes
+    # instead of reading a line drawn over a card
+    for group in router.overfull(paths, on_cards, geo.room):
+        layout_errors.append(overfull_error(group, routed, grid_cols, grid_rows))
     occupied = {rc for nid, rc in cells.items() if nid in by_id}
 
     # where a label goes and how much room it has, from the shape of the route and the

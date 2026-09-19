@@ -166,9 +166,13 @@ def exit_model(grid, edges, terminals=(), nodes=()):
 # A straight exit down or up keeps its label in the gutter under or over the card, 5 px beside the
 # line: template/js/flow.js puts the baseline 14 px under the card's bottom edge or 6 px over its
 # top edge, so the text stands between the card and the middle of the gutter, where lines run.
+#
+# An exit up costs the router more than a step round a free margin, so `d -> c` is the straight one
+# only while the margin beside d is taken: `c -> e` runs down it to the row under the cards, and the
+# row is there for that line alone.
 DOWN = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> c : нет"], terminals=("b", "c"))
-UP = exit_model(["c b", "d a?"], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да", "d -> b : да",
-                                  "d -> c : да"])
+UP = exit_model(["c b", "d a?", "e ."], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да",
+                                         "d -> b : да", "d -> c : да", "c -> e"])
 
 
 class ExitLabelCase(unittest.TestCase):
@@ -264,9 +268,11 @@ class StraightExitLabel(ExitLabelCase):
     def test_a_line_turning_in_the_gutter_from_the_far_side_is_no_warning(self):
         # the other line comes from the far side of the gutter and turns along its middle: it ends
         # where the text ends, short of it
+        # over an exit up the same shape needs the margin beside a? taken, or the line goes round it
+        # instead of straight up: b -> g runs down that margin to the row under the cards
         cases = ((exit_model(["a? b", "c d"], ["b -> c", "d -> c", "a? -> b : да", "d -> b", "a? -> c : да"]),
                   ("a?", "c"), "B", ("b", "c")),
-                 (exit_model(["b e c", "a? f d"], ["b -> c", "a? -> c : да", "a? -> b : да"]),
+                 (exit_model(["b e c", "a? f d", "g h i"], ["b -> c", "a? -> c : да", "a? -> b : да", "b -> g"]),
                   ("a?", "b"), "T", ("b", "c")))
         for model, edge, side, turn in cases:
             for mode in ("widget", "page"):
@@ -284,17 +290,18 @@ class StraightExitLabel(ExitLabelCase):
         cases = (
             # 4 px off the middle away from the card: under the text whatever the mode
             (exit_model(["f e a? g", "c h d b"],
-                        ["a? -> f : да", "a? -> d : да", "b -> f", "g -> h", "g -> f", "a? -> g : да"]),
+                        ["a? -> f : да", "a? -> d : да", "b -> f", "g -> f", "a? -> g : да"]),
              ("a?", "d"), "B", 4.0, {"widget": False, "page": False}),
             # 8 px off the middle towards the card: through the text whatever the mode
-            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "b -> e", "g -> c", "d -> h",
-                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e"]),
+            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "g -> c", "d -> h",
+                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e", "f -> c"]),
              ("a?", "g"), "T", 8.0, {"widget": True, "page": True}),
             # 4 px towards the card: through the foot of the text in a widget, clear of it on a page
-            (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c", "d -> c"]),
+            (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c",
+                                                  "d -> c", "c -> e"]),
              ("a?", "d"), "B", -4.0, {"widget": True, "page": False}),
             # the same over an exit up: through the top of the text in a widget, clear of it on a page
-            (exit_model([". e b c", ". . a? d"], ["c -> e", "d -> c", "c -> a?", "a? -> e : да", "e -> c", "e -> d",
+            (exit_model([". e b c", ". . a? d"], ["d -> c", "c -> a?", "a? -> e : да", "e -> d",
                                                   "b -> e", "a? -> b : да"]),
              ("a?", "b"), "T", 4.0, {"widget": True, "page": False}),
         )
@@ -425,13 +432,18 @@ class BesideSecondSegment(unittest.TestCase):
         # running straight along the row 8 px under its base, LINE_REACH and more from the text's
         # middle. template/js/flow.js clamps every line on a row line where lines enter or leave cards
         # sideways into one band, 10 px inside the shortest of those cards, and these cards are one
-        # title line high: c -> d is drawn nearer the base than its offset, through the text
-        model = exit_model(["a b e", "d . c"], ["e -> d", "c -> a", "d -> b : да", "c -> b", "b -> d", "c -> d"])
+        # title line high: c -> d is drawn nearer the base than its offset, through the text.
+        # With c -> e up the right margin and c -> a round the bottom and up the left, the label of
+        # d -> b stands on the right of its second segment, pinned to the gutter row. Both are
+        # asserted: the measurement below is taken on that side and reads the lines of the card row,
+        # so a label the router put elsewhere would answer for a place the text does not stand in.
+        model = exit_model(["a b e", "d . c"], ["e -> d", "c -> a", "d -> b : да", "c -> b", "c -> e", "c -> d"])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("d", "b"))
                 self.assertEqual((own["sa"], own["path"][0][1], own["path"][1][1] != own["path"][2][1]), ("R", 3, True))
+                self.assertEqual((own["ly"], own["ls"]), (2, "R"))
                 self.assertEqual(self.along_the_row(layout, ("d", "b"), 3, "R"), [(("c", "d"), 8.0)])
                 self.assertGreaterEqual(8.0, flow.LINE_REACH)
                 found = [w for w in warnings if w.startswith("связь d -> b:")]

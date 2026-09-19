@@ -1,4 +1,4 @@
-"""A gutter has room, and a group of lines closes up to fit it.
+"""A gutter has room, a group of lines closes up to fit it, and what does not fit is refused.
 
 The unit is the group of `assign_offsets` — the runs on one lattice line that overlap or meet end
 to end in a gutter — because a group of `w` runs is drawn `w` slots wide wherever it reaches. Its
@@ -9,6 +9,10 @@ The room of the inner gutters and of the side margins follows from the mode tabl
 top and bottom margins is measured in the browser (tests/test_browser_lines.py) and written into
 diagrams/flow.py, and the table below is the hand-computed copy that a change of a mode table has
 to move too.
+
+The two halves of the capacity rule are below the room: the price `route` puts on a step along a
+line that already carries as many lines as it holds (spec 4.3), which makes overflow rare, and the
+layout error `flow.plan` writes when a group overflows anyway (spec 4.4), which is the guarantee.
 """
 import json
 import unittest
@@ -29,6 +33,19 @@ CHAIN = [[(1, 1), (2, 1), (2, 3), (3, 3)],
          [(1, 5), (2, 5), (2, 7), (3, 7)],
          [(3, 7), (2, 7), (2, 9), (1, 9)]]
 CHAIN_NODES = frozenset({(1, 1), (3, 3), (1, 5), (3, 7), (1, 9)})
+
+# Five cards down column 1 of a two-column, five-row grid, column 0 empty: the lattice the price of
+# a full gutter is measured on (FullGutterCost). A line from one of those cards to another cannot
+# go straight down — the cells between them are cards — so it travels in the column gutter X = 2
+# (cost 10), along the right margin X = 4 (15) or through the empty cells of column 0 (15).
+COLUMN_FULL = {f"n{r}": (r, 1) for r in range(5)}
+N1_N3 = (router.Lattice.point(1, 1), router.Lattice.point(3, 1))
+GUTTER_ROUTE = [(3, 3), (2, 3), (2, 7), (3, 7)]    # n1 -> n3, down the column gutter X = 2
+# n0 -> n4 down the whole of the gutter and of the margin: the traffic a second line meets. With
+# both of them in place the gutter costs 24 and the margin 29, so the gutter is still where a line
+# goes — and a step of it priced as full costs +20, which is what has to move it.
+FULL_GUTTER = [(3, 1), (2, 1), (2, 9), (3, 9)]
+FULL_MARGIN = [(3, 1), (4, 1), (4, 9), (3, 9)]
 
 # Hand-computed room per kind and mode, in the order (inner column gutter, inner row gutter, left
 # margin, right margin, top margin, bottom margin without footnotes, bottom margin with them), each
@@ -79,6 +96,22 @@ def widest(pitch, room):
     while router.fits(w + 1, pitch, room):
         w += 1
     return w
+
+
+def only(axis, line, cap):
+    """A capacity callable that states one lattice line's capacity and leaves every other unstated,
+    as `Geometry.room` leaves the lines it knows nothing about."""
+    return lambda a, l: cap if (a, l) == (axis, line) else None
+
+
+def group_on(axis, line, count):
+    """`count` paths that each run the same stretch of one lattice line and turn off it at both
+    ends: one group `count` runs wide, whatever else stands on the lattice. The arm at each end
+    points into the neighbouring cell, or, on the left or top margin, the only way there is."""
+    side = line + 1 if line == 0 else line - 1
+    if axis == "v":
+        return [[(side, 1), (line, 1), (line, 5), (side, 5)] for _ in range(count)]
+    return [[(1, side), (1, line), (5, line), (5, side)] for _ in range(count)]
 
 
 class Fits(unittest.TestCase):
@@ -199,6 +232,130 @@ class AdaptivePitch(unittest.TestCase):
         self.assertEqual(router.overfull(FIVE, FIVE_NODES, lambda axis, line: None), [])
 
 
+class FullGutterCost(unittest.TestCase):
+    """Spec 4.3, criterion B4: a step along a unit edge of an even line whose load is already that
+    line's capacity costs +20, more than a crossing, so a line takes any cheaper detour instead.
+
+    The detour here is the right margin: 5 dearer than the gutter whether the two channels are
+    empty (10 against 15) or already hold a line each (24 against 29), a quarter of what one step
+    on a full line costs. So the price, and nothing else in `route`, is what moves the line."""
+
+    def lattice(self, capacity=None):
+        return router.Lattice(2, 5, COLUMN_FULL, capacity=capacity)
+
+    def loaded(self):
+        """A traffic holding one line down the whole gutter and one down the whole margin: the
+        state a second line meets when every channel beside the cards already carries a line."""
+        traffic = router.Traffic()
+        traffic.add(FULL_GUTTER)
+        traffic.add(FULL_MARGIN)
+        return traffic
+
+    def assertOffTheGutter(self, path):
+        self.assertNotIn(("v", 2), [(axis, line) for axis, line, _, _ in router.segments(path)],
+                         f"the line still runs along the gutter: {path}")
+
+    def test_the_gutter_is_the_cheapest_way_down(self):
+        # the case exists only if an unpriced gutter is where the line goes
+        self.assertEqual(router.route(self.lattice(), *N1_N3), GUTTER_ROUTE)
+
+    def test_a_line_avoids_a_gutter_that_holds_nothing(self):
+        # capacity 0 — a flow's top margin is one — prices every step along the line with no
+        # traffic at all: the load is 0 and 0 is already the capacity
+        self.assertOffTheGutter(router.route(self.lattice(only("v", 2, 0)), *N1_N3))
+
+    def test_a_line_avoids_a_gutter_already_at_its_capacity(self):
+        self.assertOffTheGutter(router.route(self.lattice(only("v", 2, 1)), *N1_N3, traffic=self.loaded()))
+
+    def test_the_same_traffic_without_a_capacity_keeps_the_gutter(self):
+        # what the line does with the load and without the price: the traffic alone leaves the
+        # gutter the cheapest way down, so the test above measures the price and not the traffic
+        self.assertEqual(router.route(self.lattice(), *N1_N3, traffic=self.loaded()), GUTTER_ROUTE)
+
+    def test_a_gutter_below_its_capacity_is_not_priced(self):
+        self.assertEqual(router.route(self.lattice(only("v", 2, 2)), *N1_N3, traffic=self.loaded()),
+                         GUTTER_ROUTE)
+
+    def test_a_lattice_built_without_a_capacity_routes_as_it_did(self):
+        # tests/reference.py, tools/bench_routing.py and tests/test_traffic.py build one this way
+        self.assertEqual(router.route(router.Lattice(2, 5, COLUMN_FULL), *N1_N3, traffic=self.loaded()),
+                         GUTTER_ROUTE)
+
+
+class CapacityMessage(unittest.TestCase):
+    """Spec 4.4, criterion B2: the layout error a group over its line's capacity becomes. It names
+    the line the way the rest of the renderer names a column or a row, how many lines are drawn
+    there against how many fit, the edges the author can move, and what to do."""
+
+    def error(self, axis, line, count, cols=3, rows=3, room=(5, 5)):
+        paths = group_on(axis, line, count)
+        edges = [{"a": f"n{k}", "b": f"m{k}"} for k in range(count)]
+        (group,) = router.overfull(paths, frozenset(), room_of(room))
+        return flow.overfull_error(group, edges, cols, rows)
+
+    def test_a_column_gutter(self):
+        self.assertEqual(self.error("v", 2, 5),
+                         "между столбцами 0 и 1 линий 5, помещается 3: n0 -> m0, n1 -> m1, n2 -> m2, "
+                         "n3 -> m3, …; освободите ячейку рядом или переставьте узлы")
+
+    def test_a_row_gutter(self):
+        self.assertEqual(self.error("h", 2, 4),
+                         "между рядами 0 и 1 линий 4, помещается 3: n0 -> m0, n1 -> m1, n2 -> m2, "
+                         "n3 -> m3; освободите ячейку рядом или переставьте узлы")
+
+    def test_the_left_margin(self):
+        self.assertEqual(self.error("v", 0, 4),
+                         "по левому полю линий 4, помещается 3: n0 -> m0, n1 -> m1, n2 -> m2, "
+                         "n3 -> m3; освободите ячейку рядом или переставьте узлы")
+
+    def test_the_right_margin(self):
+        self.assertEqual(self.error("v", 6, 4),
+                         "по правому полю линий 4, помещается 3: n0 -> m0, n1 -> m1, n2 -> m2, "
+                         "n3 -> m3; освободите ячейку рядом или переставьте узлы")
+
+    def test_the_top_margin_of_a_flow_holds_no_line_at_all(self):
+        # room (-5, 8) is a flow's top margin in a widget: the lattice line itself lies past the
+        # bound, so freeing a cell beside it would not help and the advice says something else
+        self.assertEqual(self.error("h", 0, 1, room=(-5, 8)),
+                         "по верхнему полю линий 1, помещается 0: n0 -> m0; линии здесь не проходят, "
+                         "переставьте узлы так, чтобы связи шли ниже или между рядами")
+
+    def test_the_bottom_margin_of_a_page_with_footnotes_holds_no_line_at_all(self):
+        # room (14, -3): the footnote list stands where the line would be drawn
+        self.assertEqual(self.error("h", 6, 1, room=(14, -3)),
+                         "по нижнему полю линий 1, помещается 0: n0 -> m0; линии здесь не проходят, "
+                         "переставьте узлы так, чтобы связи шли выше или между рядами")
+
+    def test_a_side_margin_that_holds_no_line_at_all(self):
+        # no mode table gives a side margin as little room as that, and the message has to make
+        # sense if one ever does: there is no row to send the lines to, only a column gutter
+        self.assertEqual(self.error("v", 0, 1, room=(-5, 8)),
+                         "по левому полю линий 1, помещается 0: n0 -> m0; линии здесь не проходят, "
+                         "переставьте узлы так, чтобы связи шли между столбцами")
+
+    def test_at_most_four_edges_are_named(self):
+        self.assertIn("n0 -> m0, n1 -> m1, n2 -> m2, n3 -> m3, …;", self.error("v", 2, 7))
+
+    def test_an_edge_with_two_runs_in_the_group_is_named_once(self):
+        # the count is the width of the group — what has to fit — and the list is who to move, so
+        # a line that comes into the gutter twice is two of the lines and one of the names
+        paths = [[(1, 1), (2, 1), (2, 3), (3, 3), (3, 5), (2, 5), (2, 7), (1, 7)],
+                 [(1, 1), (2, 1), (2, 7), (1, 7)]]
+        (group,) = router.overfull(paths, frozenset(), room_of((2, 2)))
+        self.assertEqual(flow.overfull_error(group, [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}], 3, 3),
+                         "между столбцами 0 и 1 линий 3, помещается 1: a -> b, c -> d; "
+                         "освободите ячейку рядом или переставьте узлы")
+
+    def test_the_shape_the_plan_matches(self):
+        self.assertRegex(self.error("v", 2, 5), r"между столбцами \d+ и \d+ линий \d+, помещается \d+")
+
+    def test_columns_and_rows_are_numbered_as_the_grid_errors_number_them(self):
+        # `grid, ряд 0` and `grid: узел a стоит в двух ячейках [0, 1] ...` count from zero, and so
+        # does the gutter between the first two columns
+        self.assertTrue(self.error("v", 2, 4).startswith("между столбцами 0 и 1 "))
+        self.assertTrue(self.error("h", 4, 4, rows=3).startswith("между рядами 1 и 2 "))
+
+
 class ShippedExamples(unittest.TestCase):
     """Spec 4.2: every group of the shipped examples fits at the widest pitch, which is why the
     room reaching `assign_offsets` leaves their offsets, and so their rendered HTML, where they
@@ -218,6 +375,37 @@ class ShippedExamples(unittest.TestCase):
                     self.assertEqual(router.overfull(layout["paths"], nodes, geo.room), [])
                     self.assertEqual(router.assign_offsets(layout["paths"], nodes=nodes, room=geo.room),
                                      router.assign_offsets(layout["paths"], nodes=nodes))
+
+
+class StressModels(unittest.TestCase):
+    """The two models under tests/models/ that the owner reviews the line pitch on: real models
+    inside their mode's limits that render without an error and hold a group at each of the two
+    narrow pitches, which the shipped examples never reach."""
+
+    MODELS = {"dense-widget-flow.json": "widget", "dense-page-swimlane.json": "page"}
+
+    def steps_of(self, name, mode):
+        """The px between neighbouring lines on each even lattice line of a rendered model, read
+        back from the offsets the edge JSON carries — the pitch as the script will draw it."""
+        model = json.loads((support.ROOT / "tests" / "models" / name).read_text())
+        layout, _ = flow.plan(model, mode)
+        lines = {}
+        for e in layout["edges"]:
+            for x, y, ox, oy in e["path"]:
+                if x % 2 == 0:
+                    lines.setdefault(("v", x), set()).add(ox)
+                if y % 2 == 0:
+                    lines.setdefault(("h", y), set()).add(oy)
+        return {key: sorted(offs) for key, offs in lines.items()}
+
+    def test_each_model_reaches_the_six_and_the_five(self):
+        for name, mode in sorted(self.MODELS.items()):
+            with self.subTest(model=name):
+                steps = self.steps_of(name, mode)
+                found = {round(b - a, 1) for offs in steps.values() for a, b in zip(offs, offs[1:])}
+                self.assertLessEqual({6.0, 5.0}, found,
+                                     f"{name} no longer holds a group at each narrow pitch: {steps}. "
+                                     f"It is kept for that; pick another model rather than drop the check.")
 
 
 if __name__ == "__main__":

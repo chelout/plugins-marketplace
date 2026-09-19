@@ -15,10 +15,25 @@ OPPOSITE = {"R": "L", "L": "R", "D": "U", "U": "D"}
 
 
 class Lattice:
-    def __init__(self, cols, rows, occupied):
+    """The grid as `route` sees it: its size, the points the cards sit on, and how many lines each
+    even line holds.
+
+    `capacity`, a callable (axis, line) -> int or None as flow.plan builds it from Geometry.room,
+    is asked once per lattice line here — W + H answers — and kept in `cap_v` and `cap_h`, indexed
+    by the line's own coordinate. `route` asks per step, and a call per step would be a call per
+    edge of the search. A line with no capacity to state, an odd one among them, holds any group;
+    without the argument no line states one and routing is what it was."""
+
+    def __init__(self, cols, rows, occupied, capacity=None):
         self.cols, self.rows = cols, rows
         self.W, self.H = 2 * cols + 1, 2 * rows + 1
         self.blocked = {(2 * c + 1, 2 * r + 1): nid for nid, (r, c) in occupied.items()}
+        self.cap_v, self.cap_h = [None] * self.W, [None] * self.H
+        if capacity is not None:
+            for x in range(0, self.W, 2):
+                self.cap_v[x] = capacity("v", x)
+            for y in range(0, self.H, 2):
+                self.cap_h[y] = capacity("h", y)
 
     @staticmethod
     def point(r, c):
@@ -109,8 +124,13 @@ def route(lat, src, dst, labelled=False, traffic=None):
     With `traffic`, crossing an earlier line costs +10, running along one +1,
     passing through another line's corner +3,
     leaving through a side another line uses +3 per line, entering beside
-    another arrow +3 per arrow: exits spread out and bundles break up."""
+    another arrow +3 per arrow: exits spread out and bundles break up.
+    A step along a unit edge of an even line that already carries as many
+    lines as that line holds costs +20, more than a crossing, so a full
+    gutter is left to the lines in it wherever anything cheaper exists; a
+    line that holds none prices every step along it, traffic or no traffic."""
     best, prev = {}, {}
+    cap_v, cap_h = lat.cap_v, lat.cap_h  # the capacity of every line, resolved once per lattice
     heap = [(0, src[0], src[1], None, None)]
     while heap:
         cost, x, y, d, pk = heapq.heappop(heap)
@@ -156,6 +176,20 @@ def route(lat, src, dst, labelled=False, traffic=None):
                     step += 3 * traffic.exits.get(((x, y), nd), 0)  # another line already leaves this side
                 if (nx, ny) == dst:
                     step += 3 * traffic.entries.get((dst, nd), 0)  # another arrow already enters here
+            # the load of a unit edge is read only where its line states a capacity, so a lattice
+            # built without one asks a traffic for nothing it was not asked before
+            if nx == x:
+                cap = cap_v[nx]
+                if cap is not None:
+                    load = 0 if traffic is None else traffic.units.get(("v", nx, y if ny > y else ny), 0)
+                    if load >= cap:
+                        step += 20  # this gutter is full: a line more than fits in it
+            else:
+                cap = cap_h[ny]
+                if cap is not None:
+                    load = 0 if traffic is None else traffic.units.get(("h", ny, x if nx > x else nx), 0)
+                    if load >= cap:
+                        step += 20
             nk = (nx, ny, nd)
             if nk not in best:
                 heapq.heappush(heap, (cost + step, nx, ny, nd, key))

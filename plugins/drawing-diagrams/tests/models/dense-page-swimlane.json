@@ -1,0 +1,57 @@
+{
+  "kind": "swimlane",
+  "id": "dense-page-swimlane",
+  "title": "Ночная сверка остатков",
+  "summary": "Плотная дорожечная схема для проверки шага линий: запуск сверки, поиск расхождений, повторные запросы провайдеру и разбор дежурным.",
+  "groups": {
+    "client": {"label": "клиент", "ramp": "pink"},
+    "duty": {"label": "дежурный", "ramp": "purple"},
+    "back": {"label": "бэкенд", "ramp": "teal"},
+    "prov": {"label": "провайдер", "ramp": "coral"},
+    "sched": {"label": "планировщик", "ramp": "gray"}
+  },
+  "lanes": ["client", "duty", "back", "prov", "sched"],
+  "nodes": [
+    {"id": "snapshot", "title": "Пересчёт остатков", "text": "по последней выписке"},
+    {"id": "start", "title": "Запуск сверки", "text": "каждый час"},
+    {"id": "statement", "title": "Запрос выписки"},
+    {"id": "match", "title": "Сопоставление", "text": "проводки против остатков"},
+    {"id": "again", "title": "Повторный запрос", "text": "ответа не было"},
+    {"id": "night", "kind": "terminal", "title": "Ночной прогон"},
+    {"id": "ask", "title": "Вопрос клиенту"},
+    {"id": "desk", "title": "Разбор дежурным", "text": "расхождение больше порога"},
+    {"id": "diff", "title": "Поиск расхождений"},
+    {"id": "request", "title": "Запрос провайдеру"},
+    {"id": "repeat", "title": "Повторная задача", "text": "через пятнадцать минут"},
+    {"id": "report", "kind": "terminal", "title": "Отчёт сохранён"},
+    {"id": "catchup", "kind": "terminal", "title": "Догон за день"}
+  ],
+  "grid": [
+    ".          .     snapshot  .        start",
+    "statement  .     match     again    night",
+    "ask        desk  diff      request  repeat",
+    ".          .     report    .        catchup"
+  ],
+  "edges": [
+    "snapshot -> repeat",
+    "start -> snapshot",
+    "start -> statement",
+    "statement -> match",
+    "statement -> diff",
+    "match -> request",
+    "again -> snapshot",
+    "again -> repeat",
+    "night -> desk",
+    "night -> report",
+    "ask -> request",
+    "desk -> statement",
+    "desk -> again",
+    "diff -> match",
+    "diff -> ask",
+    "request -> again",
+    "repeat -> ask",
+    "repeat -> desk",
+    "catchup -> match",
+    "catchup -> again"
+  ]
+}
