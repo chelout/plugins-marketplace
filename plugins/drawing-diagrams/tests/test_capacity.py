@@ -31,21 +31,27 @@ CHAIN = [[(1, 1), (2, 1), (2, 3), (3, 3)],
 CHAIN_NODES = frozenset({(1, 1), (3, 3), (1, 5), (3, 7), (1, 9)})
 
 # Hand-computed room per kind and mode, in the order (inner column gutter, inner row gutter, left
-# margin, right margin, top margin, bottom margin), each pair (lower coordinate, higher
-# coordinate). A gutter keeps LINE_CLEAR from the cards on both sides: gap / 2 - 4 across, row_gap
-# / 2 - 4 down. A side margin keeps LINE_CLEAR towards the cards (margin - 4, margin being
-# max(8, pad - 6)) and EDGE_CLEAR towards the grid box (pad - margin - 1). The outer row margins
-# are the measured ones, less the same two clearances.
+# margin, right margin, top margin, bottom margin without footnotes, bottom margin with them), each
+# pair (lower coordinate, higher coordinate). A gutter keeps LINE_CLEAR from the cards on both
+# sides: gap / 2 - 4 across, row_gap / 2 - 4 down. A side margin keeps LINE_CLEAR towards the cards
+# (margin - 4, margin being max(8, pad - 6)) and EDGE_CLEAR towards the grid box (pad - margin - 1).
+# The outer row margins are the measured ones, less the same two clearances; below the grid box the
+# measurement is of the first content after it, which is the .dg-foot list when the model has
+# footnotes and the legend's text when it has none, so the bottom margin has two rooms.
 ROOMS = {
-    ("flow", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, -5)),
-    ("flow", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, -11)),
-    ("state", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, -5)),
-    ("state", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, -11)),
-    ("blocks", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, -5)),
-    ("blocks", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, -11)),
-    ("swimlane", "widget"): ((5, 5), (16, 16), (5, 8), (8, 5), (27, 8), (8, -5)),
-    ("swimlane", "page"): ((10, 10), (18, 18), (5, 14), (14, 5), (25, 14), (14, -11)),
+    ("flow", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, 7), (8, 3)),
+    ("flow", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, 1), (14, -3)),
+    ("state", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, 7), (8, 3)),
+    ("state", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, 1), (14, -3)),
+    ("blocks", "widget"): ((10, 10), (16, 16), (5, 8), (8, 5), (-5, 8), (8, 7), (8, 3)),
+    ("blocks", "page"): ((12, 12), (18, 18), (5, 14), (14, 5), (-11, 14), (14, 1), (14, -3)),
+    ("swimlane", "widget"): ((5, 5), (16, 16), (5, 8), (8, 5), (27, 8), (8, 7), (8, 3)),
+    ("swimlane", "page"): ((10, 10), (18, 18), (5, 14), (14, 5), (25, 14), (14, 1), (14, -3)),
 }
+
+# How many lines each of those bottom margins holds at the smallest pitch — the number task 9's
+# message will print when a group does not fit there.
+BOTTOM_CAPACITY = {("widget", False): 3, ("widget", True): 2, ("page", False): 1, ("page", True): 0}
 
 
 def room_of(pair):
@@ -86,14 +92,15 @@ class Fits(unittest.TestCase):
                 self.assertEqual(tuple(widest(p, room) for p in router.PITCHES), want)
 
     def test_capacity_is_the_width_at_the_smallest_pitch(self):
-        for room in ((10, 10), (5, 5), (8, 5), (12, 12), (16, 16), (25, 14), (0, 0)):
+        for room in ((10, 10), (5, 5), (8, 5), (12, 12), (16, 16), (25, 14), (8, 7), (8, 3), (14, 1), (0, 0)):
             with self.subTest(room=room):
                 self.assertEqual(router.capacity(room), widest(router.PITCHES[-1], room))
 
     def test_a_line_already_past_its_bound_holds_nothing(self):
-        # the top and bottom margins of a flow: by() of template/js/flow.js puts the line itself
-        # outside the grid box, so not even one line fits
-        for room in ((-5, 8), (8, -5), (-11, 14), (14, -11)):
+        # a flow's top margin, where the line itself is above the grid box and so under the title
+        # or past the edge the section clips at, and its bottom margin in a page with footnotes,
+        # where the line is already inside the .dg-foot list: not even one line fits
+        for room in ((-5, 8), (-11, 14), (14, -3)):
             with self.subTest(room=room):
                 self.assertEqual(router.capacity(room), 0)
                 self.assertFalse(router.fits(1, router.PITCHES[-1], room))
@@ -106,21 +113,30 @@ class GeometryRoom(unittest.TestCase):
         self.assertEqual(set(ROOMS), {(kind, name) for kind, modes in flow.MODES.items() for name in modes})
 
     def test_every_mode_against_the_hand_computed_pairs(self):
-        for (kind, name), (column, row, left, right, top, bottom) in sorted(ROOMS.items()):
-            with self.subTest(kind=kind, mode=name):
-                mode = flow.mode_for(kind, name, None)
-                geo = flow.Geometry(mode, 100.0, 3, 2, *flow.margin_room(kind, name))
-                self.assertEqual(geo.room("v", 2), column)
-                self.assertEqual(geo.room("h", 2), row)
-                self.assertEqual(geo.room("v", 0), left)
-                self.assertEqual(geo.room("v", 6), right)
-                self.assertEqual(geo.room("h", 0), top)
-                self.assertEqual(geo.room("h", 4), bottom)
+        for (kind, name), (column, row, left, right, top, bare, footed) in sorted(ROOMS.items()):
+            for footnotes, bottom in ((False, bare), (True, footed)):
+                with self.subTest(kind=kind, mode=name, footnotes=footnotes):
+                    mode = flow.mode_for(kind, name, None)
+                    geo = flow.Geometry(mode, 100.0, 3, 2, *flow.margin_room(kind, name, footnotes))
+                    self.assertEqual(geo.room("v", 2), column)
+                    self.assertEqual(geo.room("h", 2), row)
+                    self.assertEqual(geo.room("v", 0), left)
+                    self.assertEqual(geo.room("v", 6), right)
+                    self.assertEqual(geo.room("h", 0), top)
+                    self.assertEqual(geo.room("h", 4), bottom)
+
+    def test_the_bottom_margin_holds_what_the_room_leaves(self):
+        # the numbers the capacity message of task 9 will print for a full bottom margin
+        for (kind, name), rooms in sorted(ROOMS.items()):
+            for footnotes, bottom in ((False, rooms[5]), (True, rooms[6])):
+                with self.subTest(kind=kind, mode=name, footnotes=footnotes):
+                    self.assertEqual(router.capacity(bottom), BOTTOM_CAPACITY[name, footnotes])
 
     def test_a_line_through_the_cards_states_no_room(self):
         # an odd line runs along a row or a column of cards, where template/js/flow.js places a
         # line against card heights this side knows nothing about
-        geo = flow.Geometry(flow.mode_for("flow", "widget", None), 100.0, 3, 2, *flow.margin_room("flow", "widget"))
+        geo = flow.Geometry(flow.mode_for("flow", "widget", None), 100.0, 3, 2,
+                            *flow.margin_room("flow", "widget", False))
         self.assertIsNone(geo.room("v", 1))
         self.assertIsNone(geo.room("h", 3))
 
@@ -196,7 +212,8 @@ class ShippedExamples(unittest.TestCase):
                 with self.subTest(example=path.name, mode=mode):
                     layout, _ = flow.plan(json.loads(json.dumps(model)), mode)
                     geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"],
-                                        layout["grid_rows"], *flow.margin_room(layout["kind"], mode))
+                                        layout["grid_rows"],
+                                        *flow.margin_room(layout["kind"], mode, layout["footnotes"]))
                     nodes = frozenset(layout["lattice"].blocked)
                     self.assertEqual(router.overfull(layout["paths"], nodes, geo.room), [])
                     self.assertEqual(router.assign_offsets(layout["paths"], nodes=nodes, room=geo.room),

@@ -43,11 +43,14 @@ Test cases (written from the declaration of the change, before the implementatio
     on the lattice, and the page draws none.
 13. "shared-corner", both modes: d -> a and a -> d share a stretch from a through a corner both turn
     at, and part below it; no crossing on the lattice, and the page draws none.
-14. The room of the top and bottom margins, in flow and in swimlane, both modes: a line drawn along
-    each of them keeps the px that diagrams/flow.py's TOP_ROOM and BOTTOM_ROOM claim, from the
-    nearest card edge and from the nearest edge that clips or covers it. The measurement that set
-    those constants is this test, and a change of the CSS padding fails it instead of silently
-    moving lines out of the grid box.
+14. The room of the top and bottom margins, in flow and in swimlane, both modes, with footnotes and
+    without: a line drawn along each of them keeps the px that diagrams/flow.py's TOP_ROOM and
+    BOTTOM_ROOM claim, from the nearest card edge and from the nearest thing that clips or covers
+    it — above the grid box or the section, below the first content the section goes on with, the
+    footnote list or the legend's own text. The measurement that set those constants is this test,
+    so a change of `.dg-foot`'s margin or of `.dg-legend`'s padding fails it instead of silently
+    letting a line run through the text under the diagram. The top room is the same with footnotes
+    and without, which is why only BOTTOM_ROOM is keyed by them.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -171,29 +174,46 @@ SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run
 # Y = 4, with the paths put in by hand: `route` prices a margin above every inner gutter, so no
 # model of its own would draw one, and what is measured is where by() of template/js/flow.js puts
 # such a line — a question about the script, not about the router. Titles stay one line high and
-# the models carry no title, no scenario and no footnote, so nothing stands between the section and
-# the grid box: the narrowest the room ever is.
+# the models carry no title and no scenario, so above the grid box stands nothing but the section:
+# the narrowest the top room ever is. Below it the section always goes on, so each kind comes in
+# two models — without footnotes, where the legend follows the grid box, and with one, where the
+# `.dg-foot` list comes between them — and those are the two bottom rooms.
 MARGIN_PATHS = [[(1, 1), (1, 0), (3, 0), (3, 1)],   # a -> b over the top margin
                 [(1, 3), (1, 4), (3, 4), (3, 3)]]   # c -> d under the bottom margin
-MARGINS = {
-    "margin-flow": ({"kind": "flow", "nodes": [step(i) for i in "abcd"], "grid": ["a b", "c d"],
-                     "edges": ["a -> b", "c -> d"]}, MARGIN_PATHS),
-    "margin-swimlane": ({"kind": "swimlane", "lanes": ["one", "two"],
-                         "groups": {"one": {"label": "Первый", "ramp": "teal"},
-                                    "two": {"label": "Второй", "ramp": "blue"}},
-                         "nodes": [step(i) for i in "abcd"], "grid": ["a b", "c d"],
-                         "edges": ["a -> b", "c -> d"]}, MARGIN_PATHS),
-}
-# Which kind of the tables of diagrams/flow.py each margin model measures.
-MARGIN_KIND = {"margin-flow": "flow", "margin-swimlane": "swimlane"}
+MARGIN_LANES = {"lanes": ["one", "two"],
+                "groups": {"one": {"label": "Первый", "ramp": "teal"},
+                           "two": {"label": "Второй", "ramp": "blue"}}}
+
+
+def margin_model(kind, footnotes):
+    """A margin model of `kind`; with `footnotes` the top-left card carries the only reference, so
+    the two models of a kind differ in the footnote list under the grid and in nothing else the
+    bottom margin can see (the card that grows stands in the top row, the line under the bottom)."""
+    nodes = [step(i) for i in "abcd"]
+    model = {"kind": kind, "nodes": nodes, "grid": ["a b", "c d"], "edges": ["a -> b", "c -> d"]}
+    if kind == "swimlane":
+        model.update(MARGIN_LANES)
+    if footnotes:
+        nodes[0] = {**nodes[0], "text": "Сноска [1]"}
+        model["footnotes"] = ["Что здесь измеряется"]
+    return model
+
+
+MARGINS = {f"margin-{kind}{'-foot' if foot else ''}": (margin_model(kind, foot), MARGIN_PATHS)
+           for kind in ("flow", "swimlane") for foot in (False, True)}
+# Which row of the tables of diagrams/flow.py each margin model measures: (kind, footnotes).
+MARGIN_CASE = {f"margin-{kind}{'-foot' if foot else ''}": (kind, foot)
+               for kind in ("flow", "swimlane") for foot in (False, True)}
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
 # the renderer handed to the page; `texts`, in the same order, the [x, y] of the group's label text
 # or null; `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
 # mapped into the svg's own coordinates, the ones `d` is written in; `boxes`, the same for the grid
-# box (`grid`), the section that clips what leaves it (`sec`) and every swimlane header (`heads`),
-# which is what bounds a line drawn along an outer margin.
+# box (`grid`), the section that clips what leaves it (`sec`), every swimlane header (`heads`), the
+# footnote list (`foot`, absent when the model has none) and the legend (`legend`, with `legendpad`,
+# its computed padding-top in those same units, the gap between its box top and its first text).
+# Whatever bounds a line drawn along an outer margin stands among them.
 PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{},boxes:{heads:[]}},"
          "s=document.querySelector('.dg-svg');"
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
@@ -206,7 +226,11 @@ PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{},boxes:
          "if(!o.cards[t])o.cards[t]=b(c)});"
          "var gr=document.querySelector('.dg-grid'),sc=document.querySelector('.dg');"
          "if(gr)o.boxes.grid=b(gr);if(sc)o.boxes.sec=b(sc);"
-         "document.querySelectorAll('.dg-lanehead').forEach(function(h){o.boxes.heads.push(b(h))})}"
+         "document.querySelectorAll('.dg-lanehead').forEach(function(h){o.boxes.heads.push(b(h))});"
+         "var ft=document.querySelector('.dg-foot'),lg=document.querySelector('.dg-legend');"
+         "if(ft)o.boxes.foot=b(ft);"
+         "if(lg){o.boxes.legend=b(lg);"
+         "o.boxes.legendpad=u(0,parseFloat(getComputedStyle(lg).paddingTop)||0)[1]-u(0,0)[1]}}"
          "var pre=document.createElement('pre');pre.id='probe';pre.textContent=JSON.stringify(o);"
          "document.body.appendChild(pre)},800)</script>")
 PROBE_RE = re.compile(r'<pre id="probe">(.*?)</pre>', re.S)
@@ -486,16 +510,23 @@ def margin_room(y, top, boxes, cards):
     drawn at pixel `y` along an outer margin keeps on each side, lower coordinate first.
 
     The cards lie below a top margin and above a bottom one. On the other side stands whatever
-    clips or covers the line: the grid box, the section, which scrolls and so clips what leaves it,
-    or, over a top margin, a swimlane header. The nearest of them is the bound, and a negative
-    number says the line is drawn past it already."""
+    clips or covers the line. Above: the grid box, the section, which scrolls and so clips what
+    leaves it, or a swimlane header. Below: the section again, and the content the section goes on
+    with — the footnote list when the model has one, then the legend, whose own text starts a
+    padding-top inside its box. The grid box is not among them below, because `.dg-svg` is drawn
+    with `overflow:visible` and the section, not the box, is what clips. The nearest bound is the
+    one taken, and a negative number says the line is drawn past it already."""
     if top:
         cardward = min(c[1] for c in cards.values()) - y
         bounds = [("grid box", y - boxes["grid"][1]), ("section", y - boxes["sec"][1])]
         bounds += [("swimlane header", y - h[3]) for h in boxes["heads"]]
     else:
         cardward = y - max(c[3] for c in cards.values())
-        bounds = [("grid box", boxes["grid"][3] - y), ("section", boxes["sec"][3] - y)]
+        bounds = [("section", boxes["sec"][3] - y)]
+        if "foot" in boxes:
+            bounds.append(("footnote list", boxes["foot"][1] - y))
+        if "legend" in boxes:
+            bounds.append(("legend text", boxes["legend"][1] + boxes["legendpad"] - y))
     name, edgeward = min(bounds, key=lambda b: b[1])
     return ((edgeward, cardward) if top else (cardward, edgeward)), name
 
@@ -694,31 +725,46 @@ class BrowserLines(unittest.TestCase):
                     self.check_crossings(name, mode)
 
     def measure_margins(self):
-        """One line per (kind, mode, margin): the room the page shows, what bounds it away from the
-        cards, and the constant diagrams/flow.py carries for it."""
+        """One line per (kind, mode, footnotes, margin): the room the page shows, what bounds it
+        away from the cards, and the constant diagrams/flow.py carries for it. Only the bottom
+        table is keyed by the footnotes as well — above the grid box nothing changes with them."""
         out = []
-        for name, kind in sorted(MARGIN_KIND.items()):
+        for name, (kind, foot) in sorted(MARGIN_CASE.items()):
             for mode in MODES:
                 layout, _, lines = self.measured(name, mode)
                 got = self.results[name, mode]
+                self.assertEqual("foot" in got["boxes"], foot,
+                                 f"harness: {name} {mode}: the page's footnote list does not match the model")
                 found = margin_runs(layout, lines)
                 for where, Y, top in (("top", 0, True), ("bottom", 2 * layout["grid_rows"], False)):
                     ys = found.get(Y, [])
                     self.assertEqual(len(ys), 1, f"harness: {name} {mode}: {len(ys)} lines drawn along "
                                                  f"the {where} margin, one was put there")
                     room, by = margin_room(ys[0], top, got["boxes"], got["cards"])
-                    table = flow.TOP_ROOM if top else flow.BOTTOM_ROOM
-                    out.append((kind, mode, where, ys[0], room, by, table.get((kind, mode))))
+                    want = flow.TOP_ROOM.get((kind, mode)) if top else flow.BOTTOM_ROOM.get((kind, mode, foot))
+                    out.append((kind, mode, foot, where, ys[0], room, by, want))
         return out
 
     def test_margin_room_matches_the_constants(self):
         measured = self.measure_margins()
-        shown = "\n".join(f"  {kind:8} {mode:6} {where:6} line at y {y:8.2f}, room "
+        shown = "\n".join(f"  {kind:8} {mode:6} footnotes {str(foot):5} {where:6} line at y {y:8.2f}, room "
                           f"({room[0]:6.2f}, {room[1]:6.2f}) against the {by}, constant {want}"
-                          for kind, mode, where, y, room, by, want in measured)
-        off = [f"{kind} {mode} {where}" for kind, mode, where, _, room, _, want in measured
+                          for kind, mode, foot, where, y, room, by, want in measured)
+        off = [f"{kind} {mode} footnotes {foot} {where}" for kind, mode, foot, where, _, room, _, want in measured
                if want is None or max(abs(a - b) for a, b in zip(room, want)) > AXIS_TOL]
         self.assertEqual(off, [], "the page does not show the room the constants claim:\n" + shown)
+
+    def test_the_top_room_does_not_change_with_the_footnotes(self):
+        """A footnote list goes under the grid box, so it moves the bottom margin's bound and not
+        the top's — which is why only BOTTOM_ROOM is keyed by it."""
+        rooms = {}
+        for kind, mode, foot, where, _, room, by, _ in self.measure_margins():
+            if where == "top":
+                rooms.setdefault((kind, mode), []).append((foot, room, by))
+        for key, seen in sorted(rooms.items()):
+            with self.subTest(kind=key[0], mode=key[1]):
+                self.assertEqual({(room, by) for _, room, by in seen}, {(seen[0][1], seen[0][2])},
+                                 f"the top margin of {key[0]} {key[1]} differs with the footnotes: {seen}")
 
     def test_examples_found(self):
         self.assertTrue(self.examples, f"no example of kind {', '.join(KINDS)} under {EXAMPLES}")

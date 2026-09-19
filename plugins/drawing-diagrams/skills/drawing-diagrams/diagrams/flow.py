@@ -45,29 +45,49 @@ LINE_REACH = 7.5  # a horizontal line nearer than this to the middle of the text
 LABEL_WORD = 8    # two labels in one row keep this much more apart, or they read as one phrase
 
 # What a line on an even lattice line keeps clear, in px, and so cannot spend on the lines beside
-# it: LINE_CLEAR from the nearest card edge, EDGE_CLEAR from the edge that clips or covers it.
+# it: LINE_CLEAR from the nearest card edge, EDGE_CLEAR from the bound on the other side — the edge
+# that clips or covers it, or the nearest content beyond the grid box.
 LINE_CLEAR = 4
 EDGE_CLEAR = 1
 
 # The raw px an unoffset line on an outer margin has on each side, lower coordinate first: for the
-# top margin towards whatever clips or covers it and then towards the cards, for the bottom margin
-# the other way round. The side margins follow from `pad_l`, `pad_r` and `margin`, and these do not:
-# .dg-grid pads 8 px above and below the cards while by() of template/js/flow.js puts a margin line
-# `margin` px outside them, so in a flow both margin lines fall outside the grid box, which the
-# section then clips, and a negative number here says so. A swimlane's top margin instead falls one
-# row gap under the lane headers, which cover it. Measured in the browser by
-# tests/test_browser_lines.py, which fails when a change of the CSS moves them.
+# top margin towards whatever bounds it away from the cards and then towards the cards, for the
+# bottom margin the other way round. The side margins follow from `pad_l`, `pad_r` and `margin`,
+# and these do not: .dg-grid pads 8 px above and below the cards while by() of template/js/flow.js
+# puts a margin line `margin` px outside them, so in a flow both margin lines fall outside the grid
+# box. The two ends of that box are not alike, though.
+#
+# Above it the bound is the box's own top edge, because whatever stands directly above it is either
+# the edge that clips or content nearer than the line. In a widget nothing in the section's flow
+# stands above the grid, so the section's top edge coincides with the box's and clips there:
+# overflow-x:auto on .dg makes overflow-y compute to auto. In a page the h3 title lies right above
+# the box with margin-bottom 4 px — the draft badge and the route chips too when the model has
+# them — so a line 10 px up runs through that text. Either way a negative number says the line is
+# already past the bound. A swimlane's top margin instead falls one row gap under the lane headers,
+# which cover it.
+#
+# Below the box nothing clips — .dg-svg is drawn with overflow:visible (template/css/base.css) —
+# and the section goes on. The bound there is the first content after the grid: the .dg-foot list,
+# margin-top 8 px, when the model has footnotes, else the text of the .dg-legend that render()
+# always emits for these kinds, which starts a padding-top of 12 px inside its box. So the bottom
+# room is keyed by the footnotes as well, and is the narrower of the two when there are any.
+#
+# Measured in the browser by tests/test_browser_lines.py, which fails when a change of the CSS
+# moves them.
 TOP_ROOM = {("flow", "widget"): (-4, 12), ("flow", "page"): (-10, 18),
             ("swimlane", "widget"): (28, 12), ("swimlane", "page"): (26, 18)}
-BOTTOM_ROOM = {("flow", "widget"): (12, -4), ("flow", "page"): (18, -10),
-               ("swimlane", "widget"): (12, -4), ("swimlane", "page"): (18, -10)}
+BOTTOM_ROOM = {("flow", "widget", False): (12, 8), ("flow", "widget", True): (12, 4),
+               ("flow", "page", False): (18, 2), ("flow", "page", True): (18, -2),
+               ("swimlane", "widget", False): (12, 8), ("swimlane", "widget", True): (12, 4),
+               ("swimlane", "page", False): (18, 2), ("swimlane", "page", True): (18, -2)}
 
 
-def margin_room(kind, mode_name):
+def margin_room(kind, mode_name, footnotes):
     """(top, bottom) raw room of the outer margins for this kind and mode: only a swimlane carries
-    lane headers, so every other kind is measured as a flow."""
+    lane headers, so every other kind is measured as a flow. `footnotes` says whether the model has
+    any, which moves what the bottom margin is bounded by and nothing above the grid box."""
     key = ("swimlane" if kind == "swimlane" else "flow", mode_name)
-    return TOP_ROOM[key], BOTTOM_ROOM[key]
+    return TOP_ROOM[key], BOTTOM_ROOM[(*key, bool(footnotes))]
 
 
 class Geometry:
@@ -109,8 +129,9 @@ class Geometry:
     def room(self, axis, line):
         """The px the lines of one group on this lattice line may spread over, on each side of it,
         lower coordinate first, with LINE_CLEAR already taken off towards a card and EDGE_CLEAR
-        towards whatever clips or covers them. A negative number says a line on the lattice line
-        itself is already past that bound.
+        towards whatever bounds them on the other side — the edge that clips or covers them, or,
+        under the bottom margin, the content the section goes on with. A negative number says a
+        line on the lattice line itself is already past that bound.
 
         None where there is no room to state: an odd line, which runs through the cards and is
         placed against their heights by the script, and an outer row margin this geometry was not
@@ -564,7 +585,7 @@ def plan(model, mode_name, overrides=None, draft=False):
 
     # every gutter and margin knows its room, so a group of lines too wide for the 8 px pitch
     # closes up to 6 or 5 rather than reaching over a card edge or out of the grid box
-    top, bottom = margin_room(kind, mode_name)
+    top, bottom = margin_room(kind, mode_name, footnotes)
     geo = Geometry(mode, card_w, grid_cols, grid_rows, top, bottom)
     offsets = router.assign_offsets(paths, nodes=frozenset(lat.blocked), room=geo.room)
     occupied = {rc for nid, rc in cells.items() if nid in by_id}
