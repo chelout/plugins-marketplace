@@ -1026,7 +1026,7 @@ class BrowserLines(unittest.TestCase):
         self.assertEqual(spread[("h", 8)], [0.0])
 
     def test_lines_at_capacity_keep_clear_of_the_cards(self):
-        """Docstring case 15, criterion B3: with a group at the capacity of a column gutter, a row
+        """Docstring case 15, criterion B2: with a group at the capacity of a column gutter, a row
         gutter and a side margin, every line still keeps its distance from every card it does not
         end on and stays inside the grid box — the room the capacity is computed from is the room
         the page gives."""
@@ -1152,7 +1152,7 @@ class BrowserLines(unittest.TestCase):
         self.assertEqual([spread[Y] for Y in (4, 5, 6)], [[-10.0, -5.0, 0.0, 5.0, 10.0]] * 3)
 
     def test_lines_at_the_capacity_of_an_empty_band_keep_clear_of_the_cards(self):
-        """Docstring case 18, criterion B3 on the band of an empty row: with a group at the capacity of
+        """Docstring case 18, criterion B2 on the band of an empty row: with a group at the capacity of
         every line of a leading band and an interior one, every line still keeps its distance from
         every card it does not end on and stays inside the grid box."""
         name = "empty-band-at-pitch"

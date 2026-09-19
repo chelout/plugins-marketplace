@@ -31,6 +31,13 @@ from diagrams import flow, router
 FIVE = [[(1, y), (2, y), (2, 11), (3, 11)] for y in (1, 3, 5, 7, 9)]
 FIVE_NODES = frozenset({(1, y) for y in (1, 3, 5, 7, 9)} | {(3, 11)})
 
+# The same five lines turned on their side: they come into the row gutter Y = 2 from five cards of
+# the top row and leave it at the right-hand column, so again one group five runs wide. A row line
+# is where an empty row's band and the outer row margins are, and their room is as small as a
+# column gutter's, so the pitch of a group is read from the room there too.
+HFIVE = [[(x, 1), (x, 2), (11, 2), (11, 3)] for x in (1, 3, 5, 7, 9)]
+HFIVE_NODES = frozenset({(x, 1) for x in (1, 3, 5, 7, 9)} | {(11, 3)})
+
 # Four lines that share no stretch at all: each runs down its own piece of the gutter X = 2 and
 # hands over to the next at a gutter point. Spec 4.1 counts such a chain as wide as it is drawn.
 CHAIN = [[(1, 1), (2, 1), (2, 3), (3, 3)],
@@ -51,6 +58,22 @@ GUTTER_ROUTE = [(3, 3), (2, 3), (2, 7), (3, 7)]    # n1 -> n3, down the column g
 # goes — and a step of it priced as full costs +20, which is what has to move it.
 FULL_GUTTER = [(3, 1), (2, 1), (2, 9), (3, 9)]
 FULL_MARGIN = [(3, 1), (4, 1), (4, 9), (3, 9)]
+
+# The lattice the size of that price is measured on: a grid three rows deep whose every cell holds a
+# card, where every lattice column but the last already carries one line along the unit edge
+# WALLED_EDGE — from the row gap under the top row to the middle row itself — and holds one line, so
+# that edge of it is full. A line from the top card of the first column to the bottom card of that
+# column cannot go straight down, the middle card being in the way, so it turns into the gutter
+# beside it and passes that card over a unit edge which is already full: cost 11 plus the price
+# (WALLED_DOWN). The one lattice column that is not full is the last, the far margin, reached along
+# the row gap under the top row and left along the one over the bottom row: cost 4 per column of
+# the grid plus 13, so 25 in a three-column grid (WALLED_ROUND) and 37 in a six-column one. So a
+# price of 20 takes the first way round and leaves the second, and the two together say the price
+# is more than 14 and less than 26.
+WALLED_EDGE = 2
+WALLED_ENDS = (router.Lattice.point(0, 0), router.Lattice.point(2, 0))
+WALLED_DOWN = [(1, 1), (2, 1), (2, 5), (1, 5)]
+WALLED_ROUND = [(1, 1), (1, 2), (6, 2), (6, 4), (1, 4), (1, 5)]
 
 # Hand-computed room per kind and mode, in the order (inner column gutter, inner row gutter, left
 # margin, right margin, top margin, bottom margin without footnotes, bottom margin with them), each
@@ -338,6 +361,12 @@ class AdaptivePitch(unittest.TestCase):
         offs = router.assign_offsets(FIVE, nodes=FIVE_NODES, room=room_of((12, 12)))  # gap 32
         self.assertEqual(spread(FIVE, offs, "v", 2), [-12.0, -6.0, 0.0, 6.0, 12.0])
 
+    def test_five_runs_in_one_row_gutter_close_up_to_six(self):
+        # (25, 14) is the room of a swimlane's top margin on a page: the widest a row line of a
+        # shipped mode has that still does not hold five lines at eight px
+        offs = router.assign_offsets(HFIVE, nodes=HFIVE_NODES, room=room_of((25, 14)))
+        self.assertEqual(spread(HFIVE, offs, "h", 2), [-12.0, -6.0, 0.0, 6.0, 12.0])
+
     def test_three_runs_keep_the_widest_pitch(self):
         three = FIVE[:3]
         offs = router.assign_offsets(three, nodes=FIVE_NODES, room=room_of((10, 10)))  # gap 28
@@ -346,6 +375,12 @@ class AdaptivePitch(unittest.TestCase):
     def test_five_runs_do_not_fit_a_narrow_gutter(self):
         self.assertEqual(router.overfull(FIVE, FIVE_NODES, room_of((5, 5))),  # gap 18
                          [("v", 2, [0, 1, 2, 3, 4], 3)])
+
+    def test_five_runs_do_not_fit_a_narrow_row_gutter(self):
+        # (5, 6) is the gutter under a leading empty row in a widget: as little room as the narrowest
+        # column gutter, and the group that does not fit it is named the same way
+        self.assertEqual(router.overfull(HFIVE, HFIVE_NODES, room_of((5, 6))),
+                         [("h", 2, [0, 1, 2, 3, 4], 3)])
 
     def test_a_chain_that_only_meets_end_to_end_is_one_group(self):
         self.assertEqual(router.overfull(CHAIN, CHAIN_NODES, room_of((5, 5))),
@@ -368,6 +403,10 @@ class AdaptivePitch(unittest.TestCase):
         offs = router.assign_offsets(FIVE, nodes=FIVE_NODES, room=room_of((5, 5)))
         self.assertEqual(spread(FIVE, offs, "v", 2), [-10.0, -5.0, 0.0, 5.0, 10.0])
 
+    def test_a_group_over_the_capacity_of_a_row_gutter_is_drawn_at_the_smallest_pitch(self):
+        offs = router.assign_offsets(HFIVE, nodes=HFIVE_NODES, room=room_of((5, 6)))
+        self.assertEqual(spread(HFIVE, offs, "h", 2), [-10.0, -5.0, 0.0, 5.0, 10.0])
+
     def test_an_even_group_at_the_smallest_pitch_lands_on_half_pixels(self):
         offs = router.assign_offsets(CHAIN, nodes=CHAIN_NODES, room=room_of((5, 5)))
         self.assertEqual(spread(CHAIN, offs, "v", 2), [-7.5, -2.5, 2.5, 7.5])
@@ -389,10 +428,32 @@ class FullGutterCost(unittest.TestCase):
 
     The detour here is the right margin: 5 dearer than the gutter whether the two channels are
     empty (10 against 15) or already hold a line each (24 against 29), a quarter of what one step
-    on a full line costs. So the price, and nothing else in `route`, is what moves the line."""
+    on a full line costs. So the price, and nothing else in `route`, is what moves the line — but
+    a detour that cheap says only that the price is there, not how big it is: any price above 1
+    moves the line off this gutter.
+
+    The size is measured on the WALLED lattice, where a line pays the price once and the way round
+    is 14 dearer than that step in a three-column grid and 26 dearer in a six-column one: 20 takes
+    the first and leaves the second, where 10 would leave both and 30 would take both."""
 
     def lattice(self, capacity=None):
         return router.Lattice(2, 5, COLUMN_FULL, capacity=capacity)
+
+    def walled(self, cols, priced=True):
+        """The WALLED lattice `cols` columns wide and the traffic on it: one line along WALLED_EDGE
+        of every lattice column but the last, each of those columns holding one line, unless
+        `priced` is false and no line states a capacity at all."""
+        cards = {f"n{r}{c}": (r, c) for r in range(3) for c in range(cols)}
+        full = range(0, 2 * cols, 2)
+        traffic = router.Traffic()
+        for x in full:
+            traffic.add([(x, WALLED_EDGE), (x, WALLED_EDGE + 1)])
+        capacity = stated({("v", x): 1 for x in full}) if priced else None
+        return router.Lattice(cols, 3, cards, capacity=capacity), traffic
+
+    def walled_route(self, cols, priced=True):
+        lattice, traffic = self.walled(cols, priced)
+        return router.route(lattice, *WALLED_ENDS, traffic=traffic)
 
     def loaded(self):
         """A traffic holding one line down the whole gutter and one down the whole margin: the
@@ -426,6 +487,18 @@ class FullGutterCost(unittest.TestCase):
     def test_a_gutter_below_its_capacity_is_not_priced(self):
         self.assertEqual(router.route(self.lattice(only("v", 2, 2)), *N1_N3, traffic=self.loaded()),
                          GUTTER_ROUTE)
+
+    def test_a_detour_dearer_than_a_crossing_but_cheaper_than_the_price_is_taken(self):
+        # the way round a three-column grid costs 25 against the 11 + 20 of the step on the full
+        # unit edge, so the line goes round; at 10 (21) it would stay, as it does without a capacity
+        self.assertEqual(self.walled_route(3, priced=False), WALLED_DOWN)
+        self.assertEqual(self.walled_route(3), WALLED_ROUND)
+
+    def test_a_detour_dearer_than_the_price_is_not_taken(self):
+        # the way round a six-column grid costs 37 against the same 31, so the line stays on the
+        # full unit edge, where it goes without a capacity too; at 30 (41) it would go round
+        self.assertEqual(self.walled_route(6, priced=False), WALLED_DOWN)
+        self.assertEqual(self.walled_route(6), WALLED_DOWN)
 
     def test_a_lattice_built_without_a_capacity_routes_as_it_did(self):
         # tests/reference.py, tools/bench_routing.py and tests/test_traffic.py build one this way
@@ -502,7 +575,7 @@ class TheGateModel(unittest.TestCase):
 
 
 class CapacityMessage(unittest.TestCase):
-    """Spec 4.4, criterion B2: the layout error a group over its line's capacity becomes. It names
+    """Spec 4.4, criterion B1: the layout error a group over its line's capacity becomes. It names
     the line the way the rest of the renderer names a column or a row, how many lines are drawn
     there against how many fit, the edges the author can move, and what to do."""
 
@@ -577,6 +650,22 @@ class CapacityMessage(unittest.TestCase):
         (group,) = router.overfull(paths, frozenset(), room_of((2, 2)))
         self.assertEqual(flow.overfull_error(group, [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}], 3, 3),
                          "между столбцами 0 и 1 линий 3, помещается 1: a -> b, c -> d; "
+                         "освободите ячейку рядом или переставьте узлы")
+
+    def test_the_edges_are_named_in_the_order_of_the_model(self):
+        # the runs of a group come in the order they lie along the line, which is not the order the
+        # model writes its edges in: the message follows the model, so the author reads the names
+        # where the edges are, and an edge with two runs there is still named once
+        paths = [[(1, 5), (2, 5), (2, 11), (1, 11)],
+                 [(1, 3), (2, 3), (2, 7), (3, 7), (3, 9), (2, 9), (2, 11), (1, 11)],
+                 [(1, 1), (2, 1), (2, 9), (1, 9)]]
+        (group,) = router.overfull(paths, frozenset(), room_of((2, 2)))
+        self.assertEqual(group[2], [2, 1, 0, 1],
+                         "harness: the runs no longer lie along the line in another order than the "
+                         "model's edges")
+        edges = [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}, {"a": "e", "b": "f"}]
+        self.assertEqual(flow.overfull_error(group, edges, 3, 6),
+                         "между столбцами 0 и 1 линий 4, помещается 1: a -> b, c -> d, e -> f; "
                          "освободите ячейку рядом или переставьте узлы")
 
     def test_the_shape_the_plan_matches(self):
