@@ -296,6 +296,8 @@ Spec: §4.1, §4.2, criteria B0, B1.
   to the nearest card edge and to the nearest edge that clips or covers it (grid box, section,
   swimlane header). Record the four numbers in the task report; they become
   `flow.TOP_ROOM`/`flow.BOTTOM_ROOM` per mode, named in the `design.md` amendment of task 9.
+  Amended 2026-09-20: as measured, the tables are keyed by kind and mode, the bottom one by the
+  footnotes as well, and the bound is what clips or covers the line, not the grid box (spec §4.1).
 - [ ] Tests: the most lines that fit at pitches 8, 6, 5 are 3, 4, 5 for usable room (10, 10) (`gap`
   28); 2, 2, 3 for (5, 5) (`gap` 18); 2, 2, 3 for a widget side margin, usable (8, 5). Five parallel
   runs in one column gutter take pitch 6 at (12, 12) (`gap` 32) and are `overfull` at (5, 5); three
@@ -323,9 +325,12 @@ Spec: §4.3, §4.4, criteria B2, B3, B4.
 - [ ] Test B4: a hand-made grid with a gutter at capacity and a free detour of cost below 20: the
   next edge takes the detour; without `capacity` it takes the gutter.
 - [ ] Test: a model whose gutter cannot fit → `ModelError` with a layout error matching
-  `между столбцами \d+ и \d+ идут \d+ линий, помещается \d+`, the map printed, `--draft` renders with
+  `между столбцами \d+ и \d+ линий \d+, помещается \d+`, the map printed, `--draft` renders with
   the warning "черновик: …". Rows ("между рядами") and margins ("по левому полю", "по правому
-  полю", "по верхнему полю", "по нижнему полю") each have a case.
+  полю", "по верхнему полю", "по нижнему полю") each have a case. Amended 2026-09-20: the wording is
+  the one spec §4.4 now carries (the noun first; "идут 1 линий" was not Russian), and as built the
+  column gutter and the two row margins have model-level cases while "между рядами" and the side
+  margins are cases of the message builder; the qa review of the stage accepted that.
 - [ ] Browser test: a page model with a group at capacity at each pitch: every path's bounding box
   keeps ≥ 3 px from every card it does not end on and lies inside the grid box.
 - [ ] `reference/flow.md`: one row in the errors table. `design.md` §14: the capacity rule.

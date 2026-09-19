@@ -175,8 +175,8 @@ means an overview plus detail diagrams. Errors: a node in the map but not
 described or the reverse, a node placed twice, a decision with fewer than two
 exits or an unlabeled branch, a label over the limit without a footnote, a
 route through a pair without an edge, an unroutable line, more lines in one
-gutter or margin than fit (the message names it, how many go there, how many
-fit and the edges to move), more nodes or
+gutter, margin or empty row than fit (the message names it, how many go there,
+how many fit and the edges to move), more nodes or
 columns than the mode allows, a title, text, item or label that does not fit (the message names its length and how many
 characters fit), a single word in a text or item wider than its box (the
 message names that word's length instead). Warnings:
