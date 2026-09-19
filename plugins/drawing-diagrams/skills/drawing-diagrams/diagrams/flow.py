@@ -44,17 +44,48 @@ LABEL_CLEAR = 2   # the text box keeps this far from a card edge or a line
 LINE_REACH = 7.5  # a horizontal line nearer than this to the middle of the text runs through it
 LABEL_WORD = 8    # two labels in one row keep this much more apart, or they read as one phrase
 
+# What a line on an even lattice line keeps clear, in px, and so cannot spend on the lines beside
+# it: LINE_CLEAR from the nearest card edge, EDGE_CLEAR from the edge that clips or covers it.
+LINE_CLEAR = 4
+EDGE_CLEAR = 1
+
+# The raw px an unoffset line on an outer margin has on each side, lower coordinate first: for the
+# top margin towards whatever clips or covers it and then towards the cards, for the bottom margin
+# the other way round. The side margins follow from `pad_l`, `pad_r` and `margin`, and these do not:
+# .dg-grid pads 8 px above and below the cards while by() of template/js/flow.js puts a margin line
+# `margin` px outside them, so in a flow both margin lines fall outside the grid box, which the
+# section then clips, and a negative number here says so. A swimlane's top margin instead falls one
+# row gap under the lane headers, which cover it. Measured in the browser by
+# tests/test_browser_lines.py, which fails when a change of the CSS moves them.
+TOP_ROOM = {("flow", "widget"): (-4, 12), ("flow", "page"): (-10, 18),
+            ("swimlane", "widget"): (28, 12), ("swimlane", "page"): (26, 18)}
+BOTTOM_ROOM = {("flow", "widget"): (12, -4), ("flow", "page"): (18, -10),
+               ("swimlane", "widget"): (12, -4), ("swimlane", "page"): (18, -10)}
+
+
+def margin_room(kind, mode_name):
+    """(top, bottom) raw room of the outer margins for this kind and mode: only a swimlane carries
+    lane headers, so every other kind is measured as a flow."""
+    key = ("swimlane" if kind == "swimlane" else "flow", mode_name)
+    return TOP_ROOM[key], BOTTOM_ROOM[key]
+
 
 class Geometry:
     """Pixel x of cards and lattice lines, relative to the grid box, as template/js/flow.js derives
     them (tracks, bx, clampX). Card heights are unknown here, so there is no y, only the gutter
-    between two rows of cards, `row_gap` high, whose middle by() puts lines in."""
+    between two rows of cards, `row_gap` high, whose middle by() puts lines in.
 
-    def __init__(self, mode, card_w, cols):
+    `top` and `bottom` are the measured raw room of the outer row margins, which no rule here
+    derives; a geometry built without them answers None for those two lines, which is what a
+    caller with no capacity to enforce needs."""
+
+    def __init__(self, mode, card_w, cols, rows=0, top=None, bottom=None):
         self.w = float(f"{card_w:.0f}")  # --dg-w is written rounded
         self.gap, self.pad_l, self.cols, self.total = mode["gap"], mode["pad_l"], cols, mode["total"]
+        self.pad_r, self.rows = mode["pad_r"], rows
         self.row_gap = mode["row_gap"]
         self.margin = max(8, mode["pad_l"] - 6)
+        self.top_room, self.bottom_room = top, bottom
 
     def left(self, c):
         return self.pad_l + c * (self.w + self.gap)
@@ -74,6 +105,32 @@ class Geometry:
 
     def clamp(self, c, x):
         return min(max(x, self.left(c) + 12), self.right(c) - 12)
+
+    def room(self, axis, line):
+        """The px the lines of one group on this lattice line may spread over, on each side of it,
+        lower coordinate first, with LINE_CLEAR already taken off towards a card and EDGE_CLEAR
+        towards whatever clips or covers them. A negative number says a line on the lattice line
+        itself is already past that bound.
+
+        None where there is no room to state: an odd line, which runs through the cards and is
+        placed against their heights by the script, and an outer row margin this geometry was not
+        given the measurement of."""
+        if line % 2:
+            return None
+        g = line // 2
+        if axis == "v":
+            if g == 0:
+                return (self.pad_l - self.margin - EDGE_CLEAR, self.margin - LINE_CLEAR)
+            if g == self.cols:
+                return (self.margin - LINE_CLEAR, self.pad_r - self.margin - EDGE_CLEAR)
+            return (self.gap / 2 - LINE_CLEAR, self.gap / 2 - LINE_CLEAR)
+        if g in (0, self.rows):
+            raw = self.top_room if g == 0 else self.bottom_room
+            if raw is None:
+                return None
+            lo, hi = (EDGE_CLEAR, LINE_CLEAR) if g == 0 else (LINE_CLEAR, EDGE_CLEAR)
+            return (raw[0] - lo, raw[1] - hi)
+        return (self.row_gap / 2 - LINE_CLEAR, self.row_gap / 2 - LINE_CLEAR)
 
 
 def room_beside(start, side, obstacles, limit):
@@ -505,13 +562,17 @@ def plan(model, mode_name, overrides=None, draft=False):
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
 
+    # every gutter and margin knows its room, so a group of lines too wide for the 8 px pitch
+    # closes up to 6 or 5 rather than reaching over a card edge or out of the grid box
+    top, bottom = margin_room(kind, mode_name)
+    geo = Geometry(mode, card_w, grid_cols, grid_rows, top, bottom)
+    offsets = router.assign_offsets(paths, nodes=frozenset(lat.blocked), room=geo.room)
+    occupied = {rc for nid, rc in cells.items() if nid in by_id}
+
     # where a label goes and how much room it has, from the shape of the route and the
     # pixels template/js/flow.js will use: straight line: at the exit; horizontal second segment: above
     # it, near its end; vertical second segment: beside its middle when that is clear whatever
     # the card heights, else pinned to the first row it passes where the text is clear
-    offsets = router.assign_offsets(paths, nodes=frozenset(lat.blocked))
-    occupied = {rc for nid, rc in cells.items() if nid in by_id}
-    geo = Geometry(mode, card_w, grid_cols)
     label_keys = {}
     placed = []  # (first lattice row, last lattice row, x0, x1) of the labels placed so far
     for e in routed:

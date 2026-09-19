@@ -43,6 +43,11 @@ Test cases (written from the declaration of the change, before the implementatio
     on the lattice, and the page draws none.
 13. "shared-corner", both modes: d -> a and a -> d share a stretch from a through a corner both turn
     at, and part below it; no crossing on the lattice, and the page draws none.
+14. The room of the top and bottom margins, in flow and in swimlane, both modes: a line drawn along
+    each of them keeps the px that diagrams/flow.py's TOP_ROOM and BOTTOM_ROOM claim, from the
+    nearest card edge and from the nearest edge that clips or covers it. The measurement that set
+    those constants is this test, and a change of the CSS padding fails it instead of silently
+    moving lines out of the grid box.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -62,7 +67,7 @@ from unittest import mock
 
 import support
 import render
-from diagrams import router
+from diagrams import flow, router
 from diagrams.flow import LABEL_DROP
 
 KINDS = ("flow", "swimlane", "state", "blocks")
@@ -162,19 +167,46 @@ CASES = {
 # Five or more lines along one row line (docstring case 7).
 SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run", "lower-limit-interior-run")
 
+# Docstring case 14. Two cards per row and two rows, so the outer lattice lines are Y = 0 and
+# Y = 4, with the paths put in by hand: `route` prices a margin above every inner gutter, so no
+# model of its own would draw one, and what is measured is where by() of template/js/flow.js puts
+# such a line — a question about the script, not about the router. Titles stay one line high and
+# the models carry no title, no scenario and no footnote, so nothing stands between the section and
+# the grid box: the narrowest the room ever is.
+MARGIN_PATHS = [[(1, 1), (1, 0), (3, 0), (3, 1)],   # a -> b over the top margin
+                [(1, 3), (1, 4), (3, 4), (3, 3)]]   # c -> d under the bottom margin
+MARGINS = {
+    "margin-flow": ({"kind": "flow", "nodes": [step(i) for i in "abcd"], "grid": ["a b", "c d"],
+                     "edges": ["a -> b", "c -> d"]}, MARGIN_PATHS),
+    "margin-swimlane": ({"kind": "swimlane", "lanes": ["one", "two"],
+                         "groups": {"one": {"label": "Первый", "ramp": "teal"},
+                                    "two": {"label": "Второй", "ramp": "blue"}},
+                         "nodes": [step(i) for i in "abcd"], "grid": ["a b", "c d"],
+                         "edges": ["a -> b", "c -> d"]}, MARGIN_PATHS),
+}
+# Which kind of the tables of diagrams/flow.py each margin model measures.
+MARGIN_KIND = {"margin-flow": "flow", "margin-swimlane": "swimlane"}
+
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
 # the renderer handed to the page; `texts`, in the same order, the [x, y] of the group's label text
 # or null; `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
-# mapped into the svg's own coordinates, the ones `d` is written in.
-PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{}},s=document.querySelector('.dg-svg');"
+# mapped into the svg's own coordinates, the ones `d` is written in; `boxes`, the same for the grid
+# box (`grid`), the section that clips what leaves it (`sec`) and every swimlane header (`heads`),
+# which is what bounds a line drawn along an outer margin.
+PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{},boxes:{heads:[]}},"
+         "s=document.querySelector('.dg-svg');"
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
          "t=g.querySelector('text');o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
          "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y')]:null)});"
          "if(s){var m=s.getScreenCTM().inverse(),q=s.createSVGPoint();"
          "var u=function(x,y){q.x=x;q.y=y;var w=q.matrixTransform(m);return[w.x,w.y]};"
-         "document.querySelectorAll('.dg-grid [data-t]').forEach(function(c){var t=c.getAttribute('data-t'),r;"
-         "if(o.cards[t])return;r=c.getBoundingClientRect();o.cards[t]=u(r.left,r.top).concat(u(r.right,r.bottom))})}"
+         "var b=function(el){var r=el.getBoundingClientRect();return u(r.left,r.top).concat(u(r.right,r.bottom))};"
+         "document.querySelectorAll('.dg-grid [data-t]').forEach(function(c){var t=c.getAttribute('data-t');"
+         "if(!o.cards[t])o.cards[t]=b(c)});"
+         "var gr=document.querySelector('.dg-grid'),sc=document.querySelector('.dg');"
+         "if(gr)o.boxes.grid=b(gr);if(sc)o.boxes.sec=b(sc);"
+         "document.querySelectorAll('.dg-lanehead').forEach(function(h){o.boxes.heads.push(b(h))})}"
          "var pre=document.createElement('pre');pre.id='probe';pre.textContent=JSON.stringify(o);"
          "document.body.appendChild(pre)},800)</script>")
 PROBE_RE = re.compile(r'<pre id="probe">(.*?)</pre>', re.S)
@@ -211,9 +243,11 @@ def flow_like_examples():
     return out
 
 
-def render_page(model, mode, path):
+def render_page(model, mode, path, paths=None):
     """Write the page of `model` in `mode` to `path` through the renderer's own entry points, with
-    the probe appended; returns the layout the page was drawn from."""
+    the probe appended; returns the layout the page was drawn from. With `paths`, the routing of
+    this one page is those lattice paths instead of the router's: everything after routing —
+    offsets, the edge JSON, the script — is the renderer's own."""
     argv = [str(path), "--mode", mode, "--assets", "inline"] + (["--harness"] if mode == "widget" else [])
     args = render.parse_args(argv)
     assets_mode, note = render.resolve_assets(args)
@@ -221,7 +255,12 @@ def render_page(model, mode, path):
         raise HarnessError(f"assets mode {assets_mode!r} instead of inline: {note}")
     model = json.loads(json.dumps(model))  # the planner may annotate the model it is given
     mod = render.KINDS[model["kind"]]
-    out, _, layout = render.produce(model, mod, args, {}, assets_mode)
+    if paths is None:
+        out, _, layout = render.produce(model, mod, args, {}, assets_mode)
+    else:
+        given = [[tuple(pt) for pt in p] for p in paths]
+        with mock.patch.object(router, "route_all", lambda lat, ends, labelled: given):
+            out, _, layout = render.produce(model, mod, args, {}, assets_mode)
     out = out.replace("</body>", PROBE + "</body>", 1) if "</body>" in out else out + PROBE
     path.write_text(out)
     return layout
@@ -427,6 +466,40 @@ def second_run_label_misses(layout, names, lines, texts, cards):
     return misses, checked
 
 
+def margin_runs(layout, lines):
+    """{Y: [pixel y]} of every horizontal run drawn along an outer lattice margin — Y = 0, the top,
+    or Y = 2 * rows, the bottom — matched to its lattice segment."""
+    out = {}
+    last = 2 * layout["grid_rows"]
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if len(path) != len(lines[i]) + 1:
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            if a[1] == b[1] and a[1] in (0, last) and lines[i][k][0] == "h":
+                out.setdefault(a[1], []).append(lines[i][k][1])
+    return out
+
+
+def margin_room(y, top, boxes, cards):
+    """((lower, higher), what bounds the line on the far side from the cards): the raw px a line
+    drawn at pixel `y` along an outer margin keeps on each side, lower coordinate first.
+
+    The cards lie below a top margin and above a bottom one. On the other side stands whatever
+    clips or covers the line: the grid box, the section, which scrolls and so clips what leaves it,
+    or, over a top margin, a swimlane header. The nearest of them is the bound, and a negative
+    number says the line is drawn past it already."""
+    if top:
+        cardward = min(c[1] for c in cards.values()) - y
+        bounds = [("grid box", y - boxes["grid"][1]), ("section", y - boxes["sec"][1])]
+        bounds += [("swimlane header", y - h[3]) for h in boxes["heads"]]
+    else:
+        cardward = y - max(c[3] for c in cards.values())
+        bounds = [("grid box", boxes["grid"][3] - y), ("section", boxes["sec"][3] - y)]
+    name, edgeward = min(bounds, key=lambda b: b[1])
+    return ((edgeward, cardward) if top else (cardward, edgeward)), name
+
+
 def row_order_swaps(layout, names, lines):
     """(swaps, compared): pairs of horizontal runs of different edges on one lattice row line (odd
     Y) whose lattice spans overlap and whose router offsets differ, drawn in the opposite order of
@@ -456,13 +529,15 @@ class BrowserLines(unittest.TestCase):
         root = Path(tmp.name)
         cls.examples = flow_like_examples()
         cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + cls.examples
-        models = cls.models
+        # the margin models are routed by hand, so they stand beside the models the router routed
+        drawn = [(name, model, None) for name, model in cls.models]
+        drawn += [(name, model, paths) for name, (model, paths) in MARGINS.items()]
         jobs, cls.layouts, cls.results = [], {}, {}
-        for name, model in models:
+        for name, model, paths in drawn:
             for mode in MODES:
                 page = root / f"{name}-{mode}.html"
                 try:
-                    cls.layouts[name, mode] = render_page(model, mode, page)
+                    cls.layouts[name, mode] = render_page(model, mode, page, paths)
                 except Exception as exc:  # noqa: BLE001 - reported per case, as a harness error
                     cls.results[name, mode] = HarnessError(f"render failed: {exc!r}")
                     continue
@@ -617,6 +692,33 @@ class BrowserLines(unittest.TestCase):
                     self.assertEqual(len(pixel_crossings(names, lines)), drawn,
                                      f"harness: {name} {mode}: the page draws another number of crossings")
                     self.check_crossings(name, mode)
+
+    def measure_margins(self):
+        """One line per (kind, mode, margin): the room the page shows, what bounds it away from the
+        cards, and the constant diagrams/flow.py carries for it."""
+        out = []
+        for name, kind in sorted(MARGIN_KIND.items()):
+            for mode in MODES:
+                layout, _, lines = self.measured(name, mode)
+                got = self.results[name, mode]
+                found = margin_runs(layout, lines)
+                for where, Y, top in (("top", 0, True), ("bottom", 2 * layout["grid_rows"], False)):
+                    ys = found.get(Y, [])
+                    self.assertEqual(len(ys), 1, f"harness: {name} {mode}: {len(ys)} lines drawn along "
+                                                 f"the {where} margin, one was put there")
+                    room, by = margin_room(ys[0], top, got["boxes"], got["cards"])
+                    table = flow.TOP_ROOM if top else flow.BOTTOM_ROOM
+                    out.append((kind, mode, where, ys[0], room, by, table.get((kind, mode))))
+        return out
+
+    def test_margin_room_matches_the_constants(self):
+        measured = self.measure_margins()
+        shown = "\n".join(f"  {kind:8} {mode:6} {where:6} line at y {y:8.2f}, room "
+                          f"({room[0]:6.2f}, {room[1]:6.2f}) against the {by}, constant {want}"
+                          for kind, mode, where, y, room, by, want in measured)
+        off = [f"{kind} {mode} {where}" for kind, mode, where, _, room, _, want in measured
+               if want is None or max(abs(a - b) for a, b in zip(room, want)) > AXIS_TOL]
+        self.assertEqual(off, [], "the page does not show the room the constants claim:\n" + shown)
 
     def test_examples_found(self):
         self.assertTrue(self.examples, f"no example of kind {', '.join(KINDS)} under {EXAMPLES}")

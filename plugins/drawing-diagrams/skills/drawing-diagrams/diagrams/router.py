@@ -276,7 +276,87 @@ def _runs(path):
     return runs, of_seg
 
 
-def assign_offsets(paths, step=8, nodes=frozenset()):
+PITCHES = (8, 6, 5)  # px between two neighbouring lines of one group, widest first
+
+
+def fits(w, pitch, room):
+    """Does a group of `w` runs at this pitch stay inside `room`? The outermost
+    line of such a group lies (w - 1) * pitch / 2 from the lattice line, and
+    `room` is the usable px on each side of that line — what Geometry.room
+    gives, the clearances already taken off."""
+    return (w - 1) * pitch / 2 <= min(room)
+
+
+def capacity(room):
+    """How many runs a line with this room holds, at the smallest pitch: the
+    widest group `fits` accepts, and 0 where not even a single line does."""
+    return max(0, math.floor(2 * min(room) / PITCHES[-1]) + 1)
+
+
+def _line_groups(runs, nodes):
+    """The groups of runs a line is spread in, as (axis, line, [runs]): the runs on one lattice
+    line that overlap or meet end to end in a gutter, each knowing its path (`i`) and its index in
+    that path (`r`).
+
+    A group of w runs is drawn w slots wide wherever it reaches, whatever its load at any one
+    point, which is why it and not the load is the unit a line's room is spent in. `assign_offsets`
+    and `overfull` both read their groups here, so the width a group is drawn with is the width it
+    is priced at."""
+    items = {}  # (axis, line) -> the runs on that line, each knowing its path and its index in it
+    for i, (rs, _) in enumerate(runs):
+        for r, d in enumerate(rs):
+            items.setdefault((d["axis"], d["line"]), []).append(dict(d, i=i, r=r))
+    out = []
+    for (axis, line), on_line in items.items():
+        on_line.sort(key=lambda d: (d["lo"], d["hi"]))
+
+        def touches_in_gutter(d, reach):
+            # two lines meeting end to end: at a node they simply join it, in a gutter they form a
+            # junction that must be spread apart
+            if d["lo"] != reach:
+                return False
+            pt = (line, reach) if axis == "v" else (reach, line)
+            return pt not in nodes
+
+        # connected groups of overlapping intervals
+        cur, reach = [], None
+        for d in on_line:
+            if cur and (d["lo"] < reach or touches_in_gutter(d, reach)):
+                cur.append(d)
+                reach = max(reach, d["hi"])
+            else:
+                if cur:
+                    out.append((axis, line, cur))
+                cur, reach = [d], d["hi"]
+        if cur:
+            out.append((axis, line, cur))
+    return out
+
+
+def _pitch(w, step, room):
+    """The px between two lines of a group of `w` runs: the first of PITCHES its room takes, the
+    smallest where none does, and `step` where the line has no room to state."""
+    if room is None:
+        return step
+    return next((p for p in PITCHES if fits(w, p, room)), PITCHES[-1])
+
+
+def overfull(paths, nodes, room):
+    """The groups that do not fit on their lattice line even at the smallest
+    pitch, as (axis, line, [path indices], capacity): one index per run of the
+    group, in the order the runs lie along the line, so the list is as long as
+    the group is drawn wide. `room` is a callable (axis, line) -> pair or None,
+    as Geometry.room is; a line with no room to state holds any group."""
+    out = []
+    for axis, line, g in _line_groups([_runs(p) for p in paths], nodes):
+        r = room(axis, line)
+        if r is None or fits(len(g), PITCHES[-1], r):
+            continue
+        out.append((axis, line, [d["i"] for d in g], capacity(r)))
+    return out
+
+
+def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
     """Spread edges that share a line. Returns, per path, a list of (ox, oy)
     pixel offsets for each of its points.
 
@@ -311,7 +391,14 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
     falls to firm and loose and the soft order is the one dropped; a run
     outside the cycle is placed before that with the soft order honoured. So
     it never displaces a firm or a loose order, and that step of the pick
-    order is what the guarantee rests on."""
+    order is what the guarantee rests on.
+
+    `room`, a callable (axis, line) -> pair or None as Geometry.room is, gives
+    the group its pitch: the first of PITCHES that fits the room on the line,
+    the smallest where none does — a group wider than its line holds is drawn
+    as tightly as the lines can be drawn, and `overfull` is what names it.
+    Without `room` every group keeps `step`, which is what schema.plan asks
+    for, and so does a line whose room is not stated."""
     runs = [_runs(p) for p in paths]
 
     def covering(i, axis, line, lo, hi):
@@ -343,95 +430,68 @@ def assign_offsets(paths, step=8, nodes=frozenset()):
                     order[(u, v)] = side * _higher(a, b)
                     order[(v, u)] = -side * _higher(a, b)
 
-    items = {}  # (axis, line) -> the runs on that line, each knowing its path and its index in it
-    for i, (rs, _) in enumerate(runs):
-        for r, d in enumerate(rs):
-            items.setdefault((d["axis"], d["line"]), []).append(dict(d, i=i, r=r))
+    slot = {}   # (path index, run index) -> (slot, width, pitch)
+    for axis, line, g in _line_groups(runs, nodes):
+        pitch = _pitch(len(g), step, room(axis, line) if room is not None else None)
+        if len(g) == 1:
+            slot[(g[0]["i"], g[0]["r"])] = (0, 1, pitch)
+            continue
 
-    slot = {}   # (path index, run index) -> (slot, width)
-    for (axis, line), on_line in items.items():
-        on_line.sort(key=lambda d: (d["lo"], d["hi"]))
+        def pref(d, g=g):
+            # the side the line branches to at the ends that lie inside or on another member
+            sides = []
+            for end, side in (("lo", d["lo_side"]), ("hi", d["hi_side"])):
+                x = d[end]
+                if any(o is not d and o["lo"] <= x <= o["hi"] for o in g) and side:
+                    sides.append(side)
+            if not sides:
+                sides = [x for x in (d["lo_side"], d["hi_side"]) if x]
+            return sum(sides) / len(sides) if sides else 0
 
-        def touches_in_gutter(d, reach):
-            # two lines meeting end to end: at a node they simply join it, in a gutter they form a
-            # junction that must be spread apart
-            if d["lo"] != reach:
-                return False
-            pt = (line, reach) if axis == "v" else (reach, line)
-            return pt not in nodes
+        ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
 
-        # connected groups of overlapping intervals
-        groups, cur, reach = [], [], None
-        for d in on_line:
-            if cur and (d["lo"] < reach or touches_in_gutter(d, reach)):
-                cur.append(d)
-                reach = max(reach, d["hi"])
-            else:
-                if cur:
-                    groups.append(cur)
-                cur, reach = [d], d["hi"]
-        if cur:
-            groups.append(cur)
-        for g in groups:
-            if len(g) == 1:
-                slot[(g[0]["i"], g[0]["r"])] = (0, 1)
-                continue
+        # two runs that meet end to end at a gutter point with their arms there pointing to
+        # opposite sides: the one whose arm points to the lower coordinate takes the lower
+        # slot, so each corner moves towards its own arms and the pair does not cross twice.
+        # They share no stretch, so nothing above says anything about them.
+        soft = {}
+        for u in g:
+            for v in g:
+                if u is v or u["hi"] != v["lo"] or not u["hi_side"] or not v["lo_side"]:
+                    continue
+                if u["hi_side"] == v["lo_side"]:
+                    continue
+                pt = (line, u["hi"]) if axis == "v" else (u["hi"], line)
+                ku, kv = (u["i"], u["r"]), (v["i"], v["r"])
+                if pt in nodes or (ku, kv) in firm or (ku, kv) in loose:
+                    continue
+                soft[(ku, kv)], soft[(kv, ku)] = -u["hi_side"], u["hi_side"]
 
-            def pref(d):
-                # the side the line branches to at the ends that lie inside or on another member
-                sides = []
-                for end, side in (("lo", d["lo_side"]), ("hi", d["hi_side"])):
-                    x = d[end]
-                    if any(o is not d and o["lo"] <= x <= o["hi"] for o in g) and side:
-                        sides.append(side)
-                if not sides:
-                    sides = [x for x in (d["lo_side"], d["hi_side"]) if x]
-                return sum(sides) / len(sides) if sides else 0
+        def free(d, orders, ranked=ranked):
+            # no run of the group still to place has to lie below d
+            return not any(order.get(((o["i"], o["r"]), (d["i"], d["r"]))) == 1
+                           for order in orders for o in ranked)
 
-            ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
-
-            # two runs that meet end to end at a gutter point with their arms there pointing to
-            # opposite sides: the one whose arm points to the lower coordinate takes the lower
-            # slot, so each corner moves towards its own arms and the pair does not cross twice.
-            # They share no stretch, so nothing above says anything about them.
-            soft = {}
-            for u in g:
-                for v in g:
-                    if u is v or u["hi"] != v["lo"] or not u["hi_side"] or not v["lo_side"]:
-                        continue
-                    if u["hi_side"] == v["lo_side"]:
-                        continue
-                    pt = (line, u["hi"]) if axis == "v" else (u["hi"], line)
-                    ku, kv = (u["i"], u["r"]), (v["i"], v["r"])
-                    if pt in nodes or (ku, kv) in firm or (ku, kv) in loose:
-                        continue
-                    soft[(ku, kv)], soft[(kv, ku)] = -u["hi_side"], u["hi_side"]
-
-            def free(d, orders):
-                # no run of the group still to place has to lie below d
-                return not any(order.get(((o["i"], o["r"]), (d["i"], d["r"]))) == 1
-                               for order in orders for o in ranked)
-
-            # the order of shared stretches first, a loose one only where the firm ones allow it
-            # and the end-to-end one only where both do; the ranking places the lines they leave
-            # free and breaks a cycle among them
-            ordered = []
-            while ranked:
-                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose, soft))), None)
-                if n is None:
-                    n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
-                if n is None:
-                    n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
-                ordered.append(ranked.pop(n))
-            for n, d in enumerate(ordered):
-                slot[(d["i"], d["r"])] = (n, len(ordered))
+        # the order of shared stretches first, a loose one only where the firm ones allow it
+        # and the end-to-end one only where both do; the ranking places the lines they leave
+        # free and breaks a cycle among them
+        ordered = []
+        while ranked:
+            n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose, soft))), None)
+            if n is None:
+                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
+            if n is None:
+                n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
+            ordered.append(ranked.pop(n))
+        for n, d in enumerate(ordered):
+            slot[(d["i"], d["r"])] = (n, len(ordered), pitch)
 
     def off(key):
         sw = slot.get(key)
         if sw is None:
             return 0.0
-        n, w = sw
-        return round((n - (w - 1) / 2) * step, 1)
+        n, w, pitch = sw
+        return round((n - (w - 1) / 2) * pitch, 1)
 
     result = []
     for i, p in enumerate(paths):
