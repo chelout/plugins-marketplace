@@ -2,7 +2,7 @@
   "kind": "swimlane",
   "id": "overfull-gutter",
   "title": "Обращение в поддержку",
-  "summary": "Модель, которую проверка отклоняет: между первыми двумя дорожками идёт больше линий, чем помещается в промежуток.",
+  "summary": "Модель, которую проверка отклоняет в режиме widget: между первыми двумя дорожками идёт больше линий, чем помещается в промежуток.",
   "groups": {
     "client": {"label": "клиент", "ramp": "pink"},
     "bot": {"label": "бот", "ramp": "teal"},
@@ -28,7 +28,9 @@
     "zayavka -> ozhidanie",
     "zayavka -> razbor",
     "utochnenie -> otvet",
+    "utochnenie -> peredano",
     "robot -> peredano",
+    "robot -> zayavka",
     "razbor -> otvet",
     "razbor -> utochnenie"
   ]

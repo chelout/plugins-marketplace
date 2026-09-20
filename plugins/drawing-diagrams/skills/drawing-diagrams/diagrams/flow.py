@@ -714,9 +714,10 @@ def plan(model, mode_name, overrides=None, draft=False):
     drawn_rows = max((r for r, _ in placed.values()), default=-1) + 1
     drawn_empty = [r for r in er if r < drawn_rows]
 
-    # every gutter, margin and empty row knows its room, so the router prices a step along a full one
-    # and a group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
-    # card edge or out of the grid box
+    # every gutter, margin and empty row knows its room, so the router prices a step along a full one,
+    # the objective the whole routing is searched against prices the slots a group takes past what its
+    # line holds, and a group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than
+    # reaching over a card edge or out of the grid box
     top, bottom = margin_room(kind, mode_name, footnotes)
     geo = Geometry(mode, card_w, grid_cols, drawn_rows, top, bottom, drawn_empty)
 
@@ -729,7 +730,9 @@ def plan(model, mode_name, overrides=None, draft=False):
     ends = [(router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]])) for e in edges]
     labelled = [bool(e["label"] or e["note"]) for e in edges]
     paths, routed = [], []
-    for e, p in zip(edges, router.route_all(lat, ends, labelled)):
+    # the room goes to the search as it goes to the offsets below: a routing is priced against the
+    # room its groups are drawn in, or the term that counts a full gutter is zero wherever it matters
+    for e, p in zip(edges, router.route_all(lat, ends, labelled, room=geo.room)):
         if p is None:
             layout_errors.append(f"связь {e['a']} -> {e['b']}: нет маршрута, не проходящего сквозь узлы; "
                                  f"освободите ячейку между ними или переставьте узлы")

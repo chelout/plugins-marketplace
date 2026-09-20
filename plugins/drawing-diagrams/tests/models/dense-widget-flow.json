@@ -29,6 +29,7 @@
   ],
   "edges": [
     "retry -> lock",
+    "retry -> done",
     "check -> done",
     "check -> fail",
     "hook -> check",

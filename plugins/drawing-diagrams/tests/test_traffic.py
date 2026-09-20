@@ -130,9 +130,16 @@ class Removing(unittest.TestCase):
 
 
 class RoutesIdentically(unittest.TestCase):
-    """The paths do not move. The reference loop routes with `OldTraffic`, so a difference here is
-    the new class answering differently, and every one of these paths is a diagram that would be
-    drawn differently."""
+    """Criterion C1: the paths do not move when the class does. One routing loop — the reference
+    loop of reference.py, the three passes `flow.plan` routed with before the search — is run twice
+    over one instance, once holding its lines in `OldTraffic` and once in `router.Traffic`, and the
+    two answers are the same paths.
+
+    The loop is the constant of the comparison and the class the variable, which is what makes a
+    difference here the new class answering differently and nothing else; every one of these paths
+    is a diagram that would be drawn differently. `router.route_all` is no party to it: task 12
+    made it the search of spec 5.3, which is another routing on purpose, and it has its own
+    criterion (C3, tests/test_objective.py)."""
 
     def test_it_compares_the_instances_the_criterion_names(self):
         """The criterion names the property test's instances, so a seed or a count of this file's
@@ -146,8 +153,8 @@ class RoutesIdentically(unittest.TestCase):
             ends = ends_of(cells, edges)
             labelled = labels_of(len(ends))
             with self.subTest(cols=cols, rows=rows, edges=len(edges)):
-                self.assertEqual(router.route_all(lat, ends, labelled),
-                                 reference_route_all(lat, ends, labelled))
+                self.assertEqual(reference_route_all(lat, ends, labelled, router.Traffic),
+                                 reference_route_all(lat, ends, labelled, OldTraffic))
 
 
 if __name__ == "__main__":
