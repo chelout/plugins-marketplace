@@ -246,7 +246,8 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   the router now leaves a flow's top margin alone. It is a heuristic of the proposer: the load of a
   unit edge is not the width of a group, so a chain of runs that only meet end to end loads nothing
   and is still drawn two slots wide or more.
-- The guarantee is the check. After the offsets, `router.overfull(paths, nodes, room)` names every
+- The guarantee is the check. With the offsets, and from the same `router.place` call as they come
+  from (the bullet on placing, below), `router.overfull(paths, nodes, room)` names every
   group that does not fit at the smallest pitch — reading its groups, their order and their slots
   from `_spread` as `assign_offsets` does, so the width priced is the width drawn — and
   `flow.overfull_error` turns each into a layout error, which prints the map and which `--draft`
@@ -321,8 +322,8 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `overflow` is recomputed on the lattice lines the old and the new path lie on, which is where the
   groups can have moved and nowhere else.
 - The orchestration is `router.route_all(lat, ends, labelled, room=None, budget=600, passes=8,
-  trace=None)`. The edges go into a canonical order (`_canonical`): Manhattan length first and the
-  **long edges first**, then the two points, then the label, and the model index only between edges
+  trace=None)`. The edges go into a canonical order (`canonical_order`): Manhattan length first and
+  the **long edges first**, then the two points, then the label, and the model index only between edges
   equal in all four — which are one routing problem asked twice. Spec §5.3 gave the key and not the
   direction; long-first is at or under the old loop's Phi on 93 of the 100 instances of criterion C3
   without a room and 97 with one, where short-first reaches 90 and 95, and the long edges are the
@@ -373,10 +374,43 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   and the canonical order, so two runs on one model give identical paths and the same model with
   its `edges` shuffled gives the same route for every (source, target, labelled) — `CanonicalOrder`
   and `TwoCallsAgree` of `tests/test_route_all.py`, five shuffles over seeded instances. It promises
-  nothing beyond the routes: the offsets a group is drawn in, which label of two crossing ones is
-  the one warned about, and the id a section is written under still follow the order the model lists
-  its edges in. An edge with no route is `None` in its own place, takes no part in either start or
-  either descent, and leaves the others where they would be without it (`Unroutable`, same file).
+  nothing beyond the routes and the offsets they are drawn at, which the bullet below added: which
+  label of two crossing ones is the one warned about, and the id a section is written under, still
+  follow the order the model lists its edges in. An edge with no route is `None` in its own place,
+  takes no part in either start or either descent, and leaves the others where they would be without
+  it (`Unroutable`, same file).
+- Placed as priced — the branch gate found it. The width of a group depends on the order the paths
+  are given in: the sorts of `router._line_groups` and `router._order` break their ties by the path's
+  index, and two runs read the order of a stretch they share from the path that comes first.
+  `route_all` priced the canonical order and `flow.plan` drew the model's, so a descent could accept
+  a reroute whose ΔΦ was under zero as priced and over it as drawn, and a group could be drawn over
+  the capacity of its line with no message to name it. On instance 202 of
+  `instances.small(61279, 203)` planned as a flow widget, nine of its edges, the search ends at
+  Phi 314 with every group inside its line; those same nine paths in the model's order cost 334 and
+  put six lines in the gutter between the first two columns, where five fit.
+  `router.place(ends, labelled, paths, nodes, room)` is now the one place a routing is drawn from:
+  it puts the paths in `router.canonical_order` — public for that reason — asks `assign_offsets` and
+  `overfull` in that order, and answers per model position, so the width drawn is the width priced
+  and the capacity error still names the edges in the model's own order. It costs nothing in the
+  shipped output: all 14 renders stay byte-identical, and the dense median of
+  `tools/bench_routing.py`, which now times `place` and so the capacity check as well as the
+  offsets, read 201.2 ms before the change and between 201 and 207 over five runs after it, against
+  a budget of 300 — the check it now also times costs 0.6 ms of that median on its own, and five
+  runs of one tree differ by more than the rest of it. What it buys is §5.4's promise carried past
+  the routes: a model with its `edges` shuffled is drawn identically too, which
+  `OffsetsFollowTheOrderTheSearchPricedIn` of `tests/test_route_all.py` holds through `flow.plan`
+  over five shuffles of twelve seeded models — 15 of those 60 shuffles drew an offset elsewhere
+  before this — while `PlacedAsPriced` of
+  `tests/test_objective.py` holds the total the search ends at equal to a whole Phi of the placement
+  over the hundred instances of criterion C3 and reads the gate's own instance as a named case. The
+  order the model lists two edges in stops deciding which of them is drawn above, or on the side a
+  label's text stands: that is now the order the search priced them in, the lower source point
+  first, and the two fixtures of `tests/test_label_lines.py` that stood on the old reading are
+  written from the new one — `SidewaysLabel.test_a_straight_line_back_above_the_labels_own_line_is_a_warning`
+  takes both readings from the two mirrored grids and asserts that the list no longer decides, and
+  `StraightExitLabel.test_a_line_through_the_gutter_past_the_label_is_a_warning` gets its passing
+  line from further up the column, over a free cell, since of two lines between the same two cards
+  the one drawn on the text's side is never the exit up whose label it is.
 - `tests/reference.py` is the only home of the loop the renderer routed with before — one pass with
   accumulating traffic and two rip-up passes. `route_all` is no longer that loop, so the identity
   test that held them equal is gone; what replaced it is Phi against the loop on the hundred seeded

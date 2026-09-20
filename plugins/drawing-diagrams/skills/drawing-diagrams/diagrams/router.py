@@ -702,7 +702,16 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
     is drawn as tightly as the lines can be drawn, and `overfull` is what names
     it.
     Without `room` every group keeps `step`, which is what schema.plan asks
-    for, and so does a line whose room is not stated."""
+    for, and so does a line whose room is not stated.
+
+    The slots depend on the order the paths are given in: the groups of a
+    line are formed from the runs in that order, the sorts that form and rank
+    them break their ties by the path's index, and two runs read the order of
+    a stretch they share from the path that comes first. So a caller that
+    priced its paths with `route_all`, which reads the same groups through
+    `overfull`, hands them here through `place`, which gives them in the
+    order they were priced in; anything else may draw a group in more slots
+    than the price it was chosen by."""
     runs = [_runs(p) for p in paths]
     slot = {}   # (path index, run index) -> (slot, width, pitch)
     for axis, line, _, slots, width in _spread(paths, runs, nodes):
@@ -732,6 +741,39 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
             pts.append((here.get("v", 0.0), here.get("h", 0.0)))
         result.append(pts)
     return result
+
+
+# A routing drawn the way it was priced: the offsets of every path and the groups over the capacity
+# of their line, both per position in the list of paths the caller holds.
+Placed = collections.namedtuple("Placed", "offsets overfull")
+
+
+def place(ends, labelled, paths, nodes=frozenset(), room=None):
+    """Draw a routing in the order `route_all` priced it in, and answer in the caller's own order.
+
+    `ends`, `labelled` and `paths` are one entry each per edge that has a route, in the order the
+    caller holds them — a model's order, with the edges that route nowhere already dropped. `nodes`
+    and `room` are `assign_offsets`' and `overfull`'s. Returns (offsets, overfull): one list of
+    (ox, oy) per path in its own place, and the groups past the capacity of their line as `overfull`
+    gives them, their path indices naming places in `paths`. With no `room` no line states a
+    capacity and no group can be past one, so the second is empty.
+
+    The width of a group depends on the order its paths are given in (assign_offsets), and the
+    search prices the canonical order (canonical_order). A routing priced in one order and drawn in
+    another is drawn in slots nothing paid for: the search can accept a reroute whose ΔΦ is negative
+    as priced and positive as drawn, and a group can be drawn over the capacity of its line with no
+    message to name it. So the paths go to `assign_offsets` and `overfull` in the order they were
+    priced in, and the answers come back in the order the caller asked in."""
+    order = canonical_order(ends, labelled)
+    as_priced = [paths[i] for i in order]
+    spread = assign_offsets(as_priced, nodes=nodes, room=room)
+    offsets = [None] * len(paths)
+    for n, i in enumerate(order):
+        offsets[i] = spread[n]
+    groups = [] if room is None else [(axis, line, width, [order[n] for n in idx], cap)
+                                      for axis, line, width, idx, cap in
+                                      overfull(as_priced, nodes, room)]
+    return Placed(offsets, groups)
 
 
 def crossings(paths):
@@ -971,13 +1013,14 @@ def route_all(lat, ends, labelled, room=None, budget=BUDGET, passes=PASSES, trac
     is — what Phi reads the capacity of a lattice line from, and without which the overflow term of
     spec 5.2 is zero everywhere.
 
-    Spec 5.3. The edges are put in a canonical order (_canonical), so the answer does not depend on
-    the order the model lists them in. Two routings are built from it and both are always
-    completed: one greedy, where early lines take the easy exits and late ones detour, and one with
-    every edge routed alone, which starts from every line's own best and pays for all the conflicts
-    at once. From each a descent — every edge in turn taken out, routed again against the rest, and
-    the new path kept only where ΔΦ is under zero — until a pass changes nothing or `passes` run
-    out.
+    Spec 5.3. The edges are put in a canonical order (canonical_order), so the answer does not
+    depend on the order the model lists them in — and neither does the drawing, which `place` puts
+    in that same order, because what a group costs depends on the order its paths are given in.
+    Two routings are built from it and both are always completed: one greedy, where early lines take
+    the easy exits and late ones detour, and one with every edge routed alone, which starts from
+    every line's own best and pays for all the conflicts at once. From each a descent — every edge
+    in turn taken out, routed again against the rest, and the new path kept only where ΔΦ is under
+    zero — until a pass changes nothing or `passes` run out.
 
     The lower Phi wins; on a tie the fewer crossings, then the lower sum of `own`, which is the
     routing whose lines are each nearer their own best, and the first start only when all three
@@ -1004,7 +1047,7 @@ def route_all(lat, ends, labelled, room=None, budget=BUDGET, passes=PASSES, trac
 
     An edge with no route is None in both starts and takes no part in either descent: no traffic,
     no term of Phi, and the others route as if it had never been asked for."""
-    order = _canonical(ends, labelled)
+    order = canonical_order(ends, labelled)
     nodes = frozenset(lat.blocked)
     best, left = None, budget
     for start, paths in enumerate((_greedy(lat, ends, labelled, order),
@@ -1032,11 +1075,12 @@ def _crossings(paths):
     return crossings([p for p in paths if p is not None])
 
 
-def _canonical(ends, labelled):
+def canonical_order(ends, labelled):
     """The order the search takes the edges in (spec 5.3): the Manhattan distance between the two
     points, then the points themselves, then whether the edge is labelled, and the model index only
     between edges equal in all four — which are one routing problem asked twice. So a model that
-    lists its edges in another order routes the same way.
+    lists its edges in another order routes the same way, and — through `place`, which draws a
+    routing in the order it was priced in — is drawn the same way too.
 
     The distance runs the long way first. Spec 5.3 states the key and not the direction, and the
     long edges are the ones with somewhere to go: placed first they take the gutters they need and

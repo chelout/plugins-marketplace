@@ -154,9 +154,11 @@ def geometry_of(config, cols, rows, empty):
 
 def plan_instance(config, cols, cells, edges):
     """One instance planned as `flow.plan` plans a model: the lattice ends at the last occupied row,
-    the rows of that extent without a card are the geometry's empty ones, and every lattice line
-    states what `router.capacity` makes of its room. Returns the geometry, the paths of the edges
-    that have a route, the points the cards sit on, the drawn extent and its empty rows."""
+    the rows of that extent without a card are the geometry's empty ones, every lattice line states
+    what `router.capacity` makes of its room, and the paths that have a route are placed through
+    `router.place`, which draws them in the order the search priced them in. Returns the geometry,
+    those paths, the points the cards sit on, the drawn extent, its empty rows, the offsets the
+    paths are drawn at and the groups the capacity check refuses."""
     used = {r for r, _ in cells.values()}
     extent = max(used) + 1
     empty = [r for r in range(extent) if r not in used]
@@ -168,8 +170,13 @@ def plan_instance(config, cols, cells, edges):
 
     lat = router.Lattice(cols, extent, cells, capacity=line_capacity)
     ends = [(router.Lattice.point(*cells[a]), router.Lattice.point(*cells[b])) for a, b in edges]
-    paths = [p for p in router.route_all(lat, ends, labelled_like(len(ends))) if p is not None]
-    return geo, paths, frozenset(lat.blocked), extent, empty
+    labelled = labelled_like(len(ends))
+    found = [(end, lab, p) for end, lab, p
+             in zip(ends, labelled, router.route_all(lat, ends, labelled)) if p is not None]
+    paths, nodes = [p for _, _, p in found], frozenset(lat.blocked)
+    offsets, over = router.place([end for end, _, _ in found], [lab for _, lab, _ in found],
+                                 paths, nodes, geo.room)
+    return geo, paths, nodes, extent, empty, offsets, over
 
 
 def room_check(geo, paths, offsets, over):
@@ -204,9 +211,7 @@ def planned_survey():
     out = []
     for name, (cols, _, cells, edges) in planned_population():
         for config in CONFIGS:
-            geo, paths, nodes, extent, empty = plan_instance(config, cols, cells, edges)
-            offs = router.assign_offsets(paths, nodes=nodes, room=geo.room)
-            over = router.overfull(paths, nodes, geo.room)
+            geo, paths, nodes, extent, empty, offs, over = plan_instance(config, cols, cells, edges)
             checked, spread, beyond = room_check(geo, paths, offs, over)
             out.append(Planned(name, config, cols, extent, empty, paths, nodes, offs,
                                router.drawn_crossings(paths, offs, nodes), router.crossings(paths),

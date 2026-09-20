@@ -20,9 +20,10 @@ The last classes are the search that spends the arithmetic (spec 5.3, criterion 
 `route_all` returns is held against the loop of `tests/reference.py`, which is the routing the
 renderer had before it, by Phi on a hundred seeded instances and by crossings on the shipped
 examples; Phi is held to falling strictly across the changes the descent records; the tie of two
-descents that end at one Phi is read on the shipped model the rule for it was amended for; and a
-model whose plan refuses a group is routed through `flow.plan` itself, where the overflow term is
-the one the production routing has to be able to see at all.
+descents that end at one Phi is read on the shipped model the rule for it was amended for; the
+routing that comes back is held to being drawn in the order it was priced in; and a model whose plan
+refuses a group is routed through `flow.plan` itself, where the overflow term is the one the
+production routing has to be able to see at all.
 """
 import collections
 import itertools
@@ -89,6 +90,17 @@ TIE_EDGE = "none -> approved"
 # outer two, which no gutter and no margin of a page holds.
 GATE = {"kind": "flow", "nodes": [{"id": nid, "title": nid.upper()} for nid in "abc"],
         "grid": [". . .", "a b c"], "edges": ["a -> c"] * 7}
+
+# The routing the finding G6 of the branch gate is proved on: instance PLACED_AT of
+# `instances.small(*PLACED_SEED)`, the edges PLACED_EDGES of it with the labels the model gives
+# them, planned as a flow widget. Its search ends at PLACED_PHI with no group over the capacity of
+# its line; the same routing drawn in the order the model lists its edges in costs 334 and puts six
+# lines in the gutter between the first two columns, where five fit.
+PLACED_SEED = (61279, 203)
+PLACED_AT = 202
+PLACED_EDGES = (0, 1, 3, 9, 15, 17, 19, 20, 21)
+PLACED_CONFIG = ("flow", "widget", ())
+PLACED_PHI = 314
 
 
 def ends_of(cells, edges):
@@ -180,12 +192,15 @@ Routed = collections.namedtuple("Routed", "name lat room ends labelled paths nod
 
 
 def routed(name, lat, ends, labelled, room):
-    found = [(e, lab, p) for e, lab, p in zip(ends, labelled, router.route_all(lat, ends, labelled))
-             if p is not None]
-    paths, labels = [p for _, _, p in found], [lab for _, lab, _ in found]
-    return Routed(name, lat, room, [e for e, _, _ in found], labels, paths,
-                  frozenset(lat.blocked),
-                  [router.describe(lat, p, lab) for p, lab in zip(paths, labels)])
+    """One routed diagram, its edges in the order `router.place` places them — the order the search
+    priced them in, which is the order `flow.plan` draws them in and the one the width of a group,
+    and so the overflow term of Phi, is read in. An edge with no route is dropped, as a draft plan
+    drops it."""
+    paths = router.route_all(lat, ends, labelled)
+    found = [i for i in router.canonical_order(ends, labelled) if paths[i] is not None]
+    return Routed(name, lat, room, [ends[i] for i in found], [labelled[i] for i in found],
+                  [paths[i] for i in found], frozenset(lat.blocked),
+                  [router.describe(lat, paths[i], labelled[i]) for i in found])
 
 
 def plain_states():
@@ -280,15 +295,51 @@ def touched_lines(case):
             for axis, line, _, _ in router.segments(p)}
 
 
-def infos_of(lat, paths, labelled):
-    """The descriptions of a routing as `route_all` returns one: the edges with no route are no
-    part of it, exactly as a draft plan drops them."""
-    return [router.describe(lat, p, lab) for p, lab in zip(paths, labelled) if p is not None]
+def infos_of(lat, ends, labelled, paths):
+    """The descriptions of a routing as `route_all` returns one, in the order `router.place` places
+    it: the edges with no route are no part of it, exactly as a draft plan drops them, and the rest
+    follow the order the search priced them in, so a whole Phi of them is the price of what
+    `flow.plan` draws."""
+    return [router.describe(lat, paths[i], labelled[i])
+            for i in router.canonical_order(ends, labelled) if paths[i] is not None]
 
 
 # One instance measured: Phi of what the search returned, Phi of what the loop of reference.py
 # returned on the same lattice and with the same room, and what that routing overflows.
 Measured = collections.namedtuple("Measured", "name got ref overflow lines")
+
+# One instance placed: a whole Phi of the routing that came back, over the paths in the order they
+# are drawn in, against the totals the two descents wrote to the trace and which of them wrote.
+Placement = collections.namedtuple("Placement", "name whole least starts")
+
+
+def gate_routing():
+    """The routing the finding G6 is proved on: the instance and the edges the gate kept, on the
+    lattice and with the room `flow.plan` states for a flow widget. Returns everything a placement
+    takes, and the trace the search wrote while it found it."""
+    cols, _, cells, edges = list(instances.small(*PLACED_SEED))[PLACED_AT]
+    kept = [edges[i] for i in PLACED_EDGES]
+    labels = labelled_like(len(edges))
+    geo, lat = planned_lattice(PLACED_CONFIG, cols, cells)
+    ends, labelled = ends_of(cells, kept), [labels[i] for i in PLACED_EDGES]
+    trace = []
+    paths = router.route_all(lat, ends, labelled, room=geo.room, trace=trace)
+    return geo, lat, ends, labelled, paths, trace
+
+
+def placements():
+    """Every instance of criterion C3 with the room and the labels production routes with, routed
+    once: a whole Phi of the routing that came back over the paths in the order they are drawn in,
+    the lowest total either descent wrote to the trace, and the starts that wrote one."""
+    out = []
+    for name, lat, ends, labelled, room in descent_states(True, with_labels=True):
+        trace = []
+        paths = router.route_all(lat, ends, labelled, room=room, trace=trace)
+        out.append(Placement(name, router.phi(infos_of(lat, ends, labelled, paths),
+                                           frozenset(lat.blocked), room),
+                          min((change.phi for change in trace), default=None),
+                          {change.start for change in trace}))
+    return out
 
 
 def descent_states(with_room, with_labels=False):
@@ -319,8 +370,8 @@ def measured(with_room, with_labels=False):
     out = []
     for name, lat, ends, labelled, room in descent_states(with_room, with_labels):
         nodes = frozenset(lat.blocked)
-        got = infos_of(lat, router.route_all(lat, ends, labelled, room=room), labelled)
-        ref = infos_of(lat, reference_route_all(lat, ends, labelled), labelled)
+        got = infos_of(lat, ends, labelled, router.route_all(lat, ends, labelled, room=room))
+        ref = infos_of(lat, ends, labelled, reference_route_all(lat, ends, labelled))
         out.append(Measured(name, router.phi(got, nodes, room), router.phi(ref, nodes, room),
                             router.overflow(got, nodes, room), len(got)))
     return out
@@ -622,7 +673,7 @@ class PhiFallsAcrossTheTrace(unittest.TestCase):
             name, lat, ends, labelled, room = state
             trace = []
             got = router.route_all(lat, ends, labelled, room=room, trace=trace)
-            cls.traced.append((name, trace, router.phi(infos_of(lat, got, labelled),
+            cls.traced.append((name, trace, router.phi(infos_of(lat, ends, labelled, got),
                                                        frozenset(lat.blocked), room)))
 
     def test_every_accepted_change_lowers_phi_by_what_it_says(self):
@@ -718,6 +769,66 @@ class TheTieKeepsTheLabelOfTheShippedExample(unittest.TestCase):
                                                      "this model, so the rule is not what decides")
 
 
+class PlacedAsPriced(unittest.TestCase):
+    """Finding G6 of the branch gate: a routing is drawn in the order it was priced in.
+
+    The slots a group takes depend on the order the paths are given in — the sorts of
+    `_line_groups` and `_order` break their ties by the path's index, and two runs read the order of
+    a stretch they share from the path that comes first — so a routing priced in one order and drawn
+    in another can be drawn in more slots than the search ever paid for, over the capacity of a line
+    with no message to name it. `router.place` is the one place that draws a routing the way
+    `route_all` priced it, and `flow.plan` draws through it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.placed = placements()
+
+    def test_the_total_the_search_ends_at_is_a_whole_phi_of_the_placement(self):
+        """Every accepted change writes the total it leaves to the trace, so the last one of a
+        descent is the total that descent ended at, and the lower of the two is what `route_all`
+        returns. A whole Phi of the routing that came back, recomputed over the paths in the order
+        they are placed in, is that total: the price the search read and the picture the planner
+        draws are one number. Where a descent accepted nothing it never wrote the total it ended
+        at, and the trace holds the other one alone, which the answer is at or under."""
+        for row in self.placed:
+            with self.subTest(instance=row.name):
+                if row.starts == {0, 1}:
+                    self.assertEqual(row.whole, row.least)
+                else:
+                    self.assertLessEqual(row.whole, row.least)
+
+    def test_the_gates_instance_draws_no_group_the_search_did_not_price(self):
+        """The instance of the finding, as a named case through the placing function: the search
+        ends at PLACED_PHI with no group over the capacity of its line, and what is drawn is that
+        routing. Placed in the order the model lists its edges in instead — which is what
+        `flow.plan` did — the same nine paths cost 334 and put six lines in the gutter between the
+        first two columns, where five fit."""
+        geo, lat, ends, labelled, paths, trace = gate_routing()
+        nodes = frozenset(lat.blocked)
+        least = min(change.phi for change in trace)
+        self.assertEqual(least, PLACED_PHI, "harness: the gate's instance no longer routes to the "
+                                            "Phi the finding recorded, so the case reads another "
+                                            "routing")
+        offsets, over = router.place(ends, labelled, paths, nodes, geo.room)
+        self.assertEqual(len(offsets), len(paths), "one list of offsets per path, in its own place")
+        self.assertEqual(over, [], "a group is drawn past the capacity of its line where the search "
+                                   "priced none")
+        self.assertEqual(router.phi(infos_of(lat, ends, labelled, paths), nodes, geo.room), least)
+
+    def test_the_instances_exercise_the_placement(self):
+        """What the population has to hold for the first test to read anything: the instances
+        criterion C3 names, a trace on every one of them, and both descents writing the total they
+        end at on almost all of them, since that is where the equality is read rather than the
+        inequality."""
+        self.assertEqual(len(self.placed), DESCENT_SMALL[1] + DESCENT_DENSE[1])
+        empty = [row.name for row in self.placed if not row.starts]
+        self.assertEqual(empty, [], "harness: an instance whose descents accepted nothing")
+        both = [row for row in self.placed if row.starts == {0, 1}]
+        self.assertGreater(len(both), 9 * len(self.placed) // 10,
+                           "harness: too few instances have both descents writing the total they "
+                           "ended at, so the equality is read on almost nothing")
+
+
 class ProductionRoutingSeesTheOverflow(unittest.TestCase):
     """Finding G1 of the plan gate: `flow.plan` passes `Geometry.room` to `route_all` as it already
     passes it to `assign_offsets`. Without that the production routing would price `overflow` at
@@ -737,8 +848,8 @@ class ProductionRoutingSeesTheOverflow(unittest.TestCase):
                 self.assertIsNotNone(room, "flow.plan states the room it routes against")
                 nodes = frozenset(lat.blocked)
                 start = router.route_all(lat, ends, labelled, room=room, budget=0)
-                before = router.overflow(infos_of(lat, start, labelled), nodes, room)
-                after = router.overflow(infos_of(lat, got, labelled), nodes, room)
+                before = router.overflow(infos_of(lat, ends, labelled, start), nodes, room)
+                after = router.overflow(infos_of(lat, ends, labelled, got), nodes, room)
                 self.assertLessEqual(after, before)
                 if before:
                     seen += 1

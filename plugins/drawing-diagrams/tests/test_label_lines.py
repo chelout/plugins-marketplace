@@ -108,11 +108,17 @@ class SidewaysLabel(unittest.TestCase):
     # a larger offset passes under it, whether the row's middle lies above or below that line
 
     def test_a_straight_line_back_above_the_labels_own_line_is_a_warning(self):
-        # c -> b? runs straight back between the same two cards, 8 px from b? -> c: the one listed
-        # first lies above
-        for grid in ABOVE:
-            for edges, own_oy, back_oy, warned in ((["c -> b?"] + EDGES, 4.0, -4.0, True),
-                                                   (EDGES + ["c -> b?"], -4.0, 4.0, False)):
+        # c -> b? runs straight back between the same two cards, 8 px from b? -> c. The two share
+        # the whole of that stretch, so which of them lies above is the order they are placed in,
+        # and that is the order the search priced them in: between two edges of one length the
+        # lower source point comes first and is drawn above, so it is the grid that decides and not
+        # the order the model lists the two edges in. The two grids are one another mirrored — b?
+        # stands in the left column of the first and in the right column of the second — and each
+        # of them is read with the back edge listed first and listed last, which is the premise
+        # that the list does not decide.
+        for grid, own_oy, back_oy, warned in ((ABOVE[0], -4.0, 4.0, False),
+                                              (ABOVE[1], 4.0, -4.0, True)):
+            for edges in (["c -> b?"] + EDGES, EDGES + ["c -> b?"]):
                 for mode in ("widget", "page"):
                     with self.subTest(grid=grid, first=edges[0], mode=mode):
                         layout, warnings = flow.plan(loop_model(grid, edges), mode)
@@ -264,15 +270,25 @@ class StraightExitLabel(ExitLabelCase):
                                                         f"ляжет на другую линию"), found)
 
     def test_a_line_through_the_gutter_past_the_label_is_a_warning(self):
-        # b -> a? runs down beside a? -> b, from b's bottom edge to a?'s top edge: it passes the gutter
-        # the text stands in from one side to the other
-        model = exit_model(["c", "b", "a?"], ["c -> a?", "a? -> c : да", "a? -> b : да", "b -> a?"])
+        # c -> a? comes back into a?'s column over the free cell above it and runs down beside
+        # a? -> b into a?'s top edge: from the gutter over that cell (row - 2) to a?'s own point
+        # (row + 1), so it passes the gutter the text stands in from one side to the other, where
+        # the line of the case above turns in that gutter and stops there.
+        #
+        # Which of two lines in one column is drawn on the side the text stands on follows the
+        # order they were placed in, and of two lines between the same two cards that is the one
+        # leaving the upper card — never the exit up whose label this is. So the line past the
+        # label comes from further up the column, over the free cell b leaves above a?, and
+        # e -> a? is what takes the side entry it would otherwise come in by.
+        model = exit_model(["c .", "b .", ". e", "a? f"],
+                           ["c -> a?", "a? -> c : да", "a? -> b : да", "e -> a?", "e -> f"],
+                           terminals=("b", "f"))
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
                 sa, row, near = self.near_label(layout, ("a?", "b"))
                 self.assertEqual(sa, "T")
-                self.assertEqual(near, [(("b", "a?"), "v", row - 1, row + 1)])
+                self.assertEqual(near, [(("c", "a?"), "v", row - 2, row + 1)])
                 found = self.label_warnings(warnings, ("a?", "b"))
                 self.assertEqual(len(found), 1, warnings)
                 self.assertTrue(found[0].startswith("связь a? -> b: подпись 'да' у выхода вверх ляжет на другую линию"),

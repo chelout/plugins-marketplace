@@ -6,16 +6,21 @@ back with a path, an edge with no route is None in its own place and takes no pa
 two routings of equal Phi are told apart by their crossings and then by the sum of `own`, before the
 start they came from.
 
+What the search priced is also what gets drawn, so the promise reaches the offsets: a model planned
+through `flow.plan` with its `edges` shuffled is drawn the way it was drawn before, and that reading
+is here rather than with the objective because it is the same promise as the routes'.
+
 The identity with the loop of `tests/reference.py` went with this task: `route_all` is no longer
 that loop, and what replaced the comparison is Phi against it in `tests/test_objective.py`.
 """
+import json
 import random
 import unittest
 from unittest import mock
 
 import support  # noqa: F401
 import instances
-from diagrams import router
+from diagrams import flow, router
 
 # The instances the order and the determinism are checked on: a few of each generator, because every
 # one of them is routed six times over.
@@ -79,6 +84,27 @@ def shuffled_runs():
         yield cols, rows, cells, edges
 
 
+def model_of(cols, rows, cells, edges):
+    """An instance as a flow model: a card per node in its own cell, an edge per pair in the order
+    the instance lists them, and the label of every third of them, as `labels_of` labels an
+    instance. A label travels with its edge, so a shuffle of the list moves the edges and not which
+    of them are labelled."""
+    at = {rc: nid for nid, rc in cells.items()}
+    labelled = labels_of(len(edges))
+    return {"kind": "flow",
+            "grid": [" ".join(at.get((r, c), ".") for c in range(cols)) for r in range(rows)],
+            "nodes": [{"id": nid, "title": nid.upper()} for nid in sorted(cells)],
+            "edges": [f"{a} -> {b}" + (" : да" if labelled[k] else "")
+                      for k, (a, b) in enumerate(edges)]}
+
+
+def shuffle_of(model, seed):
+    """The model with its `edges` shuffled, as an author might have listed them."""
+    mixed = dict(model, edges=list(model["edges"]))
+    random.Random(seed).shuffle(mixed["edges"])
+    return mixed
+
+
 def table_route(first, second):
     """`router.route` replaced by a table of paths per edge: `second`'s for a call given no traffic
     at all, which is the second start and nothing else (`_alone`), and `first`'s for every other
@@ -122,6 +148,45 @@ class CanonicalOrder(unittest.TestCase):
                 with self.subTest(cols=cols, rows=rows, edges=len(edges), seed=seed):
                     got = router.route_all(lat, mixed_ends, mixed_labels)
                     self.assertEqual(by_edge(mixed_ends, mixed_labels, got), want)
+        self.assertGreater(seen, 100, "harness: too few edges were ever shuffled")
+
+
+class OffsetsFollowTheOrderTheSearchPricedIn(unittest.TestCase):
+    """Spec 5.4 as amended for finding G6: the offsets follow the canonical order too, so the same
+    model with its `edges` shuffled is drawn exactly as it was — the same route and the same offsets
+    for every (source, target, labelled). The width of a group depends on the order its paths are
+    given in, and `flow.plan` places through `router.place`, which gives them in the order the
+    search priced them in; before that they were placed in the model's order and a shuffle moved
+    them.
+
+    Read through `flow.plan` rather than through `place`, because the promise is the planner's: what
+    an author reorders is the model."""
+
+    MODE = "widget"
+
+    def drawn(self, model):
+        """The paths `flow.plan` draws with the offsets it draws them at, per (source, target,
+        labelled). The plan is a draft, so a model whose capacity check refuses a group is drawn
+        rather than raised. Two edges equal in all three keys are one routing problem, and which of
+        them takes which of the paths is the model's order, so what is compared is the multiset."""
+        layout, _ = flow.plan(json.loads(json.dumps(model)), self.MODE, draft=True)
+        out = {}
+        for e in layout["edges"]:
+            out.setdefault((e["a"], e["b"], bool(e["label"])), []).append(e["path"])
+        return {key: sorted(map(repr, found)) for key, found in out.items()}
+
+    def test_five_shuffles_draw_every_edge_where_the_model_order_did(self):
+        seen = 0
+        for instance in shuffled_runs():
+            model = model_of(*instance)
+            want = self.drawn(model)
+            seen += len(model["edges"])
+            self.assertEqual(len(want), len(model["edges"]),
+                             "harness: this instance has two edges of one routing problem, so a "
+                             "shuffle may hand them each other's path and offsets")
+            for seed in SEEDS:
+                with self.subTest(grid=tuple(model["grid"]), seed=seed):
+                    self.assertEqual(self.drawn(shuffle_of(model, seed)), want)
         self.assertGreater(seen, 100, "harness: too few edges were ever shuffled")
 
 
