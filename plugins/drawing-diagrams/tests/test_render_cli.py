@@ -1,5 +1,7 @@
+import copy
 import io
 import json
+import re
 import statistics
 import tempfile
 import unittest
@@ -9,7 +11,7 @@ from unittest import mock
 
 import support
 import render
-from diagrams import assets
+from diagrams import advice, assets, flow
 
 REF = "c" * 40
 GROUPS = {"g": {"label": "g", "ramp": "teal"}}
@@ -43,6 +45,57 @@ MODELS = Path(__file__).resolve().parent / "models"
 # A swimlane whose first two lanes have four lines in the gutter between them and room for three.
 OVERFULL = MODELS / "overfull-gutter.json"
 OVERFULL_MESSAGE = r"между столбцами \d+ и \d+ линий \d+, помещается \d+: "
+
+# --- the advice of spec 6, printed on stderr by `render.main`
+#
+# A flow whose grid crosses three lines — the count `flow.plan` warns at, which is what asks for
+# the advice — and which the search improves in two moves, so the block carries a numbered list and
+# not a single line. Its ids are the ones spec 6's own example moves.
+CROSSED_TITLES = {"start": "Заявка", "check": "Проверка", "wait": "Ожидание", "retry": "Повтор",
+                  "declined": "Отказ", "done": "Архив"}
+CROSSED = {"kind": "flow", "id": "crossed", "groups": GROUPS,
+           "nodes": [{"id": nid, "group": "g", "title": title,
+                      "kind": "terminal" if nid in ("start", "done") else "step"}
+                     for nid, title in CROSSED_TITLES.items()],
+           "grid": ["start  .         .",
+                    "check  wait      retry",
+                    "done   declined  ."],
+           "edges": ["start -> check", "start -> wait", "start -> declined",
+                     "check -> retry", "check -> declined", "wait -> declined",
+                     "retry -> done", "declined -> done"]}
+CROSSED_CROSSINGS = 3
+# One column, every card joined downward to cards below it: a swap would turn one of those edges
+# upward, which the rules of the advice forbid, and there is no empty cell to carry a card into. So
+# the model crosses three times, the warning is printed — and the search has nothing to offer.
+NO_MOVE = {"kind": "flow", "id": "no_move", "groups": GROUPS,
+           "nodes": [{"id": nid, "group": "g", "title": nid.upper(),
+                      "kind": "terminal" if nid == "f" else "step"} for nid in "abcdef"],
+           "grid": list("abcdef"),
+           "edges": ["a -> b", "b -> c", "c -> d", "d -> e", "e -> f",
+                     "a -> c", "a -> d", "b -> d", "b -> f", "c -> f"]}
+# An example the search does find a move on and the renderer must still say nothing about: its plan
+# crosses nothing, so nothing was asked of it. `test_a_model_without_the_trigger_is_not_advised`
+# asserts that premise rather than assuming it.
+QUIET = support.SKILL / "examples" / "kyc-trace.json"
+HEADLINE = re.compile(r"^совет: (?P<prefix>.*?)(?P<term>пересечений|лишних линий|длина линий) "
+                      r"(?P<before>\d+) → (?P<after>\d+) за (?P<moves>\d+) ход(?:а|ов)? "
+                      r"\(проверено трассировкой\)$")
+STEP = re.compile(r"^  (?P<n>\d+)\. (?P<what>.+): (?P<before>\d+) → (?P<after>\d+)$")
+
+
+def advice_blocks(err):
+    """Every advice block in a stderr, each as its list of lines: the headline, the numbered moves,
+    `grid:` and the rows under it. The first line that is neither indented nor `grid:` ends one."""
+    blocks, block = [], None
+    for line in err.splitlines():
+        if line.startswith("совет:"):
+            block = [line]
+            blocks.append(block)
+        elif block is not None and (line == "grid:" or line.startswith("  ")):
+            block.append(line)
+        else:
+            block = None
+    return blocks
 
 
 class RenderCli(unittest.TestCase):
@@ -105,6 +158,9 @@ class RenderCli(unittest.TestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("заголовок", err)
         self.assertNotIn("пересечений линий", err)
+        # nor an advice: such a model is never planned again, so nothing says what its gutters and
+        # its crossings would be — and what it needs is a shorter text, not a rearrangement
+        self.assertEqual(advice_blocks(err), [])
 
     def test_layout_failure_prints_the_map(self):
         code, out, err = self.run_cli(self.model(WIDE))
@@ -323,6 +379,118 @@ class RenderCli(unittest.TestCase):
         code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
         self.assertEqual(code, 0, err)
         self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["stem_name.html"])
+
+    # --- spec 6, criterion D3: the rearrangement advice on stderr, `--no-advice`, and what the
+    # trigger is. The renderer asks for advice where it has already told the author something — a
+    # group over capacity or three crossings — and never otherwise: the last term of the score is
+    # the length of the lines, so a search finds a shorter routing on almost any model, and an
+    # advice nobody asked for is noise in every render.
+    def read_block(self, err, prefix=""):
+        """The one advice block of a stderr, checked against the form of spec 6 and returned as
+        (the headline's match, the numbered moves' matches, the rows of the advised grid)."""
+        blocks = advice_blocks(err)
+        self.assertEqual(len(blocks), 1, err)
+        head = HEADLINE.match(blocks[0][0])
+        self.assertIsNotNone(head, blocks[0][0])
+        self.assertEqual(head["prefix"], prefix, blocks[0][0])
+        self.assertIn("grid:", blocks[0], blocks[0])
+        cut = blocks[0].index("grid:")
+        steps = [STEP.match(line) for line in blocks[0][1:cut]]
+        self.assertTrue(all(steps), blocks[0][1:cut])
+        # the numbers of the block are one chain: the headline's own two ends are the first move's
+        # start and the last move's end, and every move starts where the one before it ended
+        self.assertEqual([step["n"] for step in steps],
+                         [str(i) for i in range(1, len(steps) + 1)], blocks[0])
+        self.assertEqual(head["moves"], str(len(steps)), blocks[0])
+        self.assertEqual([head["before"]] + [step["after"] for step in steps],
+                         [step["before"] for step in steps] + [head["after"]], blocks[0])
+        rows = [json.loads(line.strip()) for line in blocks[0][cut + 1:]]
+        self.assertTrue(rows, blocks[0])
+        return head, steps, rows
+
+    def test_three_crossings_get_the_advice_after_the_warning(self):
+        self.publish()
+        path = self.model(CROSSED)
+        code, out, err = self.run_cli(path)
+        self.assertEqual(code, 0, err)
+        # stdout is the fragment and nothing else: the advice is stderr's
+        self.assertEqual(out, self.run_cli(path, "--no-advice")[1])
+        self.assertNotIn("совет", out)
+        warning = f"предупреждение: пересечений линий: {CROSSED_CROSSINGS}"
+        self.assertIn(warning, err)
+        head, steps, rows = self.read_block(err)
+        self.assertEqual((head["term"], head["before"]), ("пересечений", str(CROSSED_CROSSINGS)), err)
+        self.assertLess(int(head["after"]), CROSSED_CROSSINGS, err)
+        self.assertEqual(len(steps), 2, err)
+        # the block comes after the warning it answers and after the map printed with it
+        self.assertLess(err.index(warning), err.index(head.group(0)), err)
+        self.assertLess(err.index("[start]"), err.index(head.group(0)), err)
+        # and the grid it prints is the advice itself: planned as it stands, it crosses what the
+        # headline promises
+        advised = dict(copy.deepcopy(CROSSED), grid=rows)
+        layout, _ = flow.plan(advised, "widget", {}, draft=True)
+        self.assertEqual(layout["crossings"], int(head["after"]), rows)
+
+    def test_no_advice_prints_none(self):
+        self.publish()
+        code, out, err = self.run_cli(self.model(CROSSED), "--no-advice")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"предупреждение: пересечений линий: {CROSSED_CROSSINGS}", err)
+        self.assertEqual(advice_blocks(err), [])
+
+    def test_a_model_no_move_improves_prints_none(self):
+        self.publish()
+        code, out, err = self.run_cli(self.model(NO_MOVE))
+        self.assertEqual(code, 0, err)
+        self.assertIn("предупреждение: пересечений линий: 3", err)
+        self.assertEqual(advice.search(copy.deepcopy(NO_MOVE), "widget", {}), [])
+        self.assertEqual(advice_blocks(err), [])
+
+    def test_a_model_without_the_trigger_is_not_advised(self):
+        self.publish()
+        # the premise: this example is offered a move, and is still said nothing about
+        self.assertTrue(advice.search(json.loads(QUIET.read_text()), "widget", {}))
+        code, out, err = self.run_cli(str(QUIET))
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("пересечений линий", err)
+        self.assertEqual(advice_blocks(err), [])
+
+    def test_the_advice_names_its_model_in_a_batch(self):
+        self.publish()
+        out_dir = self.tmp / "out"
+        crossed, good = self.model(CROSSED), self.model(GOOD)
+        code, out, err = self.run_cli(crossed, good, "--out-dir", str(out_dir))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["crossed.html", "good.html"])
+        self.read_block(err, prefix=f"{crossed}: ")
+
+    def test_the_advice_keeps_the_all_or_nothing_of_out_dir(self):
+        out_dir = self.tmp / "out"
+        crossed, bad = self.model(CROSSED), self.model(WIDE)
+        code, out, err = self.run_cli(crossed, bad, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""), err)
+        self.assertFalse(out_dir.exists())
+        self.read_block(err, prefix=f"{crossed}: ")
+
+    def test_an_error_run_prints_the_advice_once_after_the_map(self):
+        code, out, err = self.run_cli(str(OVERFULL))
+        self.assertEqual((code, out), (1, ""), err)
+        head, steps, rows = self.read_block(err)
+        # the trigger here is the group over its capacity, and that is what the headline counts
+        self.assertEqual(head["term"], "лишних линий", err)
+        self.assertEqual(head["after"], "0", err)
+        self.assertLess(err.index("ошибка: "), err.index(head.group(0)), err)
+        self.assertLess(err.index("[zayavka]"), err.index(head.group(0)), err)  # the map
+
+    def test_check_and_the_text_formats_keep_their_stdout(self):
+        self.publish()
+        path = self.model(CROSSED)
+        for argv in (("--check",), ("--format", "mermaid"), ("--format", "ascii")):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_cli(path, *argv)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, self.run_cli(path, *argv, "--no-advice")[1])
+                self.read_block(err)
 
     def test_out_dir_rejects_targets_colliding_after_resolution(self):
         # One model names its target via an explicit id, the other via the file-stem fallback;

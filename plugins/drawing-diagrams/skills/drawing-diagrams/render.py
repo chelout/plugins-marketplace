@@ -3,7 +3,7 @@
 
 Usage:
     render.py MODEL.json [MODEL.json ...] [--mode widget|page] [--out FILE | --out-dir DIR]
-              [--assets cdn|inline|none] [--no-assets] [--check] [--draft]
+              [--assets cdn|inline|none] [--no-assets] [--check] [--draft] [--no-advice]
               [--format html|mermaid|ascii] [--open] [--types] [--width PX] [--harness]
 
 Kinds: schema, flow, swimlane, state, blocks, timeline (reference/common.md).
@@ -11,7 +11,9 @@ Kinds: schema, flow, swimlane, state, blocks, timeline (reference/common.md).
 Every render checks the model first. On errors stdout stays empty, the exit status is 1 and stderr
 lists every problem, with the ASCII map when a line or the grid failed rather than the length of a
 text. Warnings go to stderr and the output is still produced. --draft turns layout errors into
-warnings and stamps the output as a draft.
+warnings and stamps the output as a draft. Where a gutter is over its capacity or three lines
+cross, stderr also carries a rearrangement advice: node moves verified by the router and the grid
+they leave behind, never a change to the model; --no-advice turns that search off.
 """
 import argparse
 import json
@@ -21,14 +23,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from diagrams import assets  # noqa: E402
+from diagrams import advice, assets  # noqa: E402
 from diagrams import flow, schema, timeline  # noqa: E402
-from diagrams.common import ModelError  # noqa: E402
+from diagrams.common import ModelError, plural  # noqa: E402
 from diagrams.grid import ascii_map, parse_grid  # noqa: E402
 
 KINDS = {"schema": schema, "flow": flow, "swimlane": flow, "state": flow, "blocks": flow, "timeline": timeline}
 SUFFIX = {"html": ".html", "mermaid": ".mmd", "ascii": ".txt"}
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+# the crossings `flow.plan` warns at: the map is printed and the advice asked for at the same line
+MANY_CROSSINGS = 3
+# what the three terms of an advice score are called to the author, in the order spec 6 compares
+# them: the slots the gutters take past what they hold, the crossings the plan reports, and the
+# length of the lines. "линий" for the first because that is the word the capacity error uses for a
+# slot, and the author has just read it
+SCORE_TERMS = ("лишних линий", "пересечений", "длина линий")
 
 
 def parse_args(argv):
@@ -48,6 +57,8 @@ def parse_args(argv):
                     help="check only and print the ASCII map (width checks honour --open, --types, --width)")
     ap.add_argument("--draft", action="store_true",
                     help="downgrade layout errors to warnings and stamp the output as a draft")
+    ap.add_argument("--no-advice", action="store_true",
+                    help="do not search for node moves when a gutter is over its capacity or lines cross")
     ap.add_argument("--open", action="store_true", help="schema: start with all columns visible")
     ap.add_argument("--types", action="store_true", help="schema: show types on key rows too")
     ap.add_argument("--width", type=int, help="total width in px instead of the mode default (680 / 1100)")
@@ -76,12 +87,18 @@ def load(path):
 
 
 def failure_map(mod, model, mode_name, overrides, exc):
-    """The ASCII map of a model that failed on layout rather than on the length of a text, else None."""
+    """(the ASCII map of a model that failed on layout rather than on the length of a text, the
+    draft layout it was drawn from) — either may be None.
+
+    The layout is what `advise` reads its trigger off: a model whose plan raised has no layout of
+    its own, and this draft plan is the one that says what its gutters and its crossings would be.
+    A model refused for the length of a text alone gets neither: it needs a shorter text, not a
+    rearrangement."""
     if not any(e not in exc.fit for e in exc.layout):
-        return None
+        return None, None
     if mod is schema:
         cells, cols, rows = parse_grid(model.get("grid"), [])
-        return ascii_map(cells, cols, rows)
+        return ascii_map(cells, cols, rows), None
     try:
         layout, _ = mod.plan(model, mode_name, overrides, draft=True)
     except ModelError:
@@ -89,9 +106,9 @@ def failure_map(mod, model, mode_name, overrides, exc):
         # id) alongside the layout error. Fall back to the raw grid map for kinds that have one.
         if mod is flow:
             cells, cols, rows = parse_grid(model.get("grid"), [])
-            return ascii_map(cells, cols, rows)
-        return None
-    return mod.ascii(model, layout)
+            return ascii_map(cells, cols, rows), None
+        return None, None
+    return mod.ascii(model, layout), layout
 
 
 def batch_target(path, model, target_dir, resolved_dir, fmt):
@@ -111,6 +128,70 @@ def batch_target(path, model, target_dir, resolved_dir, fmt):
     if resolved.parent != resolved_dir:
         raise ValueError(f"ошибка: --out-dir: {path}: цель {target} выходит за пределы {target_dir}")
     return target, resolved
+
+
+def advise(mod, model, path, args, overrides, layout, batch):
+    """Print the rearrangement advice of spec 6 for one model on stderr, after the warnings or the
+    errors it answers: the moves that lower the score of its grid, verified one by one by the
+    router, and the grid they leave behind for the author to paste. The model itself is never
+    changed.
+
+    Called once per model, from `main` alone, and only where the renderer has already told the
+    author something about the drawing — a group over the capacity of its line, or the crossings
+    the warning counts. The gate is that trigger and not what the search finds: the last term of a
+    score is the length of the lines, so a shorter routing exists on almost every model, and an
+    advice nobody asked for would be noise on every render. Kinds the advice does not know — a
+    schema, a timeline — are never searched."""
+    if args.no_advice or mod is not flow or not triggered(layout):
+        return
+    found = advice.search(model, args.mode, overrides)
+    if not found:
+        return
+    for line in advice_block(found, advised_grid(model, found), f"{path}: " if batch else ""):
+        print(line, file=sys.stderr)
+
+
+def triggered(layout):
+    """Whether a plan is one the author is offered advice on: a group drawn past the capacity of
+    its lattice line, or crossings enough for the warning. A plan that is not a draft always
+    answers zero to the first — a group over capacity is a layout error and raises."""
+    if not layout:
+        return False
+    return layout.get("overflow", 0) > 0 or layout.get("crossings", 0) >= MANY_CROSSINGS
+
+
+def advice_block(found, grid, prefix):
+    """The lines of spec 6's advice block: a headline, the moves numbered from one, and the advised
+    grid under `grid:`, each row as the author would paste it back into the model.
+
+    The block counts one term of the score throughout — the first of (overflow, crossings, length)
+    the moves moved, which is the one that made them an improvement, since the three are compared
+    in that order. So a trigger answered is a trigger counted: where a group was over its capacity
+    and the moves free it, that is what the headline says."""
+    first, last = found[0][1], found[-1][2]
+    term = next((i for i in range(len(first)) if first[i] != last[i]), len(first) - 1)
+    moves = len(found)
+    out = [f"совет: {prefix}{SCORE_TERMS[term]} {first[term]} → {last[term]} за {moves} "
+           f"{plural(moves, ('ход', 'хода', 'ходов'))} (проверено трассировкой)"]
+    out += [f"  {i}. {move.text()}: {before[term]} → {after[term]}"
+            for i, (move, before, after) in enumerate(found, 1)]
+    out.append("grid:")
+    out += [f"  {json.dumps(row, ensure_ascii=False)}" for row in grid]
+    return out
+
+
+def advised_grid(model, found):
+    """The grid the moves leave behind, written by `advice.write_grid`: the author's own column
+    offsets, and every row nothing moved in kept byte for byte.
+
+    The moves are walked over the placement rather than over the model, and the map is written once
+    at the end. A grid written per move would be written from the one the move before it left, so a
+    card carried into a column wider than the author's would push every row after it out of line —
+    the same placement, and a map the author reads as a different one."""
+    cells, width, height = parse_grid(model.get("grid"), [])
+    for move, _, _ in found:
+        cells = move.moved(cells)
+    return advice.write_grid(model["grid"], cells, width, height)
 
 
 def produce(model, mod, args, overrides, assets_mode):
@@ -161,18 +242,20 @@ def main(argv=None):
             out, warnings, layout = produce(model, mod, args, overrides, assets_mode)
         except ModelError as exc:
             print(exc, file=sys.stderr)
-            picture = failure_map(mod, model, args.mode, overrides, exc)
+            picture, draft_layout = failure_map(mod, model, args.mode, overrides, exc)
             if picture:
                 print(picture, file=sys.stderr)
             if args.draft and mod is schema:
                 print("черновик: для schema ошибки раскладки нужно исправить, маршрутизатора у схем нет",
                       file=sys.stderr)
+            advise(mod, model, path, args, overrides, draft_layout, batch)
             failed = True
             continue
         for w in warnings:
             print("предупреждение: " + w, file=sys.stderr)
-        if not args.check and args.format != "ascii" and layout.get("crossings", 0) >= 3:
+        if not args.check and args.format != "ascii" and layout.get("crossings", 0) >= MANY_CROSSINGS:
             print(mod.ascii(model, layout), file=sys.stderr)
+        advise(mod, model, path, args, overrides, layout, batch)
         done.append((path, model, out, warnings, layout))
     if failed:
         return 1
