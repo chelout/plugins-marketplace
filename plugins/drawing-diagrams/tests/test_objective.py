@@ -73,6 +73,14 @@ DESCENT_SMALL = (12, 70)
 DESCENT_DENSE = (13, 30)
 AT_LEAST = 0.9
 
+# The four readings of criterion C3 as they measure today, per (room, labelled): how many of the
+# hundred instances cost at or under the loop. Every one of them is run and held to the number it
+# comes to, so a reading that moves is a change of the search — measure the four again and write
+# them down here — rather than a floor that was always going to hold. Three are at or above
+# AT_LEAST; the reading without a room and with labels is under it, and it is the one configuration
+# production is never in.
+NOT_WORSE = {(False, False): 93, (True, False): 97, (False, True): 89, (True, True): 97}
+
 # The configuration the measurement with room is made under: a page flow with a footnote list, whose
 # bottom margin then holds no line at all, so the population reaches the overflow term.
 DESCENT_CONFIG = ("flow", "page", ("[1]",))
@@ -593,17 +601,20 @@ class TheSearchCostsNoMoreThanTheLoop(unittest.TestCase):
 
     Production always routes with the room its plan states and with the labels its model carries, so
     that reading is the one the criterion is asserted on. The instances are read in all four
-    configurations, and every reading is written down here, because a threshold that only the
-    flattering readings are held to is a threshold nobody measured:
+    configurations, every one of them is run here, and each is held to the number it comes to,
+    because a threshold that only the flattering readings are held to is a threshold nobody
+    measured:
 
-        no room, unlabelled                    93 of 100 at or under the loop  (asserted)
-        room, unlabelled                       97                              (asserted)
-        no room, every third edge labelled     89                              (recorded, not asserted)
-        room, every third edge labelled        97                              (asserted — production)
+        no room, unlabelled                    93 of 100 at or under the loop
+        room, unlabelled                       97
+        no room, every third edge labelled     89
+        room, every third edge labelled        97   (the configuration production routes in)
 
-    The one under the threshold is the one configuration production is never in: a lattice that
-    states no capacity at all. It is measured the same way, with `labelled_like` over
-    `descent_states(False, True)`, and it is not computed here, because nothing would assert it.
+    Every one of the four is asserted at the number above (NOT_WORSE), and the floor of nine in ten
+    on all but the third, which does not reach it: that is the one configuration production is never
+    in, a lattice that states no capacity at all. It is measured the same way as the rest, with
+    `labelled_like` over `descent_states(False, True)`, and held to the 89 it comes to — a recorded
+    number is a number somebody ran.
 
     The two unlabelled readings stay because they separate what moves the routing: without a room a
     routing never pays the overflow term, which is the one the descent cannot read off a pairwise
@@ -615,36 +626,57 @@ class TheSearchCostsNoMoreThanTheLoop(unittest.TestCase):
         cls.plain = measured(False)
         cls.planned = measured(True)
         cls.labelled = measured(True, with_labels=True)
+        cls.plain_labelled = measured(False, with_labels=True)
 
-    def assertNotWorseOften(self, rows):
+    def worse_than_the_loop(self, rows):
+        """The instances that cost more than the loop, and the first few of them named."""
         worse = [row for row in rows if row.got > row.ref]
-        named = ", ".join(f"{row.name} {row.got} > {row.ref}" for row in worse[:5])
+        return worse, ", ".join(f"{row.name} {row.got} > {row.ref}" for row in worse[:5])
+
+    def assertReads(self, rows, reading):
+        """The instances at or under the loop, against the number this reading comes to."""
+        worse, named = self.worse_than_the_loop(rows)
+        self.assertEqual(len(rows) - len(worse), NOT_WORSE[reading],
+                         f"this reading moved: {len(worse)} of {len(rows)} instances cost more "
+                         f"than the loop ({named}) — measure the four of them and write them down")
+
+    def assertNotWorseOften(self, rows, reading):
+        """The floor of the criterion, and the reading itself beside it."""
+        worse, named = self.worse_than_the_loop(rows)
         self.assertGreaterEqual(len(rows) - len(worse), AT_LEAST * len(rows),
                                 f"{len(worse)} of {len(rows)} instances cost more than the loop: "
                                 f"{named}")
+        self.assertReads(rows, reading)
 
     def test_without_room(self):
-        self.assertNotWorseOften(self.plain)
+        self.assertNotWorseOften(self.plain, (False, False))
 
     def test_with_the_room_the_planner_states(self):
-        self.assertNotWorseOften(self.planned)
+        self.assertNotWorseOften(self.planned, (True, False))
 
     def test_with_the_room_and_the_labels_production_routes_with(self):
         # the configuration `flow.plan` is always in: the room its geometry states, and a label on
         # every third edge, which is what prices the first step of those lines
-        self.assertNotWorseOften(self.labelled)
+        self.assertNotWorseOften(self.labelled, (True, True))
+
+    def test_without_room_and_with_the_labels_a_model_carries(self):
+        """The fourth reading: the one configuration production is never in, run like the other
+        three and held to the number it comes to rather than to the floor it does not reach. A
+        reading nobody computes is a reading nobody would notice moving."""
+        self.assertReads(self.plain_labelled, (False, True))
 
     def test_the_instances_exercise_the_measurement(self):
-        """What the population has to hold for the three tests above to mean anything: the instances
-        the plan names and no others, lines to pair, a search that really moves Phi rather than
-        returning the loop's own routing, and routings that overflow, since the room is measured
-        for the term only they pay — which the unlabelled population reaches and the labelled one,
-        whose lines lie elsewhere, does not."""
+        """What the population has to hold for the four readings above to mean anything: the
+        instances the plan names and no others, lines to pair, a search that really moves Phi rather
+        than returning the loop's own routing, and routings that overflow, since the room is
+        measured for the term only they pay — which the unlabelled population reaches and the
+        labelled one, whose lines lie elsewhere, does not."""
         self.assertEqual(len(self.plain), DESCENT_SMALL[1] + DESCENT_DENSE[1])
-        for rows in (self.planned, self.labelled):
+        for rows in (self.planned, self.labelled, self.plain_labelled):
             self.assertEqual(len(rows), len(self.plain))
         for name, rows in (("without room", self.plain), ("with room", self.planned),
-                           ("with room, labelled", self.labelled)):
+                           ("with room, labelled", self.labelled),
+                           ("without room, labelled", self.plain_labelled)):
             with self.subTest(rows=name):
                 thin = [row.name for row in rows if row.lines < 2]
                 self.assertEqual(thin, [], "harness: an instance with fewer than two lines pairs "
@@ -836,7 +868,8 @@ class ProductionRoutingSeesTheOverflow(unittest.TestCase):
 
     The proof is a model the capacity check refuses: the routing before the descent — the better of
     the two starts, which is what a budget of no calls leaves — overflows its lines, and the routing
-    the search returns does not overflow more."""
+    the search returns does not overflow more. That start is also what the answer is held against on
+    Phi itself, which is the promise a descent makes by accepting nothing that raises it."""
 
     def test_a_model_over_capacity_is_routed_against_the_room_its_plan_states(self):
         seen = 0
@@ -856,6 +889,27 @@ class ProductionRoutingSeesTheOverflow(unittest.TestCase):
                     self.assertTrue([w for w in warnings if "помещается" in w], warnings)
         self.assertGreater(seen, 0, "harness: this model's routing overflows in neither mode, so "
                                     "the term the finding is about is never counted")
+
+    def test_the_routing_costs_no_more_than_the_better_of_the_two_starts(self):
+        """Spec 5.3: a descent keeps a proposal only where ΔΦ is under zero, so neither of them ends
+        above the start it came from, and the lower of the two is what comes back — the search never
+        answers with a routing worse than the better start, whatever the budget cuts short.
+
+        The better start is what a budget of no calls leaves, which is the idiom the test above
+        routes with, so the two are read on the same model here."""
+        moved = 0
+        for mode in bench_routing.MODES:
+            calls, _ = plan_route_all(GATE, mode)
+            lat, ends, labelled, room, got = calls[0]
+            nodes = frozenset(lat.blocked)
+            start = router.route_all(lat, ends, labelled, room=room, budget=0)
+            with self.subTest(mode=mode):
+                answer = router.phi(infos_of(lat, ends, labelled, got), nodes, room)
+                began = router.phi(infos_of(lat, ends, labelled, start), nodes, room)
+                self.assertLessEqual(answer, began)
+                moved += answer < began
+        self.assertGreater(moved, 0, "harness: the descents lower Phi in neither mode, so the "
+                                     "comparison would hold on a search that never searched")
 
 
 if __name__ == "__main__":

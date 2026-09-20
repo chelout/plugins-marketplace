@@ -1,10 +1,12 @@
 """router.route_all: what the search promises whatever the model (spec 5.3, 5.4).
 
-The routing does not depend on the order `ends` are given in, two calls on one model give the same
-paths, the descents stay inside their budget of `route` calls while every routable edge still comes
-back with a path, an edge with no route is None in its own place and takes no part in the rest, and
-two routings of equal Phi are told apart by their crossings and then by the sum of `own`, before the
-start they came from.
+The routing does not depend on the order `ends` are given in — on the seeded instances, and on the
+hand-made models whose edges run between one pair of cards, where the canonical key comes down to
+the label — two calls on one model give the same paths, the descents stay inside the budget of
+`route` calls they share, half of it to the first and what the first left to the second, while every
+routable edge still comes back with a path, an edge with no route is None in its own place and takes
+no part in the rest, and two routings of equal Phi are told apart by their crossings and then by the
+sum of `own`, before the start they came from.
 
 What the search priced is also what gets drawn, so the promise reaches the offsets: a model planned
 through `flow.plan` with its `edges` shuffled is drawn the way it was drawn before, and that reading
@@ -31,6 +33,24 @@ SEEDS = (1, 2, 3, 4, 5)
 # where the two starts alone ask for more calls of `route` than the whole descent budget.
 PARALLEL = 350
 SMALL_BUDGET = 10
+
+# The model the budget is read on where it binds: two cards with this many edges between them, which
+# is what the descents of spec 5.3 item 3 ask more calls of than they are given. The first converges
+# after two passes, 260 calls of the 300 that half the budget is, and the second would take 390 and
+# is cut at the 340 the first left it — so the two of them spend the budget itself, and no split
+# that gives the second a half of its own reaches that number. The dense instances above never reach
+# the bound at all: they spend 64 to 174 calls of 600 and stop with nothing left to improve.
+BOUND_PARALLEL = 130
+
+# The hand-made models the canonical key of spec 5.3 item 1 is read on where its last two components
+# decide something: edges between one pair of cards, which production models carry and no seeded
+# instance holds — `instances.random_instance` samples distinct unordered pairs, so no two of its
+# edges are ever the same routing problem. Two runs between the two diagonal pairs, 2 to 5 edges
+# each, labelled as `labels_of` labels an instance, so a run holds both kinds and `labelled` is the
+# only key that tells its edges apart.
+PARALLEL_CELLS = {"a": (0, 0), "b": (0, 2), "c": (2, 0), "d": (2, 2)}
+PARALLEL_GRID = (3, 3)
+PARALLEL_RUNS = (2, 3, 4, 5)
 
 # The first hand-made pair of routings the tie of spec 5.3 item 4 is read on, where the crossings
 # tie and the sum of `own` decides: four cards, two edges, and `c -> d` drawn two ways that cost the
@@ -84,6 +104,13 @@ def shuffled_runs():
         yield cols, rows, cells, edges
 
 
+def parallel_runs():
+    """The hand-made models above as instances, one per run length: `n` edges from `a` to `d` and
+    `n` more from `c` to `b`, on the grid those four cards sit in."""
+    for n in PARALLEL_RUNS:
+        yield (*PARALLEL_GRID, PARALLEL_CELLS, [("a", "d")] * n + [("c", "b")] * n)
+
+
 def model_of(cols, rows, cells, edges):
     """An instance as a flow model: a card per node in its own cell, an edge per pair in the order
     the instance lists them, and the label of every third of them, as `labels_of` labels an
@@ -127,6 +154,15 @@ def counting():
     return wrapper, calls
 
 
+def descent_calls(lat, ends, labelled, **kwargs):
+    """The paths, and how many calls of `route` the descents made: the starts route every edge once
+    each, so what is left of the count is the descents'."""
+    wrapper, calls = counting()
+    with mock.patch.object(router, "route", wrapper):
+        paths = router.route_all(lat, ends, labelled, **kwargs)
+    return paths, len(calls) - 2 * len(ends)
+
+
 class CanonicalOrder(unittest.TestCase):
     """Spec 5.4: the same model with `ends` shuffled gives the same route for every (source, target,
     labelled). The canonical order of spec 5.3 is what carries it — the model index decides only
@@ -149,6 +185,32 @@ class CanonicalOrder(unittest.TestCase):
                     got = router.route_all(lat, mixed_ends, mixed_labels)
                     self.assertEqual(by_edge(mixed_ends, mixed_labels, got), want)
         self.assertGreater(seen, 100, "harness: too few edges were ever shuffled")
+
+    def test_five_shuffles_route_parallel_edges_the_way_the_model_order_did(self):
+        """The same promise on models that carry several edges between one pair of cards. Such a
+        pair is where the key of spec 5.3 item 1 has anything left to decide: the distance and the
+        two points tie on every edge of it, so `labelled` is the one key before the model index, and
+        the edges of one label are the same routing problem asked twice — which is why what is
+        compared is the multiset of the paths under a key and not which edge took which."""
+        most, both = 0, 0
+        for cols, rows, cells, edges in parallel_runs():
+            lat = router.Lattice(cols, rows, cells)
+            ends, labelled = ends_of(cells, edges), labels_of(len(edges))
+            want = by_edge(ends, labelled, router.route_all(lat, ends, labelled))
+            most = max([most] + [len(found) for found in want.values()])
+            both += sum(1 for src, dst, lab in want if lab and (src, dst, False) in want)
+            for seed in SEEDS:
+                order = list(range(len(ends)))
+                random.Random(seed).shuffle(order)
+                mixed_ends = [ends[i] for i in order]
+                mixed_labels = [labelled[i] for i in order]
+                with self.subTest(edges=len(edges), seed=seed):
+                    got = router.route_all(lat, mixed_ends, mixed_labels)
+                    self.assertEqual(by_edge(mixed_ends, mixed_labels, got), want)
+        self.assertGreater(most, 1, "harness: every key carries one path, so no two edges of these "
+                                    "models are one routing problem and the multiset reads nothing")
+        self.assertGreater(both, 0, "harness: no pair of cards carries a labelled edge and an "
+                                    "unlabelled one, so `labelled` tells no two edges apart here")
 
 
 class OffsetsFollowTheOrderTheSearchPricedIn(unittest.TestCase):
@@ -204,16 +266,22 @@ class TwoCallsAgree(unittest.TestCase):
 
 class WithinTheBudget(unittest.TestCase):
     """Spec 5.3: the two starts are always completed, and the descents share a budget of `route`
-    calls. So the calls the search makes are the two starts — one per edge each — and at most
-    `budget` more, whatever the model."""
+    calls — half of it to the first and everything the first left to the second. So the calls the
+    search makes are the two starts — one per edge each — and at most `budget` more, whatever the
+    model.
 
-    def descent_calls(self, lat, ends, labelled, **kwargs):
-        """The paths, and how many calls of `route` the descents made: the starts route every edge
-        once each, so what is left of the count is the descents'."""
-        wrapper, calls = counting()
-        with mock.patch.object(router, "route", wrapper):
-            paths = router.route_all(lat, ends, labelled, **kwargs)
-        return paths, len(calls) - 2 * len(ends)
+    A budget nothing reaches is a budget nobody measured, and the dense instances below spend 64 to
+    174 calls of the 600 they are given. So the two cases after them are read on BOUND_PARALLEL
+    parallel edges, where both descents ask for more than they are given and what they spend is the
+    bound itself."""
+
+    @classmethod
+    def setUpClass(cls):
+        """The model that reaches the bound, routed once for the two cases that read it."""
+        cells = {"a": (0, 0), "b": (2, 2)}
+        lat = router.Lattice(3, 3, cells)
+        ends = ends_of(cells, [("a", "b")] * BOUND_PARALLEL)
+        cls.bound = descent_calls(lat, ends, labels_of(len(ends)))
 
     def test_a_dense_model_stays_inside_the_budget_it_is_given(self):
         for budget in (SMALL_BUDGET, router.BUDGET):
@@ -221,10 +289,26 @@ class WithinTheBudget(unittest.TestCase):
                 lat = router.Lattice(cols, rows, cells)
                 ends, labelled = ends_of(cells, edges), labels_of(len(edges))
                 with self.subTest(budget=budget, edges=len(edges)):
-                    paths, spent = self.descent_calls(lat, ends, labelled, budget=budget)
+                    paths, spent = descent_calls(lat, ends, labelled, budget=budget)
                     self.assertLessEqual(spent, budget)
                     self.assertGreaterEqual(spent, 0, "the starts route every edge exactly once")
                     self.assertTrue(all(p is not None for p in paths))
+
+    def test_a_model_that_asks_for_more_than_the_budget_stays_inside_it(self):
+        """The bound where it binds: the descents of this model have somewhere to go for more passes
+        than the budget pays for, so what they spend is the budget and not what they would take."""
+        paths, spent = self.bound
+        self.assertTrue(all(p is not None for p in paths))
+        self.assertLessEqual(spent, router.BUDGET)
+
+    def test_the_second_descent_gets_what_the_first_one_left(self):
+        """Spec 5.3 item 3: half the budget to the first descent and everything left to the second.
+        The first descent of this model stops short of its half — it has nothing left to change
+        after two passes, 260 calls of the 300 it was given — and the second would take 390, more
+        than a half. So the whole budget is spent here only because the second descent is given the
+        340 the first left it, and a second descent given half of its own would stop at 560."""
+        _, spent = self.bound
+        self.assertEqual(spent, router.BUDGET)
 
     def test_a_model_of_many_parallel_edges_still_routes_every_one_of_them(self):
         """Spec 9: nothing limits the number of edges, and such a model spends the starts alone
@@ -234,7 +318,7 @@ class WithinTheBudget(unittest.TestCase):
         lat = router.Lattice(3, 3, cells)
         ends = ends_of(cells, [("a", "b")] * PARALLEL)
         labelled = labels_of(len(ends))
-        paths, spent = self.descent_calls(lat, ends, labelled)
+        paths, spent = descent_calls(lat, ends, labelled)
         self.assertEqual(len(paths), PARALLEL)
         self.assertTrue(all(p is not None for p in paths))
         self.assertLessEqual(spent, router.BUDGET)
