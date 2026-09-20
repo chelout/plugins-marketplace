@@ -85,16 +85,23 @@ router sends a line round a gutter that is already full. `--check` prints the ma
 number of line crossings; three or more crossings are a warning.
 
 Where a gutter holds more lines than fit or three lines cross, stderr also
-carries an advice: the node moves that lower that count, numbered, each with
-the count before and after it, and the grid they leave behind, ready to
-paste back into the model. Every move is verified — the renderer routes the
-grid it would produce and reports what it measured, not a guess — and no move is offered
-that brings a problem the model did not already have. The advice never
-changes the model: apply it by editing the grid, or leave it and say why.
-Nothing is printed when no move improves the drawing. The search runs only
-when one of those two problems was reported, and costs about half a second
-on a dozen cards, several seconds on a full page of thirty; `--no-advice`
-turns it off.
+carries an advice: the moves that lower that count, numbered, and the grid
+they leave behind, ready to paste back into the model. The headline
+names what the whole sequence buys — extra lines, crossings or the length of
+the lines — and every step names the one it moved itself, so a step that only
+shortened the lines says so instead of printing a count that stands still.
+The last move always lowers the extra lines or the crossings: a sequence is
+never padded with moves that only tidy the drawing. For a swimlane the block
+prints `lanes:` under the grid as well, and the two are pasted back together —
+the columns travel with the lanes, so the grid on its own would move cards
+into other lanes. Every move is verified — the renderer routes the grid it
+would produce and reports what it measured, not a guess — and no move is
+offered that brings a problem the model did not already have, neither an
+error nor a warning. The advice never changes the model: apply it by editing
+the grid, or leave it and say why. Nothing is printed when no move improves
+the drawing. The search runs only when one of those two problems was
+reported, and costs about half a second on a dozen cards, several seconds on
+a full page of thirty; `--no-advice` turns it off.
 
 ### Edges
 

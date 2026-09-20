@@ -493,7 +493,9 @@ messages.
 Amended 2026-09-20 (spec §6 as amended; plan gate findings G2 and G3): `evaluate(model, mode_name,
 overrides)` and `search(model, mode_name, overrides, …)` — every verifying plan gets the overrides
 `render.main` forwards; `score` is `(overflow, crossings, length)` with `overflow` the slots over
-capacity; `flow.plan` with `draft=True` puts `overflow` and `overfull` into `layout` and no
+capacity; `evaluate` answers three values since the fix pass of 2026-09-21 — the score, the
+draft-downgraded errors and the number of warnings, the crossings warning aside (spec §6, "No new
+warning either"); `flow.plan` with `draft=True` puts `overflow` and `overfull` into `layout` and no
 `unroutable`; no advice for a model over a limit of its mode, and the lane permutations are never
 materialised beyond what the limit allows. `advice.proxy(model) -> int`. `advice.search(model, mode_name, top=8, max_moves=8,
 max_plans=40) -> list[(Move, score_before, score_after)]`, empty when nothing improves.

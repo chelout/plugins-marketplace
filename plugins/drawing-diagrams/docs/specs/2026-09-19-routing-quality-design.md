@@ -412,6 +412,26 @@ Amended 2026-09-20, after stages A to C landed, which this section was written b
   advised grid planned in full once at the end, and the owner rules on the number.
 - **The capacity error gets its move.** The advice answers the error of §4.4 as well as the
   crossings warning: "переставьте узлы" is then a verified move, not a wish.
+- **What the author is asked to do** (amended 2026-09-21, after the stage's gate and qa review). The
+  search climbs on the whole score, length included, because a move that only shortens the lines
+  can open the way to one that removes a crossing. The author is not asked for the cosmetic ones,
+  though: the advised sequence ends with the last move that lowers overflow or crossings, and the
+  moves after it are dropped (on 9 of the 12 seeded models of D2 a sequence ended in up to three
+  moves reading "0 → 0"). Every step of the block names the term of the score it moved, so a step
+  inside the sequence that only shortens the lines says so instead of printing a count that stands
+  still.
+- **No new warning either.** A move is dropped if its plan carries a layout error the start did not
+  have — the first text — or more warnings than the start, the crossings warning aside: `SKILL.md`
+  tells the author to treat a warning as an error, and on 2 of the 12 seeded models the advice
+  handed over a grid with an empty-row warning the author's own grid did not have.
+- **A lane order is printed with its lanes.** A `lanes` move changes `lanes` and `grid` together, so
+  the block prints both; pasting the grid alone would hand cards to other lanes.
+- **The downward rule is the one above, not a stricter one.** A move may lay the two cards of a
+  downward edge in one row; what it may not do is put the target above the source, and judging
+  every produced grid against the original's downward edges is what keeps a later move from
+  turning that row upward. (Task 14 first read it strictly, target below source; the branch gate
+  showed what that costs: on the first seeded model (0, 1, 102) where the spec's rule reaches
+  (0, 0, 90).)
 
 - **Moves:** swap two nodes, or move a node into an empty cell, inside the existing grid size; every
   move is applied to a deep copy of the original model (`flow.plan` writes `_note` and `_text` into
@@ -637,7 +657,7 @@ names the criterion that proves the guarantee.
 | The objective is not the router's cost | `own` is `route`'s cost by replay; `pair` is declared different; fast `Traffic` keeps boolean semantics | §5.1, §5.2 | C1, C2 |
 | Canonical order is narrower than the output | the promise is routes per (source, target, labelled) only | §2 non-goal, §5.4 | C3 |
 | Advice can break the model | deep copies; rules against the original grid; lanes move columns; no new error | §6 | D1, D2 |
-| Advice is coupled to the planner's failure path | the draft plan exposes `unroutable` and `overfull`; `render.main` alone calls the search, once | §6 | D3 |
+| Advice is coupled to the planner's failure path | the draft plan exposes `overflow` and `overfull`; `render.main` alone calls the search, once | §6 | D3 |
 | The anchor contract is incomplete | tagged `ref`, "drawn" defined, every place covered, box measured | §7.4 | E1, E5 |
 | The label optimiser's bound is undefined | lexicographic cost, owner counting, greedy incumbent over the same candidates, best complete on exhaustion | §7.3 | E4 |
 | Work exceeds the stated envelope | starts complete, descent budget shared, advice bounded in plans, label search per plan, generator published | §5.3, §6, §7.3, slots | C3, D2, E4, task 0 |
