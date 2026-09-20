@@ -171,10 +171,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   instead of building the traffic of all the other lines again. `shares` answers for one step of
   `route` — a lattice point and a neighbour — where the class it replaced answered for any interval
   inside a run; a longer stretch is asked of the unit-edge table `units`, edge by edge, which the
-  full-gutter price of stage B and the objective of stage C will read directly (tasks 9, 11 and 12
+  full-gutter price of stage B and the objective of stage C read directly (tasks 9, 11 and 12
   of `docs/plans/2026-09-19-routing-quality.md`). No path moves: `reference_route_all` of
-  `tests/reference.py` routes with `OldTraffic`, the class as it was, and `RoutesIdentically` of
-  `tests/test_traffic.py` holds the two equal over the 300 instances of the property test above. The
+  `tests/reference.py` takes the traffic class as a parameter, and `RoutesIdentically` of
+  `tests/test_traffic.py` runs that one loop twice — once with `OldTraffic`, the class as it was,
+  once with `router.Traffic` — and holds the two answers equal over the 300 instances of the
+  property test above. The
   dense scenario of `tools/bench_routing.py` fell from a median of 298 ms to 70 ms on the measuring
   machine, 4.3 times faster.
 - Gutter capacity, stage B: a gutter and a margin hold a stated number of lines, and a diagram that
@@ -304,3 +306,81 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   under the box's top edge in a page flow, where the constant says 10 px above it, and 50 px under the
   lane headers in a page swimlane, where it says 26. The constant is kept there as the conservative
   number rather than a second table measured; case 17 checks that it is the conservative one.
+- The objective, stage C: a whole routing has a price, `router.phi(infos, nodes, room)` — the sum of
+  three things. What every path costs alone is `own`, the cost `route` itself reports for it with no
+  other line there, replayed step rule by step rule on the `Info` that `router.describe` builds.
+  What every pair of them costs together is `router.pair`: ten per crossing — drawn, or a stretch
+  the two enter and leave in swapped order, which `route` cannot see at all — one per unit step they
+  share, three per point of one that is a corner of the other both ways round, and three for each
+  node side they leave or enter together. And `router.FULL` = 20 per slot the groups take past what
+  their lattice line holds (`router.overflow`, over the groups `overfull` names, so what is priced
+  is the width the offsets draw). `route` stays the proposer and Phi is what decides: `route` prices
+  one step and knows a gutter only by the load of a unit edge, while Phi prices the routing that
+  came out of it. `router.delta(i, new, infos, nodes, room)` is what one rerouted edge changes it
+  by, exactly — the own and pair terms are a difference of two sums (`_own_and_pairs`), and
+  `overflow` is recomputed on the lattice lines the old and the new path lie on, which is where the
+  groups can have moved and nowhere else.
+- The orchestration is `router.route_all(lat, ends, labelled, room=None, budget=600, passes=8,
+  trace=None)`. The edges go into a canonical order (`_canonical`): Manhattan length first and the
+  **long edges first**, then the two points, then the label, and the model index only between edges
+  equal in all four — which are one routing problem asked twice. Spec §5.3 gave the key and not the
+  direction; long-first is at or under the old loop's Phi on 93 of the 100 instances of criterion C3
+  without a room and 97 with one, where short-first reaches 90 and 95, and the long edges are the
+  ones with somewhere to go. Two starts are built from that order and both are always completed,
+  because a routing is complete or it is not a routing: `_greedy`, every edge against the traffic of
+  the ones before it, and `_alone`, every edge routed with no other line there. From each a descent
+  (`_descend`) takes every edge in turn, routes it again against the rest and keeps the new path
+  only where ΔΦ is **under zero**, so Phi falls strictly and the loop cannot cycle; the lower Phi
+  wins and, in the code as it stands, the first start takes a tie — spec §5.3 item 4 was amended on
+  2026-09-20 to give a tie to the lower Σ `own` first, and `route_all` does not do that yet, which
+  is the one place the two documents differ. The two starts share `BUDGET` = 600 calls of `route`,
+  half to the first and the rest to the second, and it never binds: over the instances of criterion C3
+  in all four configurations a descent spends at most 162 calls — 130 in the configuration
+  production routes in — and about three passes of `PASSES` = 8. `trace`, when a caller passes a
+  list, receives a `router.Change` per accepted reroute, which is what `PhiFallsAcrossTheTrace` of
+  `tests/test_objective.py` reads.
+- What the descent costs is four levers, and each of them is the difference between a search that
+  runs and one that is too slow to ship. Measured on the dense scenario of `tools/bench_routing.py`,
+  the median is 194.9 ms with all four and, with one switched off at a time: 223.0 ms without the
+  skip of a proposal equal to the path it replaces (`new == cur[n]` in `_descend` — after the first
+  pass most rerouting is exactly that, and nothing of Phi need be asked about it); 204.6 ms without
+  the early exit of `_weigh` (where the own and pair terms are already no improvement and the lines
+  the two paths lie on overflow nothing, no recomputation can turn the proposal into one); 213.1 ms
+  without `router._Memo` (the runs of a standing path and the pair orders of two standing paths,
+  kept between proposals instead of walked again, and dropped per position by `forget` when a
+  proposal for it is weighed); and 371.5 ms without the restriction of the overflow to the lattice
+  lines the two paths lie on, with the per-line map `_overflow_by_line` gives and `_descend`
+  carries — by far the largest, and the one spec §5.2 names.
+- What the routing promises and what it does not. Spec §5.4: no `random`, no clock, integer costs,
+  and the canonical order, so two runs on one model give identical paths and the same model with
+  its `edges` shuffled gives the same route for every (source, target, labelled) — `CanonicalOrder`
+  and `TwoCallsAgree` of `tests/test_route_all.py`, five shuffles over seeded instances. It promises
+  nothing beyond the routes: the offsets a group is drawn in, which label of two crossing ones is
+  the one warned about, and the id a section is written under still follow the order the model lists
+  its edges in. An edge with no route is `None` in its own place, takes no part in either start or
+  either descent, and leaves the others where they would be without it (`Unroutable`, same file).
+- `tests/reference.py` is the only home of the loop the renderer routed with before — one pass with
+  accumulating traffic and two rip-up passes. `route_all` is no longer that loop, so the identity
+  test that held them equal is gone; what replaced it is Phi against the loop on the hundred seeded
+  instances (`TheSearchCostsNoMoreThanTheLoop` of `tests/test_objective.py`, criterion C3) and
+  crossings against it on the shipped examples. The loop now takes the traffic class as a parameter,
+  which is what criterion C1 is asserted with: the same loop run with `router.Traffic` and with
+  `OldTraffic` gives the same paths (`RoutesIdentically` of `tests/test_traffic.py`).
+- `tools/bench_routing.py` now plans its dense scenario the way `flow.plan` plans a page flow
+  (`DENSE_CONFIG`, `planned`): the lattice states the capacity of every line and the routing and the
+  offsets are given the room those capacities come from. Timed without them the run would leave out
+  the one term of Phi that is not pairwise additive and report a budget nothing in production ever
+  meets. The dense median went from 61.3 ms to 195.7 ms against the spec's budget of 300, and the
+  shipped examples stay at a maximum of about 8 ms against their budget of 25.
+- What the stage bought, measured over 500 seeded grids of other seeds than the tests', every third
+  edge labelled, in the configuration production routes in: crossings down 11 to 13 % in total — up
+  in about 18 % of the instances, down in about 57 % — overflow slots down 80 to 85 %, and Phi down
+  9 %. Plans the capacity check refuses fell from 49 to 14 (flow widget), 68 to 16 (flow page), 162
+  to 36 (swimlane widget) and 65 to 19 (swimlane page).
+- What moved in the shipped output: 4 of the 14 renders — `four-blocks` and `verdict-row-lifecycle`,
+  both modes — and in each of them the crossings and Phi are what they were, so the search left a
+  tie and the first start won it. One warning is new: the label "вердикт" of `none -> approved` in
+  `verdict-row-lifecycle` now lies on the moved line of `none -> declined_retry`. Phi knows nothing
+  about labels until stage E, which is where that is answered in general; the amended tie rule above
+  is what answers this one, since the start the old loop agreed with keeps that line out of the
+  gutter. The owner sees the render at the stage review.

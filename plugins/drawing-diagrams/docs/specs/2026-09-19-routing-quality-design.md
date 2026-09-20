@@ -350,13 +350,23 @@ Amended 2026-09-20, after stage B landed, which this section was written before:
 
 1. Canonical order: edges sorted by (Manhattan length, source point, target point, labelled), the
    model index only between edges equal in all four — which are the same routing problem.
+   Amended 2026-09-20 (task 12): the long edges come first. This text gave the key and not its
+   direction; measured against the old loop on the 100 instances of C3, long-first is at or under
+   its Φ on 93 (no room) and 97 (room) of them, short-first on 90 and 95.
 2. Two starts, always completed: greedy in canonical order with accumulating traffic, and every edge
    routed alone.
 3. Descent from each start: for each edge in order, remove it, reroute it against the rest, accept
    the new path only if ΔΦ < 0, put the kept path back. Repeat until a pass changes nothing, at most
    eight passes. The descents share a budget of 600 `route` calls, half each, the second taking what
    the first left; when it runs out the current routing, which is always complete, is kept.
-4. The lower Φ wins; on a tie the first start.
+4. The lower Φ wins; on a tie the lower Σ own — the routing whose lines are each nearer their own
+   best — and the first start only when that ties too. (Amended 2026-09-20. The first text gave
+   the tie to the first start. On the shipped `verdict-row-lifecycle` the two descents end at Φ 60:
+   the greedy one sends `none -> declined_retry` out through the bottom of its card and along the
+   gutter under the label of `none -> approved`, which draws a label warning; the other one, which
+   is also what the old loop drew, leaves through the side. Φ knows nothing of labels until
+   stage E, and Σ own is 53 against 52. Over 600 plans of 300 seeded labelled models the rule moves
+   neither the label warnings, 1 148, nor the crossings, 5 466.)
 
 Φ falls strictly with every accepted change, so the loop ends and cannot cycle, and the result is
 never worse than the better start. Pair moves (rip up two crossing edges and try both orders) are
@@ -554,6 +564,10 @@ Stage C
   `edges`, identical output for two runs on one model, never more than the budget of `route` calls
   in the descents: tests. Dense scenario median at or below 300 ms: benchmark output. Owner's pair
   review of the examples.
+  Amended 2026-09-20: the asserted reading is the one production runs — capacities, room, and
+  every third edge labelled as the suite labels them (97 of 100). Without room the unlabelled
+  reading is 93 and the labelled one 89, one instance under the mark; `route_all` is never called
+  without room outside tests and tools, and all four readings are recorded in the test.
 
 Stage D
 - D1. Moves respect the rules of §6 (deep copies, downward edges of the original grid, first row,
