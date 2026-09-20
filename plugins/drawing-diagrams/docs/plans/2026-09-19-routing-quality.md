@@ -290,6 +290,9 @@ Spec: §4.1, §4.2, criteria B0, B1.
   smallest. The return value keeps its shape; `schema.plan` keeps calling it without `room`.
 - `router.overfull(paths, nodes, room) -> list[(axis, line, [path indices], capacity)]`: the groups
   — the same groups `assign_offsets` forms — that do not fit at the smallest pitch.
+  Amended 2026-09-20 (task 9a): the shape is `(axis, line, width, [path indices], capacity)`, `width`
+  the number of slots the group is drawn in; the indices name who to move and may be more than the
+  width. Task 11's `router.overflow` is built from this shape.
 
 - [ ] Browser measurement first (B0): a page and a widget model with one line along the top margin
   and one along the bottom, in flow and in swimlane; the harness reports the distance from that line

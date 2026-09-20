@@ -141,7 +141,9 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   the slot rule below, which asks only whether they lie beside each other.) A zero-length segment — two equal consecutive points, which `schema.plan`
   produces — stays a run of its own and does not break the straight piece it lies in, so no output
   of `schema.plan` moves: its `cross_count`, the `off` and `via` of its edges and its warnings are
-  what they were. The signature of `assign_offsets` and the shape of its result do not change:
+  what they were. (That was true of stage A's change. Slot reuse, stage B below, moves the `off` of
+  schema edges that never lie beside each other — 576 of 23 948 synthetic plans — and leaves every
+  `cross_count` and warning where it was.) The signature of `assign_offsets` and the shape of its result do not change:
   one `(ox, oy)` per point, read from the runs through that point, and `schema.plan` reads them as
   before.
 - Three strengths of order, weakest last: `firm`, from a stretch two runs share and enter and leave
@@ -186,7 +188,7 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `router.PITCHES` is 8, 6, 5 px: with the room in hand `assign_offsets` gives a group the first
   pitch that fits and the smallest where none does, so a group too wide for 8 px closes up instead
   of reaching over a card edge, and `router.capacity(room)` is the width the smallest pitch allows.
-  Without the room — `schema.plan` passes none — every group keeps 8 px and no output moves.
+  Without the room — `schema.plan` passes none — every group keeps 8 px.
 - Slots are reused, and that is what the width of a group is (spec §4.1a, taken into the stage by
   the owner on 2026-09-20 after the first measurement showed the unit above to be wasteful rather
   than wrong). The order of a group is decided exactly as the three strengths above decide it;
