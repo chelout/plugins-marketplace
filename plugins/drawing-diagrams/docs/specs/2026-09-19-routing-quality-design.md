@@ -379,8 +379,12 @@ left out: they cost four `route` calls per crossing pair for about 2 % of Φ.
 
 No `random`, no clock in the logic, integer costs, iteration over sorted integer keys only. Two runs
 on one model give identical output. The same model with `edges` shuffled gives the same route for
-every (source, target, labelled); offsets, label choice and the section id may still follow the
-model order (§2).
+every (source, target, labelled); label choice and the section id may still follow the model order
+(§2). Amended 2026-09-20: offsets follow the canonical order as the routes do, apart from edges that are
+the same routing problem, whose order stays the model's. They have to: the width of a group depends on
+the order the paths are placed in, so a routing is placed in the order the search priced it in
+(`router.place`), or Φ would price one drawing and the page show another. The first text let offsets
+follow the model order; the branch gate of stage C found what that costs.
 
 ## 6. Stage D — rearrangement advice
 
