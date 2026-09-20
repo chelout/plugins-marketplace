@@ -191,12 +191,22 @@ class ExitLabelCase(unittest.TestCase):
     """Where template/js/flow.js draws the label of a straight exit down or up, as the tests
     assert it before asserting what the check says about it."""
 
+    def straight_exit(self, layout, edge):
+        """The layout's own entry for `edge`, with the premise every case in this class rests on
+        asserted rather than assumed: the exit is the straight one, a path of two points. A model
+        here is built so that nothing the router can reach is cheaper than those two steps, so an
+        exit that turned is a premise that has moved and not a check that failed."""
+        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
+        self.assertEqual(len(own["path"]), 2,
+                         f"premise: {edge[0]} -> {edge[1]} no longer leaves straight, so there is "
+                         f"no gutter beside its label to measure: {own['path']}")
+        return own
+
     def text_span(self, layout, edge):
         """The layout's geometry, the exit side of `edge` and the px span of its label: 5 px
         beside the line, as wide as its glyphs."""
         geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"])
-        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
-        self.assertEqual(len(own["path"]), 2, own)
+        own = self.straight_exit(layout, edge)
         X, _, ox, _ = own["path"][0]
         x0 = geo.clamp(layout["cells"][edge[0]][1], geo.x(X) + ox) + 5
         return geo, own["sa"], x0, x0 + label_width(own["label"])
@@ -319,9 +329,11 @@ class StraightExitLabel(ExitLabelCase):
                                                   "d -> c", "c -> e"]),
              ("a?", "d"), "B", -4.0, {"widget": True, "page": False}),
             # the same over an exit up: through the top of the text in a widget, clear of it on a
-            # page. b -> d and d -> a? are what fill the gutter column beside a?, so the two steps
-            # straight up cost less than the way round it, and e -> d is the line along the gutter
-            (exit_model([". e b c", ". . a? d"], ["d -> c", "a? -> e : да", "e -> d",
+            # page. b -> d and d -> a? fill the gutter column on one side of a?, and f stands on
+            # the other, where a labelled line that leaves sideways pays for the occupied cell it
+            # heads towards: so the two steps straight up cost less than either way round, and
+            # e -> d is the line along the gutter
+            (exit_model([". e b c", ". f a? d"], ["d -> c", "a? -> e : да", "e -> d",
                                                   "b -> e", "a? -> b : да", "b -> d", "d -> a?"]),
              ("a?", "b"), "T", 4.0, {"widget": True, "page": False}),
         )

@@ -330,15 +330,33 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   because a routing is complete or it is not a routing: `_greedy`, every edge against the traffic of
   the ones before it, and `_alone`, every edge routed with no other line there. From each a descent
   (`_descend`) takes every edge in turn, routes it again against the rest and keeps the new path
-  only where ΔΦ is **under zero**, so Phi falls strictly and the loop cannot cycle; the lower Phi
-  wins and, in the code as it stands, the first start takes a tie — spec §5.3 item 4 was amended on
-  2026-09-20 to give a tie to the lower Σ `own` first, and `route_all` does not do that yet, which
-  is the one place the two documents differ. The two starts share `BUDGET` = 600 calls of `route`,
-  half to the first and the rest to the second, and it never binds: over the instances of criterion C3
-  in all four configurations a descent spends at most 162 calls — 130 in the configuration
-  production routes in — and about three passes of `PASSES` = 8. `trace`, when a caller passes a
-  list, receives a `router.Change` per accepted reroute, which is what `PhiFallsAcrossTheTrace` of
-  `tests/test_objective.py` reads.
+  only where ΔΦ is **under zero**, so Phi falls strictly and the loop cannot cycle. The lower Phi
+  wins; on a tie the fewer crossings, then the lower Σ `own` — the routing whose lines are each
+  nearer their own best — and the first start only when all three tie (spec §5.3 item 4, amended
+  twice on 2026-09-20). Phi prices a whole routing and knows nothing about labels until stage E, so
+  where it cannot tell two routings apart the one to take is the one that keeps its lines out of
+  gutters they have no business in. The crossings are asked before the sum because a tie of Phi can
+  hide one: Phi charges `CROSSING` = 10 for a crossing, so a routing that crosses can be ten cheaper
+  in `own` and cost the same, and a reader is served worse by a crossing than by lines that run a
+  little further from their own best — a fixture of `tests/test_label_lines.py` is that shape
+  exactly, two descents at Phi 82 where the one with Σ `own` 66 crosses once and the one with 72
+  crosses nothing, and the bullet on the two keys below names it. Neither key costs the search
+  anything it notices: `_descend` holds the `Info` of every standing path already and hands the sum
+  back with the Phi it ends at, and `_crossings` is called only where the two Phi are equal. That
+  restriction is the whole of it — one count over the 40 paths of a dense plan of
+  `tools/bench_routing.py` takes 4.9 ms against the 1.5 ms a whole Phi of the same routing takes,
+  and counting on every pick would pay that twice a plan; over the ten plans of that scenario the
+  two descents never end at one Phi, so it is not called at all, and paired runs of the tree with
+  the rule and without it differ by less than the spread the machine has between two runs of either.
+  The measurement behind the
+  first amendment, which §5.3 item 4 records: over 600 plans
+  of 300 seeded labelled models the sum moves neither the label warnings, 1 148, nor the crossings,
+  5 466. The two
+  starts share `BUDGET` = 600 calls of `route`, half to the first and the rest to the second, and it
+  never binds: over the instances of criterion C3 in all four configurations a descent spends at
+  most 162 calls — 130 in the configuration production routes in — and about three passes of
+  `PASSES` = 8. `trace`, when a caller passes a list, receives a `router.Change` per accepted
+  reroute, which is what `PhiFallsAcrossTheTrace` of `tests/test_objective.py` reads.
 - What the descent costs is four levers, and each of them is the difference between a search that
   runs and one that is too slow to ship. Measured on the dense scenario of `tools/bench_routing.py`,
   the median is 194.9 ms with all four and, with one switched off at a time: 223.0 ms without the
@@ -377,10 +395,36 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   in about 18 % of the instances, down in about 57 % — overflow slots down 80 to 85 %, and Phi down
   9 %. Plans the capacity check refuses fell from 49 to 14 (flow widget), 68 to 16 (flow page), 162
   to 36 (swimlane widget) and 65 to 19 (swimlane page).
-- What moved in the shipped output: 4 of the 14 renders — `four-blocks` and `verdict-row-lifecycle`,
-  both modes — and in each of them the crossings and Phi are what they were, so the search left a
-  tie and the first start won it. One warning is new: the label "вердикт" of `none -> approved` in
-  `verdict-row-lifecycle` now lies on the moved line of `none -> declined_retry`. Phi knows nothing
-  about labels until stage E, which is where that is answered in general; the amended tie rule above
-  is what answers this one, since the start the old loop agreed with keeps that line out of the
-  gutter. The owner sees the render at the stage review.
+- What moved in the shipped output: 2 of the 14 renders, `four-blocks` in both modes, where the
+  routing costs exactly what the loop's did — Phi 63, no crossings, Σ `own` 47 — and draws two of
+  its lines, `resolver -> verdicts` and `resolver -> attempts`, with each other's shape; the tie
+  there is with the routing before the stage and not between the two descents, which end at 65 and
+  63. Every other render, `verdict-row-lifecycle` among them, is byte-identical to the one before
+  the stage. That model is where the tie rule earns its keep: both descents end at Phi 60 and
+  neither of them crosses anything, so the sum is what decides it. Σ `own` is 53 for the greedy one,
+  which sends `none -> declined_retry` out through the bottom of its card and along the gutter under
+  the label "вердикт" of `none -> approved`, against 52 for the one that leaves through the side of
+  the card, which is also what the loop drew. So no warning of the shipped examples is new.
+  `TheTieKeepsTheLabelOfTheShippedExample` of `tests/test_objective.py` holds that label clear of
+  the other line in both modes and reads the tie from the trace, and the two `TieCase` classes of
+  `tests/test_route_all.py` read each key both ways round on a hand-made pair of routings —
+  `TheTieGoesToTheLowerSumOfOwn` where the crossings tie, `TheTieGoesToTheFewerCrossingsBeforeTheSumOfOwn`
+  where the lower sum is the routing that crosses. Hand-made is what it takes to put the higher
+  Σ `own` on the second start: `_alone` gives every line its own best, so the second start's sum is
+  the lowest a routing of the model can have, and only a descent can raise it.
+- What the order of the two keys settles, and what it costs. Σ `own` alone moved the second model of
+  `StraightExitLabel.test_a_line_turning_in_the_gutter_from_the_far_side_is_no_warning` in
+  `tests/test_label_lines.py`, hand-made so that `a? -> b` is cheapest straight up: its two descents
+  tie at Phi 82 and the lower sum, 66 against 72, is the routing that sends that edge round the
+  margin beside the card instead of straight up, 11 of `own` against 14, with `g -> a?` moving to
+  the other margin along with it, 8 against 11 — `own` charges +8 for a first step through the top
+  of a card. That routing crosses once where the other crosses nothing, so the crossings take the
+  case back to the straight exit and it stands as it was written. The order costs one fixture
+  instead: the fourth case of `test_a_line_along_the_gutter_counts_when_it_runs_on_the_card_side_of_the_text`,
+  the exit up, whose two descents tie at Phi 78 with the crossing on the side of the lower sum, 60
+  against 61 — a straight exit up crosses whatever runs along the gutter over it, which is the very
+  line that case measures. Its model now carries a card in the cell beside `a?`, where a labelled
+  line that leaves sideways pays the +8 of the occupied cell it heads towards: the way round costs
+  16 of `own` against the 14 of the two steps up, both descents draw the exit straight, and
+  `ExitLabelCase.straight_exit` asserts that premise under its own name rather than leaving it to
+  the first assertion that trips over it.

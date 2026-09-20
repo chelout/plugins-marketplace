@@ -359,8 +359,11 @@ Amended 2026-09-20, after stage B landed, which this section was written before:
    the new path only if ΔΦ < 0, put the kept path back. Repeat until a pass changes nothing, at most
    eight passes. The descents share a budget of 600 `route` calls, half each, the second taking what
    the first left; when it runs out the current routing, which is always complete, is kept.
-4. The lower Φ wins; on a tie the lower Σ own — the routing whose lines are each nearer their own
-   best — and the first start only when that ties too. (Amended 2026-09-20. The first text gave
+4. The lower Φ wins; on a tie the fewer crossings, then the lower Σ own — the routing whose lines
+   are each nearer their own best — and the first start only when all three tie. (Amended
+   2026-09-20, twice. Crossings come first because a tie of Φ can hide one: a fixture of
+   `tests/test_label_lines.py` ties at Φ 82 with one routing crossing once and the other not at
+   all, the crossing paid for by 6 of `own` and 4 of `pair`, and Σ own alone picked the crossing. The first text gave
    the tie to the first start. On the shipped `verdict-row-lifecycle` the two descents end at Φ 60:
    the greedy one sends `none -> declined_retry` out through the bottom of its card and along the
    gutter under the label of `none -> approved`, which draws a label warning; the other one, which

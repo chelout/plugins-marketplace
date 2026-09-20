@@ -977,7 +977,23 @@ def route_all(lat, ends, labelled, room=None, budget=BUDGET, passes=PASSES, trac
     every edge routed alone, which starts from every line's own best and pays for all the conflicts
     at once. From each a descent — every edge in turn taken out, routed again against the rest, and
     the new path kept only where ΔΦ is under zero — until a pass changes nothing or `passes` run
-    out. The lower Phi wins, the first start on a tie.
+    out.
+
+    The lower Phi wins; on a tie the fewer crossings, then the lower sum of `own`, which is the
+    routing whose lines are each nearer their own best, and the first start only when all three
+    tie. Phi prices a whole routing and knows nothing of labels until stage E, so where it cannot
+    tell two routings apart the one that keeps its lines out of gutters they have no business in is
+    the one to take: on the shipped `verdict-row-lifecycle` both descents end at Phi 60 and the sums
+    are 53 and 52, and the lower one is the routing that leaves a card through the side instead of
+    running under another line's label. Measured over 600 plans of 300 seeded labelled models the
+    rule moves neither the label warnings, 1 148, nor the crossings, 5 466.
+
+    The crossings come before the sum because a tie of Phi can hide one: Phi charges ten for a
+    crossing, so a routing that crosses can be ten cheaper in `own` and still cost the same, and a
+    reader is served worse by a crossing than by lines that run a little further from their own
+    best. They are counted only where Phi ties — `crossings` walks every pair of a whole routing,
+    some three times what a whole Phi of it costs, and two descents rarely end at one Phi: over the
+    ten dense plans of `tools/bench_routing.py` they never do.
 
     The descents share `budget` calls of `route`, half to the first and everything left to the
     second; the starts are outside it, because a routing is complete or it is not a routing. When
@@ -993,12 +1009,27 @@ def route_all(lat, ends, labelled, room=None, budget=BUDGET, passes=PASSES, trac
     best, left = None, budget
     for start, paths in enumerate((_greedy(lat, ends, labelled, order),
                                    _alone(lat, ends, labelled))):
-        total, spent = _descend(lat, ends, labelled, order, paths, nodes, room,
-                                budget // 2 if start == 0 else left, passes, trace, start)
+        total, own, spent = _descend(lat, ends, labelled, order, paths, nodes, room,
+                                     budget // 2 if start == 0 else left, passes, trace, start)
         left -= spent
         if best is None or total < best[0]:
-            best = (total, paths)
-    return best[1]
+            take = True
+        elif total > best[0]:
+            take = False
+        else:
+            # Phi ties, and this is the only place the crossings are counted: the count walks
+            # every pair of the routing, more than a whole Phi of it does, and a strict comparison
+            # here leaves the first start the tie that neither the crossings nor the sum breaks
+            take = (_crossings(paths), own) < (_crossings(best[2]), best[1])
+        if take:
+            best = (total, own, paths)
+    return best[2]
+
+
+def _crossings(paths):
+    """The crossings of a routing `route_all` holds, where an edge with no route is None and is no
+    part of any crossing."""
+    return crossings([p for p in paths if p is not None])
 
 
 def _canonical(ends, labelled):
@@ -1036,8 +1067,10 @@ def _alone(lat, ends, labelled):
 
 
 def _descend(lat, ends, labelled, order, paths, nodes, room, budget, passes, trace, start):
-    """One descent on Phi, written back into `paths`; returns Phi of the routing it leaves and how
-    many calls of `route` it made.
+    """One descent on Phi, written back into `paths`; returns Phi of the routing it leaves, the sum
+    of `own` over its paths — the second key a tie of Phi is decided on, after the crossings — and
+    how many calls of `route` it made. The sum costs nothing here: the loop holds the Info of every
+    standing path already, and describing them a second time would be a walk of the whole routing.
 
     The routing is complete at every moment — a proposal replaces a path or the old one goes back —
     so a budget that runs out in the middle of a pass leaves a diagram that can be drawn. What the
@@ -1088,7 +1121,7 @@ def _descend(lat, ends, labelled, order, paths, nodes, room, budget, passes, tra
             break  # a pass that moved nothing moves nothing on the next one either
     for n, i in enumerate(live):
         paths[i] = cur[n]
-    return total, spent
+    return total, sum(info.own for info in infos), spent
 
 
 def _weigh(n, new, infos, paths, nodes, room, over, memo):

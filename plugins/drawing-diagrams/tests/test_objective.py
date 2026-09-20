@@ -16,12 +16,13 @@ The states with room are planned the way `flow.plan` plans a model: the geometry
 only the lattice and the ends are built here, because a case has to reroute one edge against the
 rest and that needs both.
 
-The last three classes are the search that spends the arithmetic (spec 5.3, criterion C3): the
-routing `route_all` returns is held against the loop of `tests/reference.py`, which is the routing
-the renderer had before it, by Phi on a hundred seeded instances and by crossings on the shipped
-examples; Phi is held to falling strictly across the changes the descent records; and a model whose
-plan refuses a group is routed through `flow.plan` itself, where the overflow term is the one the
-production routing has to be able to see at all.
+The last classes are the search that spends the arithmetic (spec 5.3, criterion C3): the routing
+`route_all` returns is held against the loop of `tests/reference.py`, which is the routing the
+renderer had before it, by Phi on a hundred seeded instances and by crossings on the shipped
+examples; Phi is held to falling strictly across the changes the descent records; the tie of two
+descents that end at one Phi is read on the shipped model the rule for it was amended for; and a
+model whose plan refuses a group is routed through `flow.plan` itself, where the overflow term is
+the one the production routing has to be able to see at all.
 """
 import collections
 import itertools
@@ -78,6 +79,11 @@ DESCENT_CONFIG = ("flow", "page", ("[1]",))
 # The instances the trace is read on. Every one of them is routed a second time to read its Phi, and
 # what the trace says holds per instance rather than over a population.
 TRACED = 12
+
+# The shipped example the tie of spec 5.3 item 4 was amended for, and the edge whose label the rule
+# keeps clear of the other line.
+TIE_EXAMPLE = "verdict-row-lifecycle.json"
+TIE_EDGE = "none -> approved"
 
 # The model the finding G1 is proved on: three cards under an empty row with seven edges between the
 # outer two, which no gutter and no margin of a page holds.
@@ -320,14 +326,19 @@ def measured(with_room, with_labels=False):
     return out
 
 
-def plan_route_all(model, mode):
+def plan_route_all(model, mode, trace=None):
     """What `flow.plan` hands `router.route_all` and what it gets back, per call, and the warnings
     the plan ended with. The plan is a draft, so a model the capacity check refuses still returns
-    instead of raising, and what the routing of such a model costs stays readable."""
+    instead of raising, and what the routing of such a model costs stays readable.
+
+    `trace`, when a caller passes a list, is handed to `route_all` as well — `flow.plan` asks for
+    none — so the changes each descent accepted can be read from the planner's own call."""
     seen = []
     real = router.route_all
 
     def spy(lat, ends, labelled, **kwargs):
+        if trace is not None:
+            kwargs["trace"] = trace
         out = real(lat, ends, labelled, **kwargs)
         seen.append((lat, list(ends), list(labelled), kwargs.get("room"), out))
         return out
@@ -662,6 +673,49 @@ class TheShippedExamplesCrossNoMore(unittest.TestCase):
                     ref = reference_route_all(lat, ends, labelled)
                     self.assertLessEqual(router.crossings([p for p in got if p is not None]),
                                          router.crossings([p for p in ref if p is not None]))
+
+
+class TheTieKeepsTheLabelOfTheShippedExample(unittest.TestCase):
+    """Spec 5.3 item 4, as amended on 2026-09-20: two routings of one Phi are told apart by the sum
+    of `own`, and the first start takes the tie only when that ties too.
+
+    `verdict-row-lifecycle` is the shipped model the rule was amended for. Its two descents both end
+    at Phi 60: the one from the greedy start sends `none -> declined_retry` out through the bottom
+    of its card and along the gutter under the label of `none -> approved`, which `flow.plan` warns
+    about, and the one from the routing where every edge was routed alone — which is also what the
+    loop before this stage drew — leaves through the side of the card. Phi knows nothing about
+    labels until stage E, so the rule answers this without being told what a label is: the sum of
+    `own` is 53 against 52, and the lines of the second routing are each nearer their own best.
+
+    A descent is what puts the higher sum on the first start here, which the hand-made pair of
+    `TheTieGoesToTheLowerSumOfOwn` in `tests/test_route_all.py` cannot do from the starts alone."""
+
+    def model(self):
+        found = [model for path, model in bench_routing.examples() if path.name == TIE_EXAMPLE]
+        self.assertEqual(len(found), 1, f"harness: {TIE_EXAMPLE} is no longer a shipped example")
+        return found[0]
+
+    def test_the_label_of_the_edge_lies_on_no_other_line_in_either_mode(self):
+        for mode in bench_routing.MODES:
+            _, warnings = plan_route_all(self.model(), mode)
+            with self.subTest(mode=mode):
+                self.assertEqual([w for w in warnings if TIE_EDGE in w and "подпись" in w], [],
+                                 "the routing of the example puts a line under that label again")
+
+    def test_the_two_descents_of_the_example_really_end_at_one_phi(self):
+        """What the case has to hold for the test above to read the tie rule: the two descents end
+        at the same Phi, so nothing but the sum of `own` decides between them. Each of them accepts
+        a change on this model, so the Phi each ends at is the last one it wrote to the trace."""
+        for mode in bench_routing.MODES:
+            trace = []
+            plan_route_all(self.model(), mode, trace)
+            with self.subTest(mode=mode):
+                starts = {change.start for change in trace}
+                self.assertEqual(starts, {0, 1}, "harness: a descent accepted nothing, so the Phi "
+                                                 "it ended at was never written to the trace")
+                ended = [[c for c in trace if c.start == start][-1].phi for start in sorted(starts)]
+                self.assertEqual(ended[0], ended[1], "harness: the two descents no longer tie on "
+                                                     "this model, so the rule is not what decides")
 
 
 class ProductionRoutingSeesTheOverflow(unittest.TestCase):

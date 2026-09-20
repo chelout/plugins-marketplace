@@ -2,7 +2,9 @@
 
 The routing does not depend on the order `ends` are given in, two calls on one model give the same
 paths, the descents stay inside their budget of `route` calls while every routable edge still comes
-back with a path, and an edge with no route is None in its own place and takes no part in the rest.
+back with a path, an edge with no route is None in its own place and takes no part in the rest, and
+two routings of equal Phi are told apart by their crossings and then by the sum of `own`, before the
+start they came from.
 
 The identity with the loop of `tests/reference.py` went with this task: `route_all` is no longer
 that loop, and what replaced the comparison is Phi against it in `tests/test_objective.py`.
@@ -24,6 +26,31 @@ SEEDS = (1, 2, 3, 4, 5)
 # where the two starts alone ask for more calls of `route` than the whole descent budget.
 PARALLEL = 350
 SMALL_BUDGET = 10
+
+# The first hand-made pair of routings the tie of spec 5.3 item 4 is read on, where the crossings
+# tie and the sum of `own` decides: four cards, two edges, and `c -> d` drawn two ways that cost the
+# same Phi and differ by one in the sum — the shape the shipped `verdict-row-lifecycle` has it in,
+# where the sums are 52 and 53.
+TIE_CELLS = {"a": (0, 0), "b": (2, 2), "c": (0, 2), "d": (2, 0)}
+TIE_GRID = (3, 3)
+TIE_EDGES = (("a", "b"), ("c", "d"))
+TIE_SHARED = [(1, 1), (4, 1), (4, 4), (5, 4), (5, 5)]  # a -> b, drawn the same way in both, own 15
+TIE_CHEAP = [(5, 1), (5, 4), (1, 4), (1, 5)]           # c -> d down the gutter of its own, own 13
+TIE_DEAR = [(5, 1), (4, 1), (4, 4), (1, 4), (1, 5)]    # c -> d along the other line's, own 14
+TIE_COSTS = ((42, 28, 1), (42, 29, 1))                 # (Phi, sum of own, crossings), cheap first
+
+# The second pair, where the crossings do not tie and decide before the sum: four cards again, with
+# `e` between `n` and `s` so that `n -> s` has to go round it. The cheap way round is the gutter
+# beside `m`, where it cuts across `m -> e`; the dear way is round the far side and the bottom
+# margin, which crosses nothing and costs ten more in `own` — exactly what Phi charges the crossing,
+# so the two routings cost the same and the sum of `own` alone would take the one that crosses.
+CROSS_CELLS = {"m": (1, 0), "e": (1, 1), "n": (0, 1), "s": (2, 1)}
+CROSS_GRID = (3, 3)
+CROSS_EDGES = (("m", "e"), ("n", "s"))
+CROSS_SHARED = [(1, 3), (3, 3)]                           # m -> e, straight across the gutter, own 2
+CROSS_CHEAP = [(3, 1), (2, 1), (2, 5), (3, 5)]            # n -> s across m -> e, own 10
+CROSS_CLEAR = [(3, 1), (4, 1), (4, 6), (3, 6), (3, 5)]    # n -> s round the far side, own 20
+CROSS_COSTS = ((22, 12, 1), (22, 22, 0))                  # as above, the crossing routing first
 
 
 def ends_of(cells, edges):
@@ -50,6 +77,15 @@ def shuffled_runs():
         yield cols, rows, cells, edges
     for cols, rows, cells, edges in instances.dense(*SHUFFLED[1]):
         yield cols, rows, cells, edges
+
+
+def table_route(first, second):
+    """`router.route` replaced by a table of paths per edge: `second`'s for a call given no traffic
+    at all, which is the second start and nothing else (`_alone`), and `first`'s for every other
+    call — the first start, and every proposal either descent makes."""
+    def fake(lat, src, dst, labelled=False, traffic=None, cost=None):
+        return list((second if traffic is None else first)[(src, dst)])
+    return fake
 
 
 def counting():
@@ -166,6 +202,105 @@ class Unroutable(unittest.TestCase):
         lat, ends, labelled = self.walled()
         got = router.route_all(lat, ends, labelled)
         self.assertEqual(got[1:], router.route_all(lat, ends[1:], labelled[1:]))
+
+
+class TieCase(unittest.TestCase):
+    """A pick between two routings of one Phi, read on a hand-made pair through a table of `route`.
+
+    The pair is hand-made because the two starts of a real model cannot be made to hold an arbitrary
+    pair: `_alone` routes every edge with nothing else there, so the second start's sum of `own` is
+    the lowest any routing of that model has, and "the lower sum" and "the second start" would be
+    one answer. Only a descent can raise it — which is what happens on the shipped model of
+    `TheTieKeepsTheLabelOfTheShippedExample` in `tests/test_objective.py` — and a table raises it
+    directly, so every rule below is read both ways round.
+
+    Neither descent moves anything: every proposal is the path the routing already holds (the first
+    start) or ties with it (the second), so the trace stays empty and what the cases read is the
+    pick between the starts and nothing else.
+
+    A subclass states the model in `cells`, `grid` and `edges`, and the path its first edge is drawn
+    with in both routings as `shared`; its cases vary the second edge."""
+
+    cells = grid = edges = shared = None
+
+    def setUp(self):
+        self.lat = router.Lattice(*self.grid, self.cells)
+        self.ends = ends_of(self.cells, self.edges)
+        self.labelled = [False] * len(self.ends)
+
+    def picked(self, first, second):
+        """What `route_all` returns when the first start draws the second edge the one way and the
+        second start the other."""
+        tables = ({self.ends[0]: self.shared, self.ends[1]: first},
+                  {self.ends[0]: self.shared, self.ends[1]: second})
+        trace = []
+        with mock.patch.object(router, "route", table_route(*tables)):
+            got = router.route_all(self.lat, self.ends, self.labelled, trace=trace)
+        self.assertEqual(trace, [], "harness: a descent accepted a change, so what the pick was "
+                                    "given is no longer the pair of routings this case states")
+        return got
+
+    def costs(self, *others):
+        """(Phi, sum of `own`, crossings) per routing, counted here from `describe`, `phi` and
+        `crossings` rather than taken from the search: what a case asserts its own premise on."""
+        nodes = frozenset(self.lat.blocked)
+        out = []
+        for other in others:
+            infos = [router.describe(self.lat, p, False) for p in (self.shared, other)]
+            out.append((router.phi(infos, nodes, None), sum(info.own for info in infos),
+                        router.crossings([self.shared, other])))
+        return tuple(out)
+
+
+class TheTieGoesToTheLowerSumOfOwn(TieCase):
+    """Spec 5.3 item 4, as amended on 2026-09-20: the lower Phi wins; on a tie of Phi the fewer
+    crossings, then the lower sum of `own` — the routing whose lines are each nearer their own
+    best — and the first start only when all three tie.
+
+    Here the crossings tie, so the sum is what decides, which is the shape the shipped
+    `verdict-row-lifecycle` has the tie in."""
+
+    cells, grid, edges, shared = TIE_CELLS, TIE_GRID, TIE_EDGES, TIE_SHARED
+
+    def test_the_second_start_takes_the_tie_when_its_sum_is_the_lower_one(self):
+        # what the first text of the spec answered wrong: the tie went to the first start
+        self.assertEqual(self.picked(TIE_DEAR, TIE_CHEAP), [TIE_SHARED, TIE_CHEAP])
+
+    def test_the_first_start_takes_it_when_its_sum_is(self):
+        # the same tie the other way round, which "always the second start" answers wrong
+        self.assertEqual(self.picked(TIE_CHEAP, TIE_DEAR), [TIE_SHARED, TIE_CHEAP])
+
+    def test_the_two_routings_tie_on_phi_and_on_crossings_and_differ_in_the_sum_of_own(self):
+        """What the pair has to be for the two cases above to read the sum at all: one Phi and one
+        count of crossings for both routings, so neither key before the sum decides anything, and
+        two sums, so the sum decides."""
+        self.assertEqual(self.costs(TIE_CHEAP, TIE_DEAR), TIE_COSTS)
+
+
+class TheTieGoesToTheFewerCrossingsBeforeTheSumOfOwn(TieCase):
+    """The same rule where the two keys disagree: a tie of Phi can hide a crossing, because Phi
+    charges ten for one and the routing that crosses can be ten cheaper in `own` for it. The reader
+    is served worse by a crossing than by lines that run a little further from their own best, so
+    the crossings are asked first and the routing that crosses nothing wins the tie it would lose on
+    the sum alone.
+
+    They are asked only on a tie: `crossings` walks every pair of a whole routing, which costs some
+    three times what a whole Phi of it does, and two descents rarely end at one Phi."""
+
+    cells, grid, edges, shared = CROSS_CELLS, CROSS_GRID, CROSS_EDGES, CROSS_SHARED
+
+    def test_the_second_start_takes_the_tie_when_it_is_the_one_that_crosses_nothing(self):
+        self.assertEqual(self.picked(CROSS_CHEAP, CROSS_CLEAR), [CROSS_SHARED, CROSS_CLEAR])
+
+    def test_the_first_start_takes_it_when_it_is(self):
+        # the same tie the other way round, so neither start can be what the pick follows
+        self.assertEqual(self.picked(CROSS_CLEAR, CROSS_CHEAP), [CROSS_SHARED, CROSS_CLEAR])
+
+    def test_the_two_routings_tie_on_phi_and_the_lower_sum_of_own_is_the_one_that_crosses(self):
+        """What the pair has to be for the two cases above to read the order of the two keys: one
+        Phi, so the crossings are reached at all, and a sum that points the other way, so a rule
+        that asked for the lower sum first would answer both of them wrong."""
+        self.assertEqual(self.costs(CROSS_CHEAP, CROSS_CLEAR), CROSS_COSTS)
 
 
 if __name__ == "__main__":
