@@ -1,5 +1,5 @@
-"""advice.moves: what a rearrangement advice may propose on a grid (spec 6 "Moves" and "Swimlane",
-criterion D1).
+"""advice: what a rearrangement advice may propose on a grid, and the search that prices it (spec 6
+"Moves", "Swimlane" and "Search", criteria D1 and D2).
 
 The moves come in the order spec 6 asks for — inside one row, then to the adjacent row, then the
 rest — and every one of them is judged against the grid the author wrote, never against the grid it
@@ -19,14 +19,28 @@ A swimlane moves no node of its own: a column is a lane and a row is a moment, s
 lane order that takes the grid columns with it. `LaneOrders` holds the cap of the plan's gate
 finding G3 with a model of twelve lanes: the test returning at all is the evidence that no
 permutation of it was ever drawn.
+
+The search is held to the twelve seeded models of `bench_routing.seeded_models` — the first twelve
+instances of `instances.small` whose naive reading-order grid crosses three times or more, which is
+what makes the renderer ask for advice at all. The benchmark owns them because it measures the
+search on the very population the tests hold it to, and two lists could drift apart.
+
+Every plan the search makes goes through `flow.plan`, so `counted()` puts a spy in its place and the
+tests read the count and the arguments off it: the allowance of plans (spec 6), the gate's finding
+G3 (a model over a limit of its mode is advised nothing and plans nothing at all) and its finding G2
+(the render's overrides reach every verifying plan, so a move is never verified against a geometry
+the render will not use).
 """
+import contextlib
 import copy
 import json
 import re
 import unittest
 
 import support  # noqa: F401
+from bench_routing import ADVICE_MODE, seeded_models
 from diagrams import advice, flow
+from diagrams.common import ModelError
 from diagrams.grid import parse_grid
 
 TOKEN = re.compile(r"\S+")
@@ -68,6 +82,38 @@ def named(moves):
 
 def starts(row):
     return [m.start() for m in TOKEN.finditer(row)]
+
+
+@contextlib.contextmanager
+def counted():
+    """`flow.plan` with a spy in front of it for the length of the block, yielding the list of calls
+    it saw — one dict of (mode, overrides, draft) per plan. The advice reaches the planner through
+    the module, so this is every plan it makes and no plan of anyone else's."""
+    calls = []
+    real = flow.plan
+
+    def spy(model, mode_name, overrides=None, draft=False):
+        calls.append({"mode": mode_name, "overrides": overrides, "draft": draft})
+        return real(model, mode_name, overrides, draft)
+
+    flow.plan = spy
+    try:
+        yield calls
+    finally:
+        flow.plan = real
+
+
+def one_seeded():
+    """The cheapest of the twelve seeded models to search — the fewest edges, and the earliest
+    instance among those. The tests that ask the search one question rather than twelve use it, so
+    that asking it costs one small routing."""
+    return min(seeded_models(), key=lambda km: (len(km[1]["edges"]), km[0]))[1]
+
+
+def move_named(model, mode_name, kind, **want):
+    """The one move of `model` the test means, by kind and by the attributes that name it."""
+    return next(m for m in advice.moves(model, model, mode_name)
+                if m.kind == kind and all(getattr(m, k) == v for k, v in want.items()))
 
 
 # The flow the order of spec 6 is read on: `start` and `spare` share the first row, `check` stands
@@ -142,6 +188,27 @@ SWIM = {"kind": "swimlane",
                  ".     .     call",
                  "done  .     ."],
         "edges": ["ask -> look", "look -> call", "call -> done"]}
+
+
+# A column of three cards and a free column beside it. Every swap turns a downward edge, so the
+# moves are the six that carry one card sideways, and each of them lengthens a line that runs
+# straight down: the search verifies them and keeps none.
+STRAIGHT = {"kind": "flow",
+            "nodes": [card("a"), card("b"), terminal("c")],
+            "grid": ["a  .", "b  .", "c  ."],
+            "edges": ["a -> b", "b -> c"]}
+
+# Gate finding G2: the render forwards --width to `flow.plan`, so a verifying plan run at another
+# width verifies a picture the render will not draw. Carrying `a` into the second column turns
+# `a -> c` into a straight line down and shortens the routing, and it puts the label under the card
+# of the last column, where what is left of the page bounds it: 147.6 px of text against 184 px of
+# room at the page's own 1100 and 139 px at 560. So the move is an improvement at the default width
+# and a label that does not fit at the narrow one.
+NARROW = {"total": 560}
+G2 = {"kind": "flow",
+      "nodes": [card("a"), card("c"), terminal("d")],
+      "grid": ["a  .", ".  c", ".  d"],
+      "edges": ["a -> c : ответ провайдера получен", "c -> d"]}
 
 
 def wide_swimlane(n):
@@ -442,6 +509,204 @@ class NothingToAdvise(unittest.TestCase):
     def test_one_card_alone(self):
         alone = {"kind": "flow", "nodes": [terminal("a")], "grid": ["a"], "edges": []}
         self.assertEqual([], advice.moves(alone, alone))
+
+
+class WhatADraftPlanReports(unittest.TestCase):
+    """Spec 6 as amended: `flow.plan(…, draft=True)` puts into `layout` what the search needs — the
+    slots the routing takes past what its lattice lines hold, and the groups that take them — and
+    nothing else of `layout` changes. `overfull-gutter.json` is the model the check refuses in
+    widget mode, so its draft is the one that has something to report."""
+
+    def test_a_draft_plan_reports_the_overflow_and_its_group(self):
+        layout, warnings = flow.plan(model("overfull-gutter.json"), "widget", None, draft=True)
+        self.assertEqual(1, layout["overflow"])
+        self.assertEqual(1, len(layout["overfull"]))
+        axis, line, width, idx, cap = layout["overfull"][0]
+        # the gutter between the first two columns holds three lines and is drawn with four
+        self.assertEqual(("v", 2, 4, 3), (axis, line, width, cap))
+        self.assertEqual(width - cap, layout["overflow"])
+        named_edges = {(layout["edges"][i]["a"], layout["edges"][i]["b"]) for i in idx}
+        self.assertEqual({("utochnenie", "otvet"), ("utochnenie", "peredano"),
+                          ("robot", "zayavka"), ("razbor", "utochnenie")}, named_edges)
+        self.assertTrue([w for w in warnings if w.startswith("черновик: между столбцами 0 и 1")])
+
+    def test_without_the_draft_the_model_is_refused(self):
+        with self.assertRaises(ModelError):
+            flow.plan(model("overfull-gutter.json"), "widget")
+
+    def test_a_plan_that_is_not_a_draft_carries_the_two_keys_too(self):
+        # A plan without `draft` that returns at all has no group past its capacity — such a group
+        # is a layout error and the plan raises instead of returning — so the two keys are there
+        # with nothing in them, and a caller reads one shape whatever it asked for.
+        layout, _ = flow.plan(copy.deepcopy(ORDER), "page")
+        self.assertEqual((0, []), (layout["overflow"], layout["overfull"]))
+
+
+class TheProxy(unittest.TestCase):
+    """Spec 6: the cheap ranking — 10 per crossing of the straight lines between cell centres, 6 per
+    node lying on the straight line of an edge along one row or column, 3 per edge going up, plus
+    the Manhattan length of them all. It reads the grid and the edges and plans nothing."""
+
+    def proxy_of(self, grid, edges):
+        return advice.proxy({"kind": "flow", "grid": grid, "edges": edges,
+                             "nodes": [card(t) for row in grid for t in row.split() if t != "."]})
+
+    def test_the_length_of_one_edge(self):
+        self.assertEqual(2, self.proxy_of(["a  .  b"], ["a -> b"]))
+
+    def test_an_edge_that_goes_up(self):
+        self.assertEqual(3 + 1, self.proxy_of(["b", "a"], ["a -> b"]))
+
+    def test_a_node_on_the_line_of_an_edge_along_a_row(self):
+        self.assertEqual(6 + 2, self.proxy_of(["a  c  b"], ["a -> b"]))
+
+    def test_a_node_beside_the_line_is_not_on_it(self):
+        self.assertEqual(2, self.proxy_of(["a  .  b", ".  c  ."], ["a -> b"]))
+
+    def test_two_lines_that_cross(self):
+        self.assertEqual(10 + 4 + 4, self.proxy_of(["a  .  d", ".  .  .", "c  .  b"],
+                                                   ["a -> b", "d -> c"]))
+
+    def test_two_lines_that_meet_at_a_card_do_not_cross(self):
+        self.assertEqual(2 + 2, self.proxy_of(["a  .  b", ".  c  ."], ["a -> c", "b -> c"]))
+
+    def test_a_grid_the_parser_refuses_scores_nothing(self):
+        self.assertEqual(0, advice.proxy({"kind": "flow", "nodes": [], "edges": []}))
+
+
+class Evaluating(unittest.TestCase):
+    """Spec 6 as amended: `evaluate` plans a deep copy as a draft and answers the score the search
+    compares — (slots over capacity, crossings as the plan reports them, the Manhattan length of the
+    paths) — together with the messages the draft downgraded."""
+
+    def test_the_score_and_the_messages_of_the_draft(self):
+        score, errors = advice.evaluate(model("overfull-gutter.json"), "widget")
+        self.assertEqual((1, 3), score[:2])
+        self.assertGreater(score[2], 0)
+        self.assertEqual(1, len(errors))
+        self.assertTrue(next(iter(errors)).startswith("между столбцами 0 и 1"))
+        self.assertFalse([e for e in errors if e.startswith("черновик")])
+
+    def test_a_model_nothing_is_wrong_with_has_no_messages(self):
+        score, errors = advice.evaluate(ORDER, "page")
+        self.assertEqual(set(), errors)
+        self.assertEqual(0, score[0])
+
+    def test_the_argument_is_left_untouched(self):
+        before = copy.deepcopy(ORDER)
+        advice.evaluate(ORDER, "page")
+        self.assertEqual(before, ORDER)
+
+    def test_two_calls_agree(self):
+        self.assertEqual(advice.evaluate(ORDER, "page"), advice.evaluate(ORDER, "page"))
+
+    def test_the_plan_it_makes_is_a_draft_at_the_mode_and_the_overrides_it_was_given(self):
+        with counted() as calls:
+            advice.evaluate(ORDER, "page", NARROW)
+        self.assertEqual([{"mode": "page", "overrides": NARROW, "draft": True}], calls)
+
+
+class HillClimbing(unittest.TestCase):
+    """Criterion D2, on the twelve seeded models: the search returns moves, the advised grid scores
+    lower than the one the author wrote, a fresh plan of it gives that very score, and it carries no
+    message the start did not carry."""
+
+    def test_every_seeded_model_is_improved_and_the_advice_holds(self):
+        for k, m in seeded_models():
+            with self.subTest(instance=k):
+                with counted() as calls:
+                    found = advice.search(m, ADVICE_MODE)
+                self.assertTrue(found, "no move improved this model")
+                self.assertLessEqual(len(calls), advice.MAX_PLANS)
+                self.assertLessEqual(len(found), advice.MAX_MOVES)
+                advised = m
+                for move, _, _ in found:
+                    advised = move.apply(advised)
+                start, start_errors = advice.evaluate(m, ADVICE_MODE)
+                score, errors = advice.evaluate(advised, ADVICE_MODE)
+                self.assertEqual(start, found[0][1])
+                self.assertEqual(score, found[-1][2])
+                self.assertLess(score, start)
+                self.assertEqual(set(), errors - start_errors)
+
+    def test_the_score_falls_strictly_at_every_step(self):
+        found = advice.search(one_seeded(), ADVICE_MODE)
+        for move, before, after in found:
+            self.assertLess(after, before, move.text())
+        for (_, _, after), (_, before, _) in zip(found, found[1:]):
+            self.assertEqual(after, before)
+
+    def test_the_same_model_twice_gives_the_same_moves(self):
+        m = one_seeded()
+        self.assertEqual(named([x[0] for x in advice.search(m, ADVICE_MODE)]),
+                         named([x[0] for x in advice.search(m, ADVICE_MODE)]))
+
+    def test_the_argument_is_left_untouched(self):
+        m = one_seeded()
+        before = copy.deepcopy(m)
+        self.assertTrue(advice.search(m, ADVICE_MODE))
+        self.assertEqual(before, m)
+
+    def test_a_model_no_move_improves_gets_nothing(self):
+        with counted() as calls:
+            self.assertEqual([], advice.search(STRAIGHT, "page"))
+        self.assertGreater(len(calls), 1, "harness: this model no longer has a move to verify")
+
+
+class ThePlanAllowance(unittest.TestCase):
+    """Spec 6: the search is bounded in verifying plans and in moves, and the gate's finding G3 —
+    a model over a limit of its mode is advised nothing and does not plan even once."""
+
+    def test_the_allowance_is_what_stops_it(self):
+        m = one_seeded()
+        with counted() as calls:
+            advice.search(m, ADVICE_MODE, None, max_plans=9)
+        self.assertLessEqual(len(calls), 9)
+        self.assertGreater(len(calls), 1)
+
+    def test_the_move_count_is_what_stops_it(self):
+        m = one_seeded()
+        self.assertEqual(1, len(advice.search(m, ADVICE_MODE, None, max_moves=1)))
+
+    def test_a_model_over_a_limit_of_its_mode_plans_nothing(self):
+        with counted() as calls:
+            self.assertEqual([], advice.search(wide_swimlane(12), ADVICE_MODE))
+        self.assertEqual([], calls)
+
+    def test_a_model_the_renderer_refuses_outright_is_advised_nothing(self):
+        broken = copy.deepcopy(ORDER)
+        broken["edges"] = ORDER["edges"] + ["check -> nowhere"]
+        self.assertEqual([], advice.search(broken, "page"))
+
+
+class TheRendersOwnWidth(unittest.TestCase):
+    """Gate finding G2: every verifying plan is made at the geometry the render will draw, so a move
+    is never offered on the strength of a width the render does not use."""
+
+    def test_the_start_fits_at_both_widths(self):
+        for overrides in (None, NARROW):
+            with self.subTest(overrides=overrides):
+                self.assertEqual(set(), advice.evaluate(G2, "page", overrides)[1])
+
+    def test_the_move_carries_a_label_error_at_the_narrow_width_alone(self):
+        moved = move_named(G2, "page", "shift", node="a", cell=(0, 1)).apply(G2)
+        self.assertEqual(set(), advice.evaluate(moved, "page")[1])
+        errors = advice.evaluate(moved, "page", NARROW)[1]
+        self.assertEqual(1, len(errors))
+        self.assertIn("не помещается у выхода вниз", next(iter(errors)))
+
+    def test_the_move_is_offered_at_the_default_width(self):
+        found = advice.search(G2, "page")
+        self.assertEqual([("shift", "a", (0, 1))], named([x[0] for x in found]))
+
+    def test_and_is_not_offered_under_the_narrow_override(self):
+        self.assertEqual([], advice.search(G2, "page", NARROW))
+
+    def test_every_verifying_plan_gets_the_overrides(self):
+        with counted() as calls:
+            advice.search(G2, "page", NARROW)
+        self.assertTrue(calls)
+        self.assertEqual([{"mode": "page", "overrides": NARROW, "draft": True}] * len(calls), calls)
 
 
 if __name__ == "__main__":

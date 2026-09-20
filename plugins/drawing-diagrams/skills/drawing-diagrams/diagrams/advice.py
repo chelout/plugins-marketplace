@@ -1,10 +1,17 @@
-"""The moves a rearrangement advice may propose, and the rules that keep the author's reading.
+"""The moves a rearrangement advice may propose, the rules that keep the author's reading, and the
+search that prices them.
 
 Spec 6. The author's grid stays the layout: nothing here changes a model, it only says what could
 be tried on one. A move is a swap of two cards, a card carried into an empty cell, or — in a
 swimlane, where a column is a lane and a row is a moment, so no card moves on its own — a lane
 order that takes the grid columns with it. `moves` offers them in the order of how little they
-disturb the reading, and the search of the next stage prices them.
+disturb the reading.
+
+`search` climbs: it ranks the moves of the grid in hand by `proxy`, a count off the grid itself
+that plans nothing, verifies the best few with `evaluate`, which plans, and takes the best of those
+when it scores lower and brings no message the author's own grid did not already carry. Then it
+does it again from the grid it took, until nothing improves, until the moves run out, or until the
+allowance of plans is spent.
 
 Every move produces a deep copy of the model with a new `grid` and nothing else touched. That is
 not tidiness: `flow.plan` writes `_note` and `_text` into the nodes of the model it plans, so a
@@ -15,6 +22,7 @@ import itertools
 import re
 
 from . import flow
+from .common import ModelError
 from .grid import parse_grid
 
 # A lane order is a permutation of the lanes, and permutations grow the way factorials do: a model
@@ -296,3 +304,145 @@ def _reach(here, there):
     """How far a move reaches, in the three steps spec 6 names: inside one row, to the row beside
     it, or anywhere else."""
     return min(2, abs(here - there))
+
+
+# What the proxy of spec 6 charges: a crossing of two straight lines between cell centres, a card
+# standing on the straight line of an edge along one row or column, and an edge that goes up. The
+# Manhattan length of every edge is added at one per step, which is what ranks two grids neither of
+# the three tells apart.
+PROXY_CROSSING = 10
+PROXY_ON_LINE = 6
+PROXY_UPWARD = 3
+
+
+def proxy(model):
+    """What a grid is worth before anything is routed (spec 6): ten per crossing of the straight
+    lines between the cell centres of the edges, six per card standing on such a line where it runs
+    along one row or one column, three per edge that goes up, plus their Manhattan length.
+
+    It reads the grid and the edges and plans nothing — which is the whole point of it: the search
+    ranks every move a grid offers by this and pays a routing only for the few it then verifies. It
+    is a ranking and not a prediction: it counts the lines an author would draw with a ruler, where
+    the router draws around the cards and through the gutters.
+
+    A grid the parser refuses has no cells and so scores nothing; there is nothing to rank."""
+    cells = _placement(model)[0]
+    return _proxy(cells, edges_of(model))
+
+
+def _proxy(cells, edges):
+    """`proxy` over a placement and the edges read once — what the search ranks a move by, without
+    the move's model being built to ask it."""
+    drawn = [(cells[a], cells[b]) for a, b in edges if a in cells and b in cells]
+    in_row, in_col = {}, {}
+    for r, c in cells.values():
+        in_row.setdefault(r, []).append(c)
+        in_col.setdefault(c, []).append(r)
+    total = PROXY_CROSSING * _straight_crossings(drawn)
+    for (r1, c1), (r2, c2) in drawn:
+        total += abs(r1 - r2) + abs(c1 - c2)
+        if r2 < r1:
+            total += PROXY_UPWARD
+        if r1 == r2:
+            total += PROXY_ON_LINE * sum(1 for c in in_row[r1] if min(c1, c2) < c < max(c1, c2))
+        elif c1 == c2:
+            total += PROXY_ON_LINE * sum(1 for r in in_col[c1] if min(r1, r2) < r < max(r1, r2))
+    return total
+
+
+def _straight_crossings(drawn):
+    """How many pairs of the straight lines between cell centres cross each other properly — each
+    line strictly through the other, so two edges that meet at a card, or run into one another end
+    to end, cross nothing. Cells are whole numbers, so the orientations below are exact."""
+    n = 0
+    for k, (a, b) in enumerate(drawn):
+        for c, d in drawn[k + 1:]:
+            if (_turn(a, b, c) * _turn(a, b, d) < 0) and (_turn(c, d, a) * _turn(c, d, b) < 0):
+                n += 1
+    return n
+
+
+def _turn(a, b, p):
+    """Which side of the line a -> b the point p lies on: positive, negative, or zero on it."""
+    return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+
+
+def evaluate(model, mode_name, overrides=None):
+    """What a grid is worth once it is routed: (score, messages).
+
+    The score is the tuple spec 6 compares lexicographically — the slots the routing takes past what
+    its lattice lines hold, the crossings the plan reports (the ones that are drawn, not the ones
+    the lattice paths would make), and the Manhattan length of every path in lattice steps. The
+    messages are the layout errors the draft plan carried on past, the prefix taken off, as a set:
+    the search asks of a move only that it bring none the author's own grid did not already have.
+
+    The plan is a draft — a grid under a move may be one the renderer refuses, and the score of such
+    a grid is what says so — and it is made on a deep copy, because `flow.plan` writes `_note` and
+    `_text` into the nodes it plans. `overrides` are the render's own (`--width` and the rest): a
+    plan made at another geometry verifies a picture the render will not draw.
+
+    Raises `ModelError` for a model the renderer refuses outright — one whose ids, edges or routes
+    are wrong rather than its layout. No move reaches such a model from one that plans: a move
+    changes the grid alone, and every error that stops a draft plan is read off everything else."""
+    layout, warnings = flow.plan(copy.deepcopy(model), mode_name, overrides, draft=True)
+    length = sum(abs(a[0] - b[0]) + abs(a[1] - b[1])
+                 for p in layout["paths"] for a, b in zip(p, p[1:]))
+    messages = {w[len(flow.DRAFT):] for w in warnings if w.startswith(flow.DRAFT)}
+    return (layout["overflow"], layout["crossings"], length), messages
+
+
+TOP = 8         # moves of one grid the proxy hands on to a verifying plan
+MAX_MOVES = 8   # moves one advice may propose
+MAX_PLANS = 40  # plans the whole search may make, the one it prices the author's own grid with included
+
+
+def search(model, mode_name, overrides=None, top=TOP, max_moves=MAX_MOVES, max_plans=MAX_PLANS):
+    """The moves that improve a model, verified by the router: [(Move, score before, score after)],
+    in the order they are applied, and empty when nothing improves.
+
+    Spec 6. One step: rank every move of the grid in hand by `proxy`, verify the best `top` with
+    `evaluate`, and take the best of the verified where its score is strictly lower than the grid's
+    own and its plan reports no message the author's grid did not already carry. Then step again
+    from the grid that move produces. It stops when no move improves, after `max_moves` of them, or
+    when `max_plans` plans are spent.
+
+    `max_plans` bounds every plan the search makes, the one that prices the author's own grid
+    included: it is the allowance a caller is charged, and a caller counting plans is counting all
+    of them. A model that offers no move at all — one over a limit of its mode, which is what
+    `moves` answers nothing for — is advised nothing without a single plan (the plan gate's finding
+    G3), so the largest models cost the least.
+
+    The rules of every move are judged against `model`, the grid the author wrote, at every step and
+    not against the grid the step starts from: that is what closes them over a sequence (`_Rules`).
+    The argument is never touched — `evaluate` plans a copy and `Move.apply` produces one — and two
+    searches of one model give one answer: `moves` is ordered, `proxy` is arithmetic, and a tie in
+    the ranking goes to the move `moves` offered first."""
+    found = moves(model, model, mode_name)
+    if not found:
+        return []
+    try:
+        score, allowed = evaluate(model, mode_name, overrides)
+    except ModelError:
+        return []  # the renderer refuses this model outright; there is nothing to advise about
+    spent, current, cells = 1, model, _placement(model)[0]
+    edges, out = edges_of(model), []
+    while len(out) < max_moves and spent < max_plans:
+        ranked = sorted(range(len(found)), key=lambda k: (_proxy(found[k].moved(cells), edges), k))
+        best = None
+        for k in ranked[:top]:
+            if spent >= max_plans:
+                break
+            candidate = found[k].apply(current)
+            spent += 1
+            new, messages = evaluate(candidate, mode_name, overrides)
+            if new < score and not messages - allowed and (best is None or new < best[0]):
+                best = (new, found[k], candidate)
+        if best is None:
+            break
+        out.append((best[1], score, best[0]))
+        score, current = best[0], best[2]
+        cells = _placement(current)[0]
+        found = moves(model, current, mode_name)
+        if not found:
+            break
+    return out
