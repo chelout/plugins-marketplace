@@ -401,12 +401,19 @@ Spec: §5.2, criterion C2.
 - `router.pair(a, b) -> int` per spec §5.2; `router.overflow(infos, nodes, room) -> int` from
   `router.overfull` (0 when `room` is `None`); `router.phi(infos, nodes, room) -> int`;
   `router.delta(i, new, infos, nodes, room) -> int`.
+  Amended 2026-09-20 (spec §5.2, after stage B): `own` also replays the +20 of a step along a line
+  whose capacity is 0, read from the lattice; `overflow` sums `width − capacity` over the
+  five-tuples of `router.overfull`; and it takes the lattice lines to look at, so that `delta`
+  recomputes it on the lines the old and the new path have runs on and nowhere else.
 
 - [ ] Tests on `instances.small(11, 100)`: `own(p)` equals the cost `route` reports for `p` with
   `traffic=None`, and equals it for labelled edges too; `phi` equals a direct count written in the
   test from `segments`, `crossings`, shared unit steps, corner hits, exits and entries; `delta`
   equals `phi(after) − phi(before)` for 200 seeded single-edge replacements, with and without
-  `room`.
+  `room`. Amended 2026-09-20: `own` is held equal to `route`'s cost on a lattice with
+  capacities too, a line that holds nothing among them; the instances with `room` must include
+  ones whose `overflow` is not zero before or after the replacement, or the term is not tested;
+  and `overflow` restricted to the touched lines equals the difference of two whole-routing sums.
 - [ ] Implement. Nothing calls it yet. Golden identical.
 - [ ] Commit `feat(drawing-diagrams): a routing objective with an exact single-edge delta`.
 

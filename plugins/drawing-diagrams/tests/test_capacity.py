@@ -1057,7 +1057,13 @@ class ShippedExamples(unittest.TestCase):
 class StressModels(unittest.TestCase):
     """The two models under tests/models/ that the owner reviews the line pitch on: real models
     inside their mode's limits that render without an error and hold a group at each of the two
-    narrow pitches, which the shipped examples never reach."""
+    narrow pitches, which the shipped examples never reach.
+
+    Today the five px pitch is a column gutter of five lines in each — the one left of `route` in
+    the flow, the one left of `diff` in the swimlane — and the six px pitch a column gutter of four:
+    left of `check` in the flow, left of `repeat` in the swimlane. The test asks for the pitches and
+    not for those gutters: which group reaches which is the routing's business, and a model that
+    still reaches both somewhere else is the model doing its job."""
 
     MODELS = {"dense-widget-flow.json": "widget", "dense-page-swimlane.json": "page"}
 

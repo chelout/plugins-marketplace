@@ -714,9 +714,10 @@ def plan(model, mode_name, overrides=None, draft=False):
     drawn_rows = max((r for r, _ in placed.values()), default=-1) + 1
     drawn_empty = [r for r in er if r < drawn_rows]
 
-    # every gutter, margin and empty row knows its room, so the router prices a step along a full one
-    # and a group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than reaching over a
-    # card edge or out of the grid box
+    # every gutter, margin and empty row knows its room, so the router prices a step along a full one,
+    # the objective the whole routing is searched against prices the slots a group takes past what its
+    # line holds, and a group of lines too wide for the 8 px pitch closes up to 6 or 5 rather than
+    # reaching over a card edge or out of the grid box
     top, bottom = margin_room(kind, mode_name, footnotes)
     geo = Geometry(mode, card_w, grid_cols, drawn_rows, top, bottom, drawn_empty)
 
@@ -728,26 +729,33 @@ def plan(model, mode_name, overrides=None, draft=False):
     lat = router.Lattice(grid_cols, drawn_rows, placed, capacity=line_capacity)
     ends = [(router.Lattice.point(*cells[e["a"]]), router.Lattice.point(*cells[e["b"]])) for e in edges]
     labelled = [bool(e["label"] or e["note"]) for e in edges]
-    paths, routed = [], []
-    for e, p in zip(edges, router.route_all(lat, ends, labelled)):
+    paths, routed, kept = [], [], []
+    # the room goes to the search as it goes to the offsets below: a routing is priced against the
+    # room its groups are drawn in, or the term that counts a full gutter is zero wherever it matters
+    for i, (e, p) in enumerate(zip(edges, router.route_all(lat, ends, labelled, room=geo.room))):
         if p is None:
             layout_errors.append(f"связь {e['a']} -> {e['b']}: нет маршрута, не проходящего сквозь узлы; "
                                  f"освободите ячейку между ними или переставьте узлы")
             continue
         paths.append(p)
         routed.append(e)
+        kept.append(i)
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
         warnings = ["черновик: " + x for x in layout_errors] + warnings
 
     on_cards = frozenset(lat.blocked)
-    offsets = router.assign_offsets(paths, nodes=on_cards, room=geo.room)
+    # the offsets and the check go through `place`, which draws the paths in the order the search
+    # priced them in and answers in the model's: the slots a group takes depend on that order, so a
+    # routing placed in another one is drawn in slots the search never paid for
+    offsets, groups = router.place([ends[i] for i in kept], [labelled[i] for i in kept], paths,
+                                   on_cards, geo.room)
     # the price above makes a full gutter rare and promises nothing: it reads the load of one unit
     # edge, and what a group costs its line is the slots it is drawn in over the whole of its
     # reach. What does not fit at the smallest pitch is refused here, one error per group, so the
     # author moves nodes instead of reading a line drawn over a card
-    for group in router.overfull(paths, on_cards, geo.room):
+    for group in groups:
         layout_errors.append(overfull_error(group, routed, grid_cols, drawn_rows))
     occupied = set(placed.values())
 

@@ -331,17 +331,45 @@ and its corner term is symmetric where `route`'s is one-way. `route` stays the p
 Φ is pairwise additive apart from `overflow`, which is recomputed for the lattice lines the old and
 the new path touch.
 
+Amended 2026-09-20, after stage B landed, which this section was written before:
+
+- `own` replays one price more. `route` charges +20 for a step along a line that holds nothing (a
+  flow's top margin, a page's bottom margin under footnotes, a line squeezed by empty rows) with or
+  without traffic, so `own` carries it and stays equal to the cost `route` reports on the lattice
+  `flow.plan` builds. The +20 of a line that is full because of the lines on it depends on traffic
+  and is no part of `own`: Φ sees fullness through `overflow`.
+- `overflow` counts slots: Σ max(0, width − capacity) over the groups `router.overfull` names, with
+  the width of §4.1a.
+- The width of a group depends on the orders of its runs, so `overflow` cannot be read off a table
+  of loads. ΔΦ recomputes it on the lattice lines where the old or the new path has a run, from the
+  groups, orders and slots of those lines alone — the pair orders of the paths that have runs there
+  — and never from the whole routing: the descent asks once per proposal, and a whole-routing
+  `overfull` costs a scan of every pair of paths.
+
 ### 5.3 Orchestration
 
 1. Canonical order: edges sorted by (Manhattan length, source point, target point, labelled), the
    model index only between edges equal in all four — which are the same routing problem.
+   Amended 2026-09-20 (task 12): the long edges come first. This text gave the key and not its
+   direction; measured against the old loop on the 100 instances of C3, long-first is at or under
+   its Φ on 93 (no room) and 97 (room) of them, short-first on 90 and 95.
 2. Two starts, always completed: greedy in canonical order with accumulating traffic, and every edge
    routed alone.
 3. Descent from each start: for each edge in order, remove it, reroute it against the rest, accept
    the new path only if ΔΦ < 0, put the kept path back. Repeat until a pass changes nothing, at most
    eight passes. The descents share a budget of 600 `route` calls, half each, the second taking what
    the first left; when it runs out the current routing, which is always complete, is kept.
-4. The lower Φ wins; on a tie the first start.
+4. The lower Φ wins; on a tie the fewer crossings, then the lower Σ own — the routing whose lines
+   are each nearer their own best — and the first start only when all three tie. (Amended
+   2026-09-20, twice. Crossings come first because a tie of Φ can hide one: a fixture of
+   `tests/test_label_lines.py` ties at Φ 82 with one routing crossing once and the other not at
+   all, the crossing paid for by 6 of `own` and 4 of `pair`, and Σ own alone picked the crossing. The first text gave
+   the tie to the first start. On the shipped `verdict-row-lifecycle` the two descents end at Φ 60:
+   the greedy one sends `none -> declined_retry` out through the bottom of its card and along the
+   gutter under the label of `none -> approved`, which draws a label warning; the other one, which
+   is also what the old loop drew, leaves through the side. Φ knows nothing of labels until
+   stage E, and Σ own is 53 against 52. Over 600 plans of 300 seeded labelled models the rule moves
+   neither the label warnings, 1 148, nor the crossings, 5 466.)
 
 Φ falls strictly with every accepted change, so the loop ends and cannot cycle, and the result is
 never worse than the better start. Pair moves (rip up two crossing edges and try both orders) are
@@ -351,8 +379,12 @@ left out: they cost four `route` calls per crossing pair for about 2 % of Φ.
 
 No `random`, no clock in the logic, integer costs, iteration over sorted integer keys only. Two runs
 on one model give identical output. The same model with `edges` shuffled gives the same route for
-every (source, target, labelled); offsets, label choice and the section id may still follow the
-model order (§2).
+every (source, target, labelled); label choice and the section id may still follow the model order
+(§2). Amended 2026-09-20: offsets follow the canonical order as the routes do, apart from edges that are
+the same routing problem, whose order stays the model's. They have to: the width of a group depends on
+the order the paths are placed in, so a routing is placed in the order the search priced it in
+(`router.place`), or Φ would price one drawing and the page show another. The first text let offsets
+follow the model order; the branch gate of stage C found what that costs.
 
 ## 6. Stage D — rearrangement advice
 
@@ -539,6 +571,10 @@ Stage C
   `edges`, identical output for two runs on one model, never more than the budget of `route` calls
   in the descents: tests. Dense scenario median at or below 300 ms: benchmark output. Owner's pair
   review of the examples.
+  Amended 2026-09-20: the asserted reading is the one production runs — capacities, room, and
+  every third edge labelled as the suite labels them (97 of 100). Without room the unlabelled
+  reading is 93 and the labelled one 89, one instance under the mark; `route_all` is never called
+  without room outside tests and tools, and all four readings are recorded in the test.
 
 Stage D
 - D1. Moves respect the rules of §6 (deep copies, downward edges of the original grid, first row,

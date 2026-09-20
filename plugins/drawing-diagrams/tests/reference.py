@@ -3,9 +3,12 @@
 Task 1 of the routing plan moves this loop into `router.route_all` unchanged, and task 12 replaces
 its body with a search against an objective. A test that compared the router with itself would
 prove nothing across either step, so the loop lives on here, where nothing under test can reach it.
+This file is the only home of that loop: `router.route_all` is the search, and no other copy of the
+three passes exists for a test to drift against.
 
 Task 7 gives `router.Traffic` reference counts and a `remove`; today's class is copied here as
-`OldTraffic` and the loop uses it, so the oracle depends on no part of the class under change.
+`OldTraffic`. The loop takes the traffic class as a parameter, so the same routing can be asked of
+either class and the difference between the two answers is the class and nothing else.
 """
 import support  # noqa: F401
 from diagrams import router
@@ -62,13 +65,17 @@ def _sign(v):
     return (v > 0) - (v < 0)
 
 
-def reference_route_all(lat, ends, labelled):
+def reference_route_all(lat, ends, labelled, traffic_cls=OldTraffic):
     """One pass over `ends` in the given order with accumulating traffic, then two rip-up passes
     in which every line sees all the others. `ends[i]` is (source point, target point) and
     `labelled[i]` says whether the edge carries a label; the result holds one path per end pair,
-    None where there is no route. An edge with no route takes no part in the rip-up passes."""
+    None where there is no route. An edge with no route takes no part in the rip-up passes.
+
+    `traffic_cls` is the class the loop holds its lines in — `OldTraffic` by default, and
+    `router.Traffic` where a caller asks this same loop of the class that replaced it. Only `add`
+    and the questions `route` puts are used, so both classes answer it."""
     paths, live = [], []
-    traffic = OldTraffic()
+    traffic = traffic_cls()
     for i, (src, dst) in enumerate(ends):
         p = router.route(lat, src, dst, labelled=labelled[i], traffic=traffic)
         paths.append(p)
@@ -77,7 +84,7 @@ def reference_route_all(lat, ends, labelled):
             live.append(i)
     for _ in range(2):
         for i in live:
-            others = OldTraffic()
+            others = traffic_cls()
             for j in live:
                 if j != i:
                     others.add(paths[j])

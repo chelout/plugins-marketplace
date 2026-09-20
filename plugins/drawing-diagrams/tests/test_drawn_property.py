@@ -2,18 +2,19 @@
 
 For every set of paths the router can produce, with `offs = assign_offsets(paths, nodes=nodes)`:
 `drawn_crossings(paths, offs, nodes) == crossings(paths)` and `drawn_overlaps(paths, offs, nodes)
-== 0`. Seeded instances of the published generator are routed the way `flow.plan` routes a model
-and the invariant is asserted on every one of them, under every room of ROOMS: the pitch a group
-is drawn at changes how far apart its lines stand, never their order, so the invariant has to hold
-at 6 px and at 5 px exactly as it does at 8.
+== 0`. Seeded instances of the published generator are routed on a lattice that states no capacity,
+the ends and the dropped edges as `flow.plan` takes them, and the invariant is asserted on every one
+of them, under every room of ROOMS: the pitch a group is drawn at changes how far apart its lines
+stand, never their order, so the invariant has to hold at 6 px and at 5 px exactly as it does at 8.
 
 Those rooms are a table, and `flow.plan` states one per lattice line: its lattice ends at the last
-occupied row, every line of it carries the capacity of the room `flow.Geometry` gives it, and the
-empty rows of that extent carry their band. That produces routes and groups a lattice without
-capacities never produces, so a second population is planned the whole way the planner plans, under
-the narrowest configurations the modes have. It is held to the invariant above and to one property
-more: every offset of a group `router.overfull` does not name lies inside the room its lattice line
-states, which is what ties the pitch a group is drawn at to the room it is drawn in.
+occupied row, every line of it carries the capacity of the room `flow.Geometry` gives it, the search
+prices a routing against those same rooms, and the empty rows of that extent carry their band. That
+produces routes and groups a lattice without capacities never produces, so a second population is
+planned the whole way the planner plans, room and all, under the narrowest configurations the modes
+have. It is held to the invariant above and to one property more: every offset of a group
+`router.overfull` does not name lies inside the room its lattice line states, which is what ties the
+pitch a group is drawn at to the room it is drawn in.
 
 The test knows `route_all`, `assign_offsets`, `crossings` and the two counters, and nothing about
 how the offsets are found, so it guards any later ordering algorithm as well. A failure is a defect
@@ -52,6 +53,15 @@ CONFIGS = (("flow", "widget", ()), ("swimlane", "widget", ()), ("flow", "page", 
 PLANNED = (60, 15)
 OPENED = 6
 
+# The stride the crowded instances are derived at and how many more times the bundled edge is drawn.
+# The search prices the slots a group takes past what its line holds, so it routes around a full
+# gutter wherever the grid leaves it anywhere else to go, and a routing with a group over capacity
+# is rare among instances whose edges are all drawn once. A bundle is where it is not rare: the
+# lines between one pair of cards have the same two ends to leave from, and past a point no gutter
+# of the way holds them all.
+CROWDED = 8
+BUNDLE = 10
+
 Surveyed = collections.namedtuple("Surveyed", "name room paths nodes offsets drawn counted overlaps")
 
 # One instance of the second population under one configuration: `extent` is the drawn row count and
@@ -70,9 +80,11 @@ def labelled_like(n):
 
 
 def route_instance(cols, rows, cells, edges):
-    """One instance routed as `flow.plan` routes a model: a lattice over the cells, the ends of the
-    edges in model order, and the paths of the edges that have a route — one without a route is
-    dropped, as a draft plan drops it. Returns the paths and the points the cards sit on."""
+    """One instance routed on a lattice that states no capacity and prices no room: the ends of the
+    edges in model order as `flow.plan` takes them, and the paths of the edges that have a route —
+    one without a route is dropped, as a draft plan drops it. The whole way the planner plans is
+    `plan_instance`'s; here the invariant is read on the orderings a lattice with nothing to spend
+    produces. Returns the paths and the points the cards sit on."""
     lat = router.Lattice(cols, rows, cells)
     ends = [(router.Lattice.point(*cells[a]), router.Lattice.point(*cells[b])) for a, b in edges]
     return ([p for p in router.route_all(lat, ends, labelled_like(len(ends))) if p is not None],
@@ -125,11 +137,26 @@ def opened(instance, at):
     return cols, rows + 1, {nid: (r + 1 if r >= at else r, c) for nid, (r, c) in cells.items()}, edges
 
 
+def crowded(instance, times):
+    """The instance with its widest edge drawn `times` more: several edges between one pair of
+    cards, which a model may list — the capacity error of `flow.plan` is read on such a model by
+    `tests/test_objective.py` — and which `tools/instances.py` never makes, because it draws every
+    pair of nodes at most once. The widest of them is bundled, so the lines share the whole of a
+    long way rather than the one gutter a neighbouring pair is reached through."""
+    cols, rows, cells, edges = instance
+
+    def span(i):
+        a, b = edges[i]
+        return abs(cells[a][1] - cells[b][1]), abs(cells[a][0] - cells[b][0]), -i
+
+    return cols, rows, cells, list(edges) + [edges[max(range(len(edges)), key=span)]] * times
+
+
 def planned_population():
     """The instances of the second population, named and in a fixed order: a prefix of each
     generator — the seeds of the first population, whose instance k depends on the seed and k alone,
-    so a prefix is the same instances the whole run has — and, every OPENED of them, the same
-    instance with a leading empty row and with an interior one."""
+    so a prefix is the same instances the whole run has — every OPENED of them with a leading empty
+    row and with an interior one, and every CROWDED of them with a bundle of parallel edges."""
     base = [(f"small #{k}", instance)
             for k, instance in enumerate(itertools.islice(instances.small(*SMALL), PLANNED[0]))]
     base += [(f"dense #{k}", instance)
@@ -138,6 +165,8 @@ def planned_population():
     out += [(f"{base[k][0]} leading", opened(base[k][1], 0)) for k in range(0, len(base), OPENED)]
     out += [(f"{base[k][0]} interior", opened(base[k][1], 1))
             for k in range(OPENED // 2, len(base), OPENED)]
+    out += [(f"{base[k][0]} crowded", crowded(base[k][1], BUNDLE))
+            for k in range(CROWDED // 2, len(base), CROWDED)]
     return out
 
 
@@ -154,9 +183,13 @@ def geometry_of(config, cols, rows, empty):
 
 def plan_instance(config, cols, cells, edges):
     """One instance planned as `flow.plan` plans a model: the lattice ends at the last occupied row,
-    the rows of that extent without a card are the geometry's empty ones, and every lattice line
-    states what `router.capacity` makes of its room. Returns the geometry, the paths of the edges
-    that have a route, the points the cards sit on, the drawn extent and its empty rows."""
+    the rows of that extent without a card are the geometry's empty ones, every lattice line states
+    what `router.capacity` makes of its room, the room goes to the search as it goes to the offsets,
+    and the paths that have a route are placed through `router.place`, which draws them in the order
+    the search priced them in. Without that room the term that prices the slots a group takes past
+    what its line holds is zero, and the invariant would be surveyed on routings production never
+    makes. Returns the geometry, those paths, the points the cards sit on, the drawn extent, its
+    empty rows, the offsets the paths are drawn at and the groups the capacity check refuses."""
     used = {r for r, _ in cells.values()}
     extent = max(used) + 1
     empty = [r for r in range(extent) if r not in used]
@@ -168,8 +201,14 @@ def plan_instance(config, cols, cells, edges):
 
     lat = router.Lattice(cols, extent, cells, capacity=line_capacity)
     ends = [(router.Lattice.point(*cells[a]), router.Lattice.point(*cells[b])) for a, b in edges]
-    paths = [p for p in router.route_all(lat, ends, labelled_like(len(ends))) if p is not None]
-    return geo, paths, frozenset(lat.blocked), extent, empty
+    labelled = labelled_like(len(ends))
+    found = [(end, lab, p) for end, lab, p
+             in zip(ends, labelled, router.route_all(lat, ends, labelled, room=geo.room))
+             if p is not None]
+    paths, nodes = [p for _, _, p in found], frozenset(lat.blocked)
+    offsets, over = router.place([end for end, _, _ in found], [lab for _, lab, _ in found],
+                                 paths, nodes, geo.room)
+    return geo, paths, nodes, extent, empty, offsets, over
 
 
 def room_check(geo, paths, offsets, over):
@@ -204,9 +243,7 @@ def planned_survey():
     out = []
     for name, (cols, _, cells, edges) in planned_population():
         for config in CONFIGS:
-            geo, paths, nodes, extent, empty = plan_instance(config, cols, cells, edges)
-            offs = router.assign_offsets(paths, nodes=nodes, room=geo.room)
-            over = router.overfull(paths, nodes, geo.room)
+            geo, paths, nodes, extent, empty, offs, over = plan_instance(config, cols, cells, edges)
             checked, spread, beyond = room_check(geo, paths, offs, over)
             out.append(Planned(name, config, cols, extent, empty, paths, nodes, offs,
                                router.drawn_crossings(paths, offs, nodes), router.crossings(paths),

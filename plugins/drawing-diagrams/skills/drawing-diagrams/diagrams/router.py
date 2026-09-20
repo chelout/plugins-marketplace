@@ -7,6 +7,7 @@ A route is a list of lattice points from the source node's point to the
 target node's point; it may pass through gutters and through empty cells,
 never through another node.
 """
+import collections
 import heapq
 import math
 
@@ -118,7 +119,7 @@ def _sign(v):
     return (v > 0) - (v < 0)
 
 
-def route(lat, src, dst, labelled=False, traffic=None):
+def route(lat, src, dst, labelled=False, traffic=None, cost=None):
     """Cheapest orthogonal path from src to dst (lattice points), or None.
     Cost: 1 per step, +2 per turn, +1 per empty cell crossed, so the router
     prefers gutters and straight lines. A labelled edge avoids leaving
@@ -131,17 +132,22 @@ def route(lat, src, dst, labelled=False, traffic=None):
     carries as many lines as it holds costs +20, more than a crossing, so a
     full gutter — or a full row of empty cells — is left to the lines in it
     wherever anything cheaper exists; a line that holds none prices every
-    step along it, traffic or no traffic."""
+    step along it, traffic or no traffic.
+    `cost`, when it is a list, is given the total cost of the path returned:
+    what this sum of prices came to, which `describe` replays without traffic
+    and the objective is built from."""
     best, prev = {}, {}
     cap_v, cap_h = lat.cap_v, lat.cap_h  # the capacity of every line, resolved once per lattice
     heap = [(0, src[0], src[1], None, None)]
     while heap:
-        cost, x, y, d, pk = heapq.heappop(heap)
+        spent, x, y, d, pk = heapq.heappop(heap)
         key = (x, y, d)
         if key in best:
             continue
-        best[key], prev[key] = cost, pk
+        best[key], prev[key] = spent, pk
         if (x, y) == dst:
+            if cost is not None:
+                cost.append(spent)
             pts, k = [], key
             while k is not None:
                 pts.append((k[0], k[1]))
@@ -195,7 +201,7 @@ def route(lat, src, dst, labelled=False, traffic=None):
                         step += 20
             nk = (nx, ny, nd)
             if nk not in best:
-                heapq.heappush(heap, (cost + step, nx, ny, nd, key))
+                heapq.heappush(heap, (spent + step, nx, ny, nd, key))
     return None
 
 
@@ -209,36 +215,6 @@ def simplify(pts):
                 continue
         out.append(p)
     return out
-
-
-def route_all(lat, ends, labelled):
-    """Route a whole diagram: one path per entry of `ends`, None where there is no route.
-    `ends[i]` is (source point, target point) and `labelled[i]` says whether the edge carries a
-    label or a footnote, which `route` prices.
-
-    One pass in the given order with accumulating traffic, then two rip-up passes: the first pass
-    is greedy in that order, so early lines take the easy exits and late ones detour, and the two
-    passes let every line see all the others. An edge with no route stays None and takes no part
-    in them.
-
-    One traffic serves the whole run: a rip-up takes its line out, routes it against what is left,
-    and puts back the path it keeps — the new one, or the old one where there is no new one."""
-    paths, live = [], []
-    traffic = Traffic()
-    for i, (src, dst) in enumerate(ends):
-        p = route(lat, src, dst, labelled=labelled[i], traffic=traffic)
-        paths.append(p)
-        if p is not None:
-            traffic.add(p)
-            live.append(i)
-    for _ in range(2):
-        for i in live:
-            traffic.remove(paths[i])
-            p = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=traffic)
-            if p is not None:
-                paths[i] = p
-            traffic.add(paths[i])
-    return paths
 
 
 def side_of(a, b):
@@ -330,7 +306,7 @@ def capacity(room):
     return max(0, math.floor(2 * min(room) / PITCHES[-1]) + 1)
 
 
-def _line_groups(runs, nodes):
+def _line_groups(runs, nodes, lines=None):
     """The groups of runs a line is spread in, as (axis, line, [runs]): the runs on one lattice
     line that overlap or meet end to end in a gutter, each knowing its path (`i`) and its index in
     that path (`r`).
@@ -338,10 +314,19 @@ def _line_groups(runs, nodes):
     A group is drawn over the whole of its reach in as many slots as it takes (_slots), whatever
     its load at any one point, which is why it and not the load is the unit a line's room is spent
     in. `assign_offsets` and `overfull` both read their groups, their order and their slots from
-    `_spread`, so the width a group is drawn with is the width it is priced at."""
+    `_spread`, so the width a group is drawn with is the width it is priced at.
+
+    `lines`, a set of (axis, line), keeps only the groups on those lattice lines, and `runs` then
+    carries None in place of every path that has no run on one of them (_runs_on): the runs on a
+    line are the runs on that line whatever else the diagram holds, so the answer for a line is the
+    same restricted or not."""
     items = {}  # (axis, line) -> the runs on that line, each knowing its path and its index in it
-    for i, (rs, _) in enumerate(runs):
-        for r, d in enumerate(rs):
+    for i, entry in enumerate(runs):
+        if entry is None:
+            continue
+        for r, d in enumerate(entry[0]):
+            if lines is not None and (d["axis"], d["line"]) not in lines:
+                continue
             items.setdefault((d["axis"], d["line"]), []).append(dict(d, i=i, r=r))
     out = []
     for (axis, line), on_line in items.items():
@@ -400,11 +385,17 @@ def _beside(u, v, axis, line, nodes):
     return ((line, met[0]) if axis == "v" else (met[0], line)) not in nodes
 
 
-def _pair_orders(paths, runs):
+def _pair_orders(paths, runs, pairs=None, memo=None):
     """Per pair of runs of two paths, the order their shared stretch puts them in: (u, v) -> 1 when
     run v lies on the higher side of run u, -1 on the lower. Firm where the stretch has no swap,
     loose where it has one; a pair that shares two stretches on one line keeps the order of each,
-    because the order belongs to the two runs the stretch runs on and not to the two paths."""
+    because the order belongs to the two runs the stretch runs on and not to the two paths.
+
+    `pairs`, when given, are the pairs of paths to look at, as (i, j) with i < j — everything a
+    restricted spread needs and no more (_grouped_pairs). Finding the stretches of a pair means
+    walking both paths whole, so which pairs are walked is what such a spread costs. `memo`, when a
+    caller carries one, is where the answer for a pair of standing paths is kept between two such
+    spreads (_Memo)."""
 
     def covering(i, axis, line, lo, hi):
         """The run of path i on this line whose interval covers [lo, hi]: a straight piece of a
@@ -414,23 +405,30 @@ def _pair_orders(paths, runs):
                 return (i, r)
         return None
 
+    if pairs is None:
+        pairs = [(i, j) for i in range(len(paths)) for j in range(i + 1, len(paths))]
     firm, loose = {}, {}
-    for i in range(len(paths)):
-        for j in range(i + 1, len(paths)):
-            for pts, first, last in stretches(paths[i], paths[j]):
-                swap = first * last < 0
-                if swap and (len({x for x, _ in pts}) == 1 or len({y for _, y in pts}) == 1):
-                    continue  # along one lattice line they cross at an end of it whatever the order
-                side = _sign(first) or _sign(last) or _higher(pts[0], pts[1])
-                order = loose if swap else firm
-                for a, b in zip(pts, pts[1:]):
-                    axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
-                    lo, hi = sorted((_along(a, axis), _along(b, axis)))
-                    u, v = covering(i, axis, line, lo, hi), covering(j, axis, line, lo, hi)
-                    if u is None or v is None:
-                        continue
-                    order[(u, v)] = side * _higher(a, b)
-                    order[(v, u)] = -side * _higher(a, b)
+    if memo is not None:
+        for i, j in pairs:
+            kept = memo.orders_of(i, j, paths, runs)
+            firm.update(kept[0])
+            loose.update(kept[1])
+        return firm, loose
+    for i, j in pairs:
+        for pts, first, last in stretches(paths[i], paths[j]):
+            swap = first * last < 0
+            if swap and (len({x for x, _ in pts}) == 1 or len({y for _, y in pts}) == 1):
+                continue  # along one lattice line they cross at an end of it whatever the order
+            side = _sign(first) or _sign(last) or _higher(pts[0], pts[1])
+            order = loose if swap else firm
+            for a, b in zip(pts, pts[1:]):
+                axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
+                lo, hi = sorted((_along(a, axis), _along(b, axis)))
+                u, v = covering(i, axis, line, lo, hi), covering(j, axis, line, lo, hi)
+                if u is None or v is None:
+                    continue
+                order[(u, v)] = side * _higher(a, b)
+                order[(v, u)] = -side * _higher(a, b)
     return firm, loose
 
 
@@ -510,36 +508,144 @@ def _slots(axis, line, ordered, nodes):
     return out, max(out.values()) + 1
 
 
-def _spread(paths, runs, nodes):
+def _touches(path, lines):
+    """Does the path have a run on one of these lattice lines, given as (axis, line)? A run lies on
+    the line of its own segments, so the segments answer it without the runs being built."""
+    for a, b in zip(path, path[1:]):
+        if (("v", a[0]) if a[0] == b[0] else ("h", a[1])) in lines:
+            return True
+    return False
+
+
+class _Memo:
+    """What does not change about a routing while a path of it stands: the runs of that path, and
+    the orders it shares with another standing path.
+
+    A descent asks for the groups of two or three lattice lines once per proposal, and both answers
+    behind that — which runs lie on a line, and which of two runs takes the lower slot — are read
+    from the paths alone: the runs from one path's segments, the orders from a walk of two whole
+    paths per pair (_pair_orders), which is where such a spread spends its time. Neither moves
+    while the paths do not, so each is found once and kept, and `forget` drops one path's share of
+    it — which is what a proposal for that path invalidates, accepted or rejected.
+
+    The keys are positions in the list of paths the caller measures, so one memo belongs to one
+    such list and is only ever passed with it."""
+
+    def __init__(self):
+        self.runs = {}    # position -> the runs of the path there, as _runs gives them
+        self.orders = {}  # (position, position), lower first -> the firm and loose orders of the pair
+
+    def runs_of(self, i, path):
+        found = self.runs.get(i)
+        if found is None:
+            found = self.runs[i] = _runs(path)
+        return found
+
+    def orders_of(self, i, j, paths, runs):
+        found = self.orders.get((i, j))
+        if found is None:
+            found = self.orders[(i, j)] = _pair_orders(paths, runs, [(i, j)])
+        return found
+
+    def forget(self, i):
+        """Forget the path at this position: its runs, and every pair order it is one half of."""
+        self.runs.pop(i, None)
+        for key in [key for key in self.orders if i in key]:
+            del self.orders[key]
+
+
+def _runs_on(paths, lines, memo=None):
+    """The runs of every path, or — where `lines` names the lattice lines a caller asks about —
+    those of the paths that have a run on one of them, with None in place of the rest.
+
+    A delta asks about the two or three lines one rerouted edge lies on, out of a diagram of
+    forty; every path that lies nowhere near them is in no group there and in no pair order that is
+    ever read, so this is what keeps the cost of the answer the size of the question.
+
+    With a `memo` the runs of a path that has not moved are the ones it already had, and a run
+    lies on the line of its own segments, so they answer `_touches` as well."""
+    if memo is not None:
+        out = []
+        for i, p in enumerate(paths):
+            found = memo.runs_of(i, p)
+            out.append(found if lines is None
+                       or any((d["axis"], d["line"]) in lines for d in found[0]) else None)
+        return out
+    if lines is None:
+        return [_runs(p) for p in paths]
+    return [_runs(p) if _touches(p, lines) else None for p in paths]
+
+
+def _grouped_pairs(groups):
+    """The pairs of paths a group can ever ask the order of, as sorted (i, j) with i < j.
+
+    A firm or a loose order is read for two runs of one group, and it is recorded from a straight
+    piece of a stretch that lies on their own lattice line — a piece both runs cover, which is more
+    than a point of it. So the pairs that matter are the pairs of runs of one group whose intervals
+    overlap: two runs that merely meet end to end take the soft order, which needs no stretch, and
+    two runs in different groups take none at all. Finding the stretches of a pair means walking
+    both paths whole, so which pairs are walked is what a spread costs."""
+    out = set()
+    for _, _, g in groups:
+        for k, u in enumerate(g):
+            for v in g[k + 1:]:
+                if u["i"] != v["i"] and max(u["lo"], v["lo"]) < min(u["hi"], v["hi"]):
+                    out.add((u["i"], v["i"]) if u["i"] < v["i"] else (v["i"], u["i"]))
+    return sorted(out)
+
+
+def _spread(paths, runs, nodes, lines=None, groups=None, memo=None):
     """Every group of runs on every lattice line with the slots it is drawn in, as
     (axis, line, group, slots, width): `group` as _line_groups gives it, in the order the runs lie
-    along the line; `slots` and `width` as _slots gives them.
+    along the line; `slots` and `width` as _slots gives them. With `lines`, only the groups on
+    those lattice lines, which the same rules decide in the same way; with `groups`, the groups the
+    caller still has a question about, which is _line_groups' answer or a part of it; with `memo`,
+    the orders of two standing paths come from there rather than from a walk of both (_Memo).
 
     This is the one place that decides order and slots, as `_line_groups` is the one place that
     decides groups: `assign_offsets` draws what it says and `overfull` prices the same thing, so no
     message can name a width the picture does not show."""
-    firm, loose = _pair_orders(paths, runs)
+    if groups is None:
+        groups = _line_groups(runs, nodes, lines)
+    firm, loose = _pair_orders(paths, runs, _grouped_pairs(groups), memo)
     out = []
-    for axis, line, g in _line_groups(runs, nodes):
+    for axis, line, g in groups:
         ordered = _order(axis, line, g, firm, loose, nodes)
         slots, width = _slots(axis, line, ordered, nodes)
         out.append((axis, line, g, slots, width))
     return out
 
 
-def overfull(paths, nodes, room):
+def overfull(paths, nodes, room, lines=None, memo=None):
     """The groups that do not fit on their lattice line even at the smallest
     pitch, as (axis, line, width, [path indices], capacity). `width` is the
     number of slots the group is drawn in, which is what has to fit; the
     indices are one per run of the group, in the order the runs lie along the
     line, so the list names who to move and may be longer than the width where
     two runs share a slot. `room` is a callable (axis, line) -> pair or None,
-    as Geometry.room is; a line with no room to state holds any group."""
-    runs = [_runs(p) for p in paths]
-    out = []
-    for axis, line, g, _, width in _spread(paths, runs, nodes):
+    as Geometry.room is; a line with no room to state holds any group.
+    `lines`, a set of (axis, line), asks about those lattice lines alone —
+    those of them that state a room, since the rest hold any group and there
+    is nothing to form their groups for. `memo` is where a caller asking this
+    of one routing again and again keeps what standing paths do not change
+    (_Memo).
+
+    A group is never drawn in more slots than it has runs, so one whose runs
+    already fit is a group that fits however its slots come out, and only what
+    is left is ordered. What is reported is still _spread's width, the one the
+    picture is drawn with."""
+    if lines is not None:
+        lines = {key for key in lines if room(*key) is not None}
+    runs = _runs_on(paths, lines, memo)
+    asked = []
+    for axis, line, g in _line_groups(runs, nodes, lines):
         r = room(axis, line)
-        if r is None or fits(width, PITCHES[-1], r):
+        if r is not None and not fits(len(g), PITCHES[-1], r):
+            asked.append((axis, line, g))
+    out = []
+    for axis, line, g, _, width in _spread(paths, runs, nodes, lines, asked, memo):
+        r = room(axis, line)
+        if fits(width, PITCHES[-1], r):
             continue
         out.append((axis, line, width, [d["i"] for d in g], capacity(r)))
     return out
@@ -596,7 +702,16 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
     is drawn as tightly as the lines can be drawn, and `overfull` is what names
     it.
     Without `room` every group keeps `step`, which is what schema.plan asks
-    for, and so does a line whose room is not stated."""
+    for, and so does a line whose room is not stated.
+
+    The slots depend on the order the paths are given in: the groups of a
+    line are formed from the runs in that order, the sorts that form and rank
+    them break their ties by the path's index, and two runs read the order of
+    a stretch they share from the path that comes first. So a caller that
+    priced its paths with `route_all`, which reads the same groups through
+    `overfull`, hands them here through `place`, which gives them in the
+    order they were priced in; anything else may draw a group in more slots
+    than the price it was chosen by."""
     runs = [_runs(p) for p in paths]
     slot = {}   # (path index, run index) -> (slot, width, pitch)
     for axis, line, _, slots, width in _spread(paths, runs, nodes):
@@ -626,6 +741,39 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
             pts.append((here.get("v", 0.0), here.get("h", 0.0)))
         result.append(pts)
     return result
+
+
+# A routing drawn the way it was priced: the offsets of every path and the groups over the capacity
+# of their line, both per position in the list of paths the caller holds.
+Placed = collections.namedtuple("Placed", "offsets overfull")
+
+
+def place(ends, labelled, paths, nodes=frozenset(), room=None):
+    """Draw a routing in the order `route_all` priced it in, and answer in the caller's own order.
+
+    `ends`, `labelled` and `paths` are one entry each per edge that has a route, in the order the
+    caller holds them — a model's order, with the edges that route nowhere already dropped. `nodes`
+    and `room` are `assign_offsets`' and `overfull`'s. Returns (offsets, overfull): one list of
+    (ox, oy) per path in its own place, and the groups past the capacity of their line as `overfull`
+    gives them, their path indices naming places in `paths`. With no `room` no line states a
+    capacity and no group can be past one, so the second is empty.
+
+    The width of a group depends on the order its paths are given in (assign_offsets), and the
+    search prices the canonical order (canonical_order). A routing priced in one order and drawn in
+    another is drawn in slots nothing paid for: the search can accept a reroute whose ΔΦ is negative
+    as priced and positive as drawn, and a group can be drawn over the capacity of its line with no
+    message to name it. So the paths go to `assign_offsets` and `overfull` in the order they were
+    priced in, and the answers come back in the order the caller asked in."""
+    order = canonical_order(ends, labelled)
+    as_priced = [paths[i] for i in order]
+    spread = assign_offsets(as_priced, nodes=nodes, room=room)
+    offsets = [None] * len(paths)
+    for n, i in enumerate(order):
+        offsets[i] = spread[n]
+    groups = [] if room is None else [(axis, line, width, [order[n] for n in idx], cap)
+                                      for axis, line, width, idx, cap in
+                                      overfull(as_priced, nodes, room)]
+    return Placed(offsets, groups)
 
 
 def crossings(paths):
@@ -658,6 +806,392 @@ def shared_swaps(p, q):
     in swapped order (stretches): p left of q at one end and right of it at
     the other cross, however the stretch is drawn."""
     return sum(1 for _, first, last in stretches(p, q) if first * last < 0)
+
+
+# What one path costs a routing and what it can cost together with another (describe): `own` is
+# the price `route` puts on it with no traffic; `units` are the unit edges it runs along, `inner`
+# the points strictly inside its segments, `corners` the points it turns at, `hs` and `vs` its
+# horizontal and vertical segments as `segments` gives them, `exit` and `entry` the node side it
+# leaves and the one it arrives at, as Traffic keys them; `path` is the path itself.
+Info = collections.namedtuple("Info", "own units inner corners hs vs exit entry path")
+
+CROSSING = 10   # what Phi charges a crossing, drawn or swapped: more than everything else together
+JUNCTION = 3    # one line through another's corner, and two lines on one side of one node
+FULL = 20       # what Phi charges one slot a group takes past what its lattice line holds
+
+
+def describe(lat, path, labelled=False):
+    """What the objective needs to know about one path: its own cost and the geometry every pair
+    term is read from (Info).
+
+    `own` replays the step rules of `route` with no traffic: one per step, two more for a turn
+    after the first step, one for an empty cell that is not the target, one for a step onto an
+    outer margin, +8 for leaving through the top on the first step, +4 for entering from below on
+    the last, +8 for a labelled edge — one with a label or a footnote — whose first step goes
+    sideways towards an occupied cell, and +20 for a step along a line that holds nothing, which
+    `route` charges with or without traffic. The +20 of a line that is full because of the lines
+    already on it is traffic's and no part of `own`: Phi sees fullness through `overflow`."""
+    dst = path[-1]
+    own, d = 0, None
+    units, inner, hs, vs = set(), set(), [], []
+    for axis, line, lo, hi in segments(path):
+        (vs if axis == "v" else hs).append((line, lo, hi))
+        for k in range(lo, hi):
+            units.add((axis, line, k))
+        for k in range(lo + 1, hi):
+            inner.add((line, k) if axis == "v" else (k, line))
+    for a, b in zip(path, path[1:]):
+        dx, dy = _sign(b[0] - a[0]), _sign(b[1] - a[1])
+        if not dx and not dy:
+            continue  # a zero-length segment is no step and costs nothing
+        nd, (x, y) = STEPS[(dx, dy)], a
+        while (x, y) != b:
+            nx, ny = x + dx, y + dy
+            own += _step_price(lat, x, y, nx, ny, nd, d, dst, labelled)
+            d, x, y = nd, nx, ny
+    return Info(own, frozenset(units), frozenset(inner), frozenset(path[1:-1]),
+                tuple(hs), tuple(vs), _end_side(path, 0), _end_side(path, -1), path)
+
+
+def _step_price(lat, x, y, nx, ny, nd, d, dst, labelled):
+    """One step of `route` priced as `route` prices it when no other line is there. The rules are
+    the ones in the body of `route`, in the same order, and a test holds the sum of them against
+    the cost `route` itself reports for the path."""
+    step = 1
+    if d is not None and nd != d:
+        step += 2
+    if nx % 2 == 1 and ny % 2 == 1 and (nx, ny) != dst:
+        step += 1
+    if d is None and nd == "U":
+        step += 8
+    if nx in (0, lat.W - 1) or ny in (0, lat.H - 1):
+        step += 1
+    if d is None and labelled and nd in ("L", "R") and (x + 2 * (nx - x), y) in lat.blocked:
+        step += 8
+    if (nx, ny) == dst and nd == "U":
+        step += 4
+    cap = lat.cap_v[nx] if nx == x else lat.cap_h[ny]
+    if cap is not None and cap <= 0:
+        step += 20  # a line that holds nothing is full before the first line reaches it
+    return step
+
+
+def _end_side(path, end):
+    """The node side a path leaves at or arrives at, as (point, direction) — the keys Traffic counts
+    its exits and its entries by. None where the path is a single point and leaves nowhere."""
+    if len(path) < 2:
+        return None
+    a, b = (path[0], path[1]) if end == 0 else (path[-2], path[-1])
+    return (path[end], STEPS[(_sign(b[0] - a[0]), _sign(b[1] - a[1]))])
+
+
+def pair(a, b):
+    """What two paths cost together (spec 5.2): ten per crossing — drawn, or a stretch they enter
+    and leave in swapped order — one per unit step they share, three per point of one that is a
+    corner of the other, and three for each node side they leave or enter together.
+
+    This is not `route`'s traffic surcharge and is not meant to be: it charges per pair where
+    `route` charges per step, it counts the swapped stretches `route` cannot see, and its corner
+    term is symmetric where `route`'s is one-way. `route` proposes; Phi decides."""
+    n = 0
+    if not a.units.isdisjoint(b.units):
+        # a stretch they share runs along unit edges of both, so this is also the only case a
+        # swapped stretch can be in, and `stretches` is what costs here
+        n += len(a.units & b.units) + CROSSING * shared_swaps(a.path, b.path)
+    if not a.inner.isdisjoint(b.inner):
+        # a crossing lies strictly inside a segment of each, so paths that share no such point
+        # cross nowhere and the segments need not be walked
+        n += CROSSING * _perpendicular(a, b)
+    n += JUNCTION * (len(a.inner & b.corners) + len(b.inner & a.corners))
+    if a.exit is not None and b.exit is not None:
+        n += JUNCTION * ((a.exit == b.exit) + (a.entry == b.entry))
+    return n
+
+
+def _perpendicular(a, b):
+    """Vertical segments of one strictly across horizontal segments of the other, both ways: the
+    crossings `crossings` counts over the ordered pairs of two paths."""
+    n = 0
+    for u, v in ((a, b), (b, a)):
+        for line, lo, hi in u.vs:
+            for row, left, right in v.hs:
+                if left < line < right and lo < row < hi:
+                    n += 1
+    return n
+
+
+def overflow(infos, nodes, room, lines=None):
+    """The slots the groups of a routing take past what their lattice lines hold: the sum over the
+    groups `overfull` names of the width it gives them less their capacity. Zero where no line
+    states a room.
+
+    `lines`, a set of (axis, line), asks about those lattice lines alone — which is exact for a
+    difference, because the groups of every other line hold the same runs of the same paths and are
+    ordered by the same pairs, so their slots cannot have moved."""
+    if room is None:
+        return 0
+    # overfull names only the groups past their capacity, so every term of this sum is positive
+    return sum(width - cap for _, _, width, _, cap in
+               overfull([info.path for info in infos], nodes, room, lines))
+
+
+def _overflow_by_line(paths, nodes, room, lines=None, memo=None):
+    """`overflow` per lattice line rather than summed, as {(axis, line): slots}, the lines that
+    overflow nothing left out and nothing at all where no room is stated.
+
+    A descent asks what two or three lines overflow after a proposal, and what it compares that
+    with is what those same lines overflow now, so what it carries between proposals is this map
+    and not a total."""
+    out = {}
+    if room is None:
+        return out
+    for axis, line, width, _, cap in overfull(paths, nodes, room, lines, memo):
+        out[(axis, line)] = out.get((axis, line), 0) + width - cap
+    return out
+
+
+def _lines_of(*paths):
+    """The lattice lines these paths have a run on, as (axis, line): a run lies on the line of its
+    own segments, so the segments answer it without the runs being built."""
+    return {(axis, line) for p in paths for axis, line, _, _ in segments(p)}
+
+
+def phi(infos, nodes, room):
+    """The objective of spec 5.2: what a whole routing costs. The sum of what every path costs on
+    its own, of what every pair of them costs together, and of twenty per slot their groups take
+    past what their lattice lines hold."""
+    total = sum(info.own for info in infos)
+    for k, a in enumerate(infos):
+        for b in infos[k + 1:]:
+            total += pair(a, b)
+    return total + FULL * overflow(infos, nodes, room)
+
+
+def delta(i, new, infos, nodes, room):
+    """How much Phi changes when path i is replaced by `new`, as `describe` gives it: the exact
+    difference, and the question the descent asks once per proposal.
+
+    Phi is a sum over paths and over pairs of them apart from `overflow`, so everything but the
+    overflow is the old path's terms taken out and the new path's put in. The overflow is
+    recomputed on the lattice lines where the old or the new path has a run, and on those alone:
+    no other line's groups can have moved, and a whole-routing `overfull` would cost a scan of
+    every pair of paths for every proposal."""
+    total = _own_and_pairs(i, new, infos)
+    if room is None:
+        return total
+    lines = _lines_of(infos[i].path, new.path)
+    after = list(infos)
+    after[i] = new
+    return total + FULL * (overflow(after, nodes, room, lines)
+                           - overflow(infos, nodes, room, lines))
+
+
+def _own_and_pairs(i, new, infos):
+    """What replacing path i by `new` changes in the part of Phi that is a sum over paths and over
+    pairs of them: the old path's terms taken out and the new path's put in. The whole of ΔΦ where
+    no line states a room, and the cheap half of it where one does."""
+    old = infos[i]
+    total = new.own - old.own
+    for j, other in enumerate(infos):
+        if j != i:
+            total += pair(new, other) - pair(old, other)
+    return total
+
+
+BUDGET = 600  # calls of `route` the two descents share (spec 5.3)
+PASSES = 8    # passes over the edges one descent makes before it stops, whatever it is still changing
+
+# One accepted reroute, as `trace` records it: which of the two starts the descent came from, which
+# entry of `ends` took a new path, what that lowered Phi by, and what Phi came to.
+Change = collections.namedtuple("Change", "start edge delta phi")
+
+
+def route_all(lat, ends, labelled, room=None, budget=BUDGET, passes=PASSES, trace=None):
+    """Route a whole diagram against the objective: one path per entry of `ends`, None where there
+    is no route. `ends[i]` is (source point, target point), `labelled[i]` says whether the edge
+    carries a label or a footnote, which `route` prices, and `room` is the callable Geometry.room
+    is — what Phi reads the capacity of a lattice line from, and without which the overflow term of
+    spec 5.2 is zero everywhere.
+
+    Spec 5.3. The edges are put in a canonical order (canonical_order), so the answer does not
+    depend on the order the model lists them in — and neither does the drawing, which `place` puts
+    in that same order, because what a group costs depends on the order its paths are given in.
+    Two routings are built from it and both are always completed: one greedy, where early lines take
+    the easy exits and late ones detour, and one with every edge routed alone, which starts from
+    every line's own best and pays for all the conflicts at once. From each a descent — every edge
+    in turn taken out, routed again against the rest, and the new path kept only where ΔΦ is under
+    zero — until a pass changes nothing or `passes` run out.
+
+    The lower Phi wins; on a tie the fewer crossings, then the lower sum of `own`, which is the
+    routing whose lines are each nearer their own best, and the first start only when all three
+    tie. Phi prices a whole routing and knows nothing of labels until stage E, so where it cannot
+    tell two routings apart the one that keeps its lines out of gutters they have no business in is
+    the one to take: on the shipped `verdict-row-lifecycle` both descents end at Phi 60 and the sums
+    are 53 and 52, and the lower one is the routing that leaves a card through the side instead of
+    running under another line's label. Measured over 600 plans of 300 seeded labelled models the
+    rule moves neither the label warnings, 1 148, nor the crossings, 5 466.
+
+    The crossings come before the sum because a tie of Phi can hide one: Phi charges ten for a
+    crossing, so a routing that crosses can be ten cheaper in `own` and still cost the same, and a
+    reader is served worse by a crossing than by lines that run a little further from their own
+    best. They are counted only where Phi ties — `crossings` walks every pair of a whole routing,
+    some three times what a whole Phi of it costs, and two descents rarely end at one Phi: over the
+    ten dense plans of `tools/bench_routing.py` they never do.
+
+    The descents share `budget` calls of `route`, half to the first and everything left to the
+    second; the starts are outside it, because a routing is complete or it is not a routing. When
+    the budget runs out the routing in hand is kept, which is complete at every step of a descent.
+
+    `trace`, when it is a list, is given a `Change` per accepted reroute. Phi falls strictly across
+    them, so a descent never returns to a routing it has left and cannot cycle.
+
+    An edge with no route is None in both starts and takes no part in either descent: no traffic,
+    no term of Phi, and the others route as if it had never been asked for."""
+    order = canonical_order(ends, labelled)
+    nodes = frozenset(lat.blocked)
+    best, left = None, budget
+    for start, paths in enumerate((_greedy(lat, ends, labelled, order),
+                                   _alone(lat, ends, labelled))):
+        total, own, spent = _descend(lat, ends, labelled, order, paths, nodes, room,
+                                     budget // 2 if start == 0 else left, passes, trace, start)
+        left -= spent
+        if best is None or total < best[0]:
+            take = True
+        elif total > best[0]:
+            take = False
+        else:
+            # Phi ties, and this is the only place the crossings are counted: the count walks
+            # every pair of the routing, more than a whole Phi of it does, and a strict comparison
+            # here leaves the first start the tie that neither the crossings nor the sum breaks
+            take = (_crossings(paths), own) < (_crossings(best[2]), best[1])
+        if take:
+            best = (total, own, paths)
+    return best[2]
+
+
+def _crossings(paths):
+    """The crossings of a routing `route_all` holds, where an edge with no route is None and is no
+    part of any crossing."""
+    return crossings([p for p in paths if p is not None])
+
+
+def canonical_order(ends, labelled):
+    """The order the search takes the edges in (spec 5.3): the Manhattan distance between the two
+    points, then the points themselves, then whether the edge is labelled, and the model index only
+    between edges equal in all four — which are one routing problem asked twice. So a model that
+    lists its edges in another order routes the same way, and — through `place`, which draws a
+    routing in the order it was priced in — is drawn the same way too.
+
+    The distance runs the long way first. Spec 5.3 states the key and not the direction, and the
+    long edges are the ones with somewhere to go: placed first they take the gutters they need and
+    the short ones fit around them. Measured over the hundred seeded instances of criterion C3
+    against the loop the renderer routed with before, that way round costs no more Phi on 93 of
+    them without a room and 97 with the room a page states, where the short way first costs no more
+    on 90 and 95."""
+    return sorted(range(len(ends)), key=lambda i: (
+        -(abs(ends[i][0][0] - ends[i][1][0]) + abs(ends[i][0][1] - ends[i][1][1])),
+        ends[i][0], ends[i][1], labelled[i], i))
+
+
+def _greedy(lat, ends, labelled, order):
+    """The first start: every edge in canonical order against the traffic of the ones before it."""
+    paths = [None] * len(ends)
+    traffic = Traffic()
+    for i in order:
+        paths[i] = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=traffic)
+        if paths[i] is not None:
+            traffic.add(paths[i])
+    return paths
+
+
+def _alone(lat, ends, labelled):
+    """The second start: every edge routed with no other line there at all. The order says nothing
+    here — no edge sees another — so this is the one routing no canonical order is needed for."""
+    return [route(lat, src, dst, labelled=labelled[i]) for i, (src, dst) in enumerate(ends)]
+
+
+def _descend(lat, ends, labelled, order, paths, nodes, room, budget, passes, trace, start):
+    """One descent on Phi, written back into `paths`; returns Phi of the routing it leaves, the sum
+    of `own` over its paths — the second key a tie of Phi is decided on, after the crossings — and
+    how many calls of `route` it made. The sum costs nothing here: the loop holds the Info of every
+    standing path already, and describing them a second time would be a walk of the whole routing.
+
+    The routing is complete at every moment — a proposal replaces a path or the old one goes back —
+    so a budget that runs out in the middle of a pass leaves a diagram that can be drawn. What the
+    loop carries between proposals is what makes each of them cheap: the traffic every path but the
+    proposed one is in, the description of every standing path, the slots each lattice line
+    overflows by, and the memo of what two standing paths cannot have changed about each other."""
+    live = [i for i in order if paths[i] is not None]
+    cur = [paths[i] for i in live]
+    infos = [describe(lat, p, labelled[i]) for i, p in zip(live, cur)]
+    traffic = Traffic()
+    for p in cur:
+        traffic.add(p)
+    memo = _Memo()
+    over = _overflow_by_line(cur, nodes, room, None, memo)
+    # Phi from the map above rather than from a second whole `overfull`: phi with no room is the
+    # sum over the paths and over their pairs, and the map is the term that is left
+    total, spent, stop = phi(infos, nodes, None) + FULL * sum(over.values()), 0, False
+    for _ in range(passes):
+        changed = False
+        for n, i in enumerate(live):
+            if spent >= budget:
+                stop = True
+                break
+            traffic.remove(cur[n])
+            new = route(lat, ends[i][0], ends[i][1], labelled=labelled[i], traffic=traffic)
+            spent += 1
+            if new is None or new == cur[n]:
+                # the path it replaces is no proposal at all, and after the first pass most
+                # rerouting is this: nothing of Phi has to be asked about it
+                traffic.add(cur[n])
+                continue
+            info = describe(lat, new, labelled[i])
+            change, lines, after = _weigh(n, info, infos, cur, nodes, room, over, memo)
+            if change < 0:
+                cur[n], infos[n], total, changed = new, info, total + change, True
+                for key in lines or ():
+                    # every other line holds the same runs of the same paths, so only these moved
+                    if after.get(key):
+                        over[key] = after[key]
+                    else:
+                        over.pop(key, None)
+                if trace is not None:
+                    trace.append(Change(start, i, change, total))
+            elif lines is not None:
+                memo.forget(n)  # what was memoised of this position is the rejected proposal's
+            traffic.add(cur[n])
+        if stop or not changed:
+            break  # a pass that moved nothing moves nothing on the next one either
+    for n, i in enumerate(live):
+        paths[i] = cur[n]
+    return total, sum(info.own for info in infos), spent
+
+
+def _weigh(n, new, infos, paths, nodes, room, over, memo):
+    """What a proposal changes Phi by, as (ΔΦ, the lattice lines it was recomputed on, what they
+    overflow after it) — or, where the cheap terms alone settle that it is no improvement, a number
+    at or above zero with both of those None. The caller accepts on a negative one, which is always
+    the exact difference `delta` would give.
+
+    `overflow` is what a delta with a room costs, and it can only lower Phi by what the lines the
+    two paths lie on overflow now: where the own and the pair terms are already no improvement and
+    those lines overflow nothing, no recomputation can turn the proposal into one. `over` — the
+    slots each lattice line of the standing routing overflows by — is what the loop carries so that
+    this question can be asked at all.
+
+    Recomputing it means measuring the routing with the proposal in it, so the memo's entries for
+    this position become the proposal's; the caller drops them again when it rejects one."""
+    change = _own_and_pairs(n, new, infos)
+    if room is None:
+        return change, None, None
+    lines = _lines_of(infos[n].path, new.path)
+    before = sum(over.get(key, 0) for key in lines)
+    if change >= 0 and not before:
+        return change, None, None
+    memo.forget(n)
+    after = _overflow_by_line(paths[:n] + [new.path] + paths[n + 1:], nodes, room, lines, memo)
+    return change + FULL * (sum(after.values()) - before), lines, after
 
 
 BIG = 10000  # one lattice step in the half-pixel units of the two counters below
@@ -750,12 +1284,26 @@ def stretches(p, q):
 
 def _refine(path, other):
     """`path` with every vertex of `other` that lies inside one of its
-    segments added, so that a stretch both share has the same points in both."""
+    segments added, so that a stretch both share has the same points in both.
+
+    A vertex inside a vertical segment shares its X and a vertex inside a
+    horizontal one its Y, so `other` is bucketed by both coordinates once and
+    each segment reads the one bucket that can hold anything of its own: every
+    pair of paths is refined twice, and this is the walk that the objective, the
+    count of crossings and the pair orders all spend their time in."""
+    by_x, by_y = {}, {}
+    for v in other:
+        by_x.setdefault(v[0], []).append(v)
+        by_y.setdefault(v[1], []).append(v)
     out = [path[0]]
     for a, b in zip(path, path[1:]):
-        inner = [v for v in other if v != a and v != b and min(a[0], b[0]) <= v[0] <= max(a[0], b[0])
-                 and min(a[1], b[1]) <= v[1] <= max(a[1], b[1])]
-        out.extend(sorted(inner, key=lambda v: abs(v[0] - a[0]) + abs(v[1] - a[1])))
+        if a[0] == b[0]:
+            lo, hi = (a[1], b[1]) if a[1] <= b[1] else (b[1], a[1])
+            near = [v for v in by_x.get(a[0], ()) if lo <= v[1] <= hi and v != a and v != b]
+        else:
+            lo, hi = (a[0], b[0]) if a[0] <= b[0] else (b[0], a[0])
+            near = [v for v in by_y.get(a[1], ()) if lo <= v[0] <= hi and v != a and v != b]
+        out.extend(sorted(near, key=lambda v: abs(v[0] - a[0]) + abs(v[1] - a[1])))
         out.append(b)
     return out
 

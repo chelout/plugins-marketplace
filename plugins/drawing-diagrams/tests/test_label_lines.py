@@ -108,11 +108,17 @@ class SidewaysLabel(unittest.TestCase):
     # a larger offset passes under it, whether the row's middle lies above or below that line
 
     def test_a_straight_line_back_above_the_labels_own_line_is_a_warning(self):
-        # c -> b? runs straight back between the same two cards, 8 px from b? -> c: the one listed
-        # first lies above
-        for grid in ABOVE:
-            for edges, own_oy, back_oy, warned in ((["c -> b?"] + EDGES, 4.0, -4.0, True),
-                                                   (EDGES + ["c -> b?"], -4.0, 4.0, False)):
+        # c -> b? runs straight back between the same two cards, 8 px from b? -> c. The two share
+        # the whole of that stretch, so which of them lies above is the order they are placed in,
+        # and that is the order the search priced them in: between two edges of one length the
+        # lower source point comes first and is drawn above, so it is the grid that decides and not
+        # the order the model lists the two edges in. The two grids are one another mirrored — b?
+        # stands in the left column of the first and in the right column of the second — and each
+        # of them is read with the back edge listed first and listed last, which is the premise
+        # that the list does not decide.
+        for grid, own_oy, back_oy, warned in ((ABOVE[0], -4.0, 4.0, False),
+                                              (ABOVE[1], 4.0, -4.0, True)):
+            for edges in (["c -> b?"] + EDGES, EDGES + ["c -> b?"]):
                 for mode in ("widget", "page"):
                     with self.subTest(grid=grid, first=edges[0], mode=mode):
                         layout, warnings = flow.plan(loop_model(grid, edges), mode)
@@ -127,11 +133,17 @@ class SidewaysLabel(unittest.TestCase):
     def test_a_line_along_the_row_above_the_labels_own_line_is_a_warning(self):
         # e -> f crosses an empty cell; e -> d and f -> b run along the same row and turn up, so the
         # label's own line lies lowest, 8 px under the row's base, and e -> d runs along the base
-        # through the text; f -> b turns up past the text's far end
-        for grid in (["d b .", "f . e"], [". b d", "e . f"]):
+        # through the text; f -> b turns up past the text's far end.
+        #
+        # The row under the cards is what e -> d goes round when it is free, so f -> g takes it: g
+        # stands under the empty cell in both grids, which are one another mirrored, and the line
+        # down to it is the same line either way round. The premise is asserted below: the offsets
+        # and who holds them, not only the warning they produce.
+        for grid in (["d b .", "f . e", ". g ."], [". b d", "e . f", ". g ."]):
             for mode in ("widget", "page"):
                 with self.subTest(grid=grid, mode=mode):
-                    layout, warnings = flow.plan(exit_model(grid, ["e -> f : да", "e -> d", "f -> b"]), mode)
+                    layout, warnings = flow.plan(exit_model(grid, ["e -> f : да", "e -> d", "f -> b",
+                                                                   "f -> g"]), mode)
                     oy, near = self.along_the_row(layout, ("e", "f"))
                     self.assertEqual((oy, near), (8.0, [(("e", "d"), "h", 0.0)]))
                     found = self.label_warnings(warnings, ("e", "f"))
@@ -142,8 +154,13 @@ class SidewaysLabel(unittest.TestCase):
     def test_lines_along_the_row_under_the_labels_own_line_are_no_warning(self):
         # four lines leave or enter c's side along the row, 8 px apart, and the label's own line
         # c -> a is the topmost, 12 px above the row's base: a -> c, above the base but under c -> a,
-        # passes under the text like c -> e and c -> b below the base
-        model = exit_model(["c . a", "d b e"], ["b -> c", "c -> a : да", "c -> e", "a -> c", "d -> c", "c -> b"])
+        # passes under the text like c -> e and c -> b below the base.
+        #
+        # c -> e and c -> b keep to that row only while the gutter under it is worth more than the
+        # detour: c -> f runs down the margin beside c to the row below, and f is there for it. The
+        # four offsets are asserted, so a line that left c another way fails as the premise it is.
+        model = exit_model(["c . a", "d b e", "f . ."],
+                           ["b -> c", "c -> a : да", "c -> e", "a -> c", "d -> c", "c -> b", "c -> f"])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
@@ -168,23 +185,34 @@ def exit_model(grid, edges, terminals=(), nodes=()):
 # top edge, so the text stands between the card and the middle of the gutter, where lines run.
 #
 # An exit up costs the router more than a step round a free margin, so `d -> c` is the straight one
-# only while the margin beside d is taken: `c -> e` runs down it to the row under the cards, and the
-# row is there for that line alone.
+# only while the way round is taken: `c -> e` runs down the margin beside d to the row under the
+# cards, the row is there for that line, and `e -> b` comes back up the other side, which is what
+# leaves the search nothing cheaper than the two steps straight up.
 DOWN = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> c : нет"], terminals=("b", "c"))
 UP = exit_model(["c b", "d a?", "e ."], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да",
-                                         "d -> b : да", "d -> c : да", "c -> e"])
+                                         "d -> b : да", "d -> c : да", "c -> e", "e -> b"])
 
 
 class ExitLabelCase(unittest.TestCase):
     """Where template/js/flow.js draws the label of a straight exit down or up, as the tests
     assert it before asserting what the check says about it."""
 
+    def straight_exit(self, layout, edge):
+        """The layout's own entry for `edge`, with the premise every case in this class rests on
+        asserted rather than assumed: the exit is the straight one, a path of two points. A model
+        here is built so that nothing the router can reach is cheaper than those two steps, so an
+        exit that turned is a premise that has moved and not a check that failed."""
+        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
+        self.assertEqual(len(own["path"]), 2,
+                         f"premise: {edge[0]} -> {edge[1]} no longer leaves straight, so there is "
+                         f"no gutter beside its label to measure: {own['path']}")
+        return own
+
     def text_span(self, layout, edge):
         """The layout's geometry, the exit side of `edge` and the px span of its label: 5 px
         beside the line, as wide as its glyphs."""
         geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"])
-        own = next(e for e in layout["edges"] if (e["a"], e["b"]) == edge)
-        self.assertEqual(len(own["path"]), 2, own)
+        own = self.straight_exit(layout, edge)
         X, _, ox, _ = own["path"][0]
         x0 = geo.clamp(layout["cells"][edge[0]][1], geo.x(X) + ox) + 5
         return geo, own["sa"], x0, x0 + label_width(own["label"])
@@ -242,15 +270,25 @@ class StraightExitLabel(ExitLabelCase):
                                                         f"ляжет на другую линию"), found)
 
     def test_a_line_through_the_gutter_past_the_label_is_a_warning(self):
-        # b -> a? runs down beside a? -> b, from b's bottom edge to a?'s top edge: it passes the gutter
-        # the text stands in from one side to the other
-        model = exit_model(["c", "b", "a?"], ["c -> a?", "a? -> c : да", "a? -> b : да", "b -> a?"])
+        # c -> a? comes back into a?'s column over the free cell above it and runs down beside
+        # a? -> b into a?'s top edge: from the gutter over that cell (row - 2) to a?'s own point
+        # (row + 1), so it passes the gutter the text stands in from one side to the other, where
+        # the line of the case above turns in that gutter and stops there.
+        #
+        # Which of two lines in one column is drawn on the side the text stands on follows the
+        # order they were placed in, and of two lines between the same two cards that is the one
+        # leaving the upper card — never the exit up whose label this is. So the line past the
+        # label comes from further up the column, over the free cell b leaves above a?, and
+        # e -> a? is what takes the side entry it would otherwise come in by.
+        model = exit_model(["c .", "b .", ". e", "a? f"],
+                           ["c -> a?", "a? -> c : да", "a? -> b : да", "e -> a?", "e -> f"],
+                           terminals=("b", "f"))
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
                 sa, row, near = self.near_label(layout, ("a?", "b"))
                 self.assertEqual(sa, "T")
-                self.assertEqual(near, [(("b", "a?"), "v", row - 1, row + 1)])
+                self.assertEqual(near, [(("c", "a?"), "v", row - 2, row + 1)])
                 found = self.label_warnings(warnings, ("a?", "b"))
                 self.assertEqual(len(found), 1, warnings)
                 self.assertTrue(found[0].startswith("связь a? -> b: подпись 'да' у выхода вверх ляжет на другую линию"),
@@ -269,10 +307,12 @@ class StraightExitLabel(ExitLabelCase):
         # the other line comes from the far side of the gutter and turns along its middle: it ends
         # where the text ends, short of it
         # over an exit up the same shape needs the margin beside a? taken, or the line goes round it
-        # instead of straight up: b -> g runs down that margin to the row under the cards
+        # instead of straight up: b -> g runs down that margin to the row under the cards and
+        # g -> a? comes back up it, so both ways round it cost more than the two steps up
         cases = ((exit_model(["a? b", "c d"], ["b -> c", "d -> c", "a? -> b : да", "d -> b", "a? -> c : да"]),
                   ("a?", "c"), "B", ("b", "c")),
-                 (exit_model(["b e c", "a? f d", "g h i"], ["b -> c", "a? -> c : да", "a? -> b : да", "b -> g"]),
+                 (exit_model(["b e c", "a? f d", "g h i"],
+                             ["b -> c", "a? -> c : да", "a? -> b : да", "b -> g", "g -> a?"]),
                   ("a?", "b"), "T", ("b", "c")))
         for model, edge, side, turn in cases:
             for mode in ("widget", "page"):
@@ -295,18 +335,22 @@ class StraightExitLabel(ExitLabelCase):
             # 8 px off the middle towards the card: through the text whatever the mode. Four lines
             # share that gutter row and are drawn in three slots — d -> h over the first column and
             # g -> f over the last never lie beside each other and take one between them — so
-            # f -> h, which lies beside all of the others, is a whole pitch off the middle.
-            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "g -> c", "d -> h",
-                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e", "f -> c",
+            # f -> c, which lies beside all of the others, is a whole pitch off the middle.
+            (exit_model(["e h g b", "d c a? f"], ["a? -> b : да", "g -> c", "d -> h",
+                                                  "a? -> g : да", "g -> f", "d -> e", "f -> c",
                                                   "e -> h"]),
              ("a?", "g"), "T", 8.0, {"widget": True, "page": True}),
             # 4 px towards the card: through the foot of the text in a widget, clear of it on a page
             (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c",
                                                   "d -> c", "c -> e"]),
              ("a?", "d"), "B", -4.0, {"widget": True, "page": False}),
-            # the same over an exit up: through the top of the text in a widget, clear of it on a page
-            (exit_model([". e b c", ". . a? d"], ["d -> c", "c -> a?", "a? -> e : да", "e -> d",
-                                                  "b -> e", "a? -> b : да"]),
+            # the same over an exit up: through the top of the text in a widget, clear of it on a
+            # page. b -> d and d -> a? fill the gutter column on one side of a?, and f stands on
+            # the other, where a labelled line that leaves sideways pays for the occupied cell it
+            # heads towards: so the two steps straight up cost less than either way round, and
+            # e -> d is the line along the gutter
+            (exit_model([". e b c", ". f a? d"], ["d -> c", "a? -> e : да", "e -> d",
+                                                  "b -> e", "a? -> b : да", "b -> d", "d -> a?"]),
              ("a?", "b"), "T", 4.0, {"widget": True, "page": False}),
         )
         for model, edge, side, oy, crosses in cases:
@@ -442,15 +486,18 @@ class BesideSecondSegment(unittest.TestCase):
         # these cards are one title line high: c -> d is drawn nearer the base than its offset,
         # through the text.
         #
-        # Three lines share d's row — d -> a as far as the gutter beside d, d -> b as far as the one
-        # beside b, and c -> d across the whole of it — and each of the three lies beside the other
-        # two, so each takes a slot of its own at the widest of router.PITCHES. The premise asserts
-        # those offsets and who holds them: a line that stopped lying beside the others would share
-        # its slot, the group would close up, and the case would measure an offset it was not
-        # written for. c -> b, which leaves c the other way, is a group of its own on that row: it
-        # meets c -> d at c, which is a card and not a junction.
+        # Three lines lie beside one another on d's row — d -> a as far as the gutter beside d,
+        # d -> b as far as the one beside b, and c -> d across the whole of it — so each takes a
+        # slot of its own at the widest of router.PITCHES. c -> b, which leaves c the other way
+        # round the right margin, meets none of them side by side and shares d -> b's slot. The
+        # premise asserts those offsets and who holds them: a line that stopped lying beside the
+        # others would share a slot, the group would close up, and the case would measure an offset
+        # it was not written for.
+        #
+        # e -> c is what fills the row under the cards, which is the way d -> b takes when it is
+        # free; without it the label's line never turns up in the gutter beside b at all.
         model = exit_model(["e a b", "d . c"],
-                           ["e -> d", "c -> d", "c -> b", "d -> b : да", "d -> a", "a -> c"],
+                           ["e -> d", "c -> d", "c -> b", "d -> b : да", "d -> a", "a -> c", "e -> c"],
                            terminals=("b",))
         pitch = float(router.PITCHES[0])
         for mode in ("widget", "page"):
@@ -483,8 +530,12 @@ class BesideSecondSegment(unittest.TestCase):
         # which is what puts a -> d's own line a whole pitch off the row line. The premise asserts those
         # three offsets: a row with less room beside it, or one line more on it, closes the group to a
         # narrower pitch, and the case would then measure an offset it was not written for.
+        #
+        # d -> b takes the way along the row of cards that a -> d would otherwise have, which is
+        # what sends a -> d out to the right margin and back along the gutter row the label is on.
         model = exit_model([". . d e", ". b c a"],
-                           ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c"], terminals=("e",))
+                           ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c", "d -> b"],
+                           terminals=("e",))
         pitch = float(router.PITCHES[0])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):

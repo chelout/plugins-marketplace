@@ -134,6 +134,12 @@ BROWSER_TIMEOUT = 60  # seconds per page; a launch takes about 3 s
 # the right on the same lattice row line. The router puts `wake -> write` above (oy -4) and
 # `write -> both` below (oy +4); a browser that draws the straight line from another base than the
 # rest of the row line swaps them and draws a crossing the lattice does not have.
+#
+# `wake -> walk` is the loop back to the walk, and it is what keeps that shape: with `write`'s top
+# side free the search takes `wake -> write` into it through the gutter, and the row line of
+# `write` then holds one line, which is no order to compare. With the loop there the two enter
+# `walk` and `wake` sideways, `wake -> write` comes round to `write`'s right again, and the row
+# line of `walk` carries a second pair. test_reported_model_row_order asserts that a pair exists.
 REPORTED = {
     "kind": "flow",
     "groups": {"ok": {"label": "есть", "ramp": "teal"}, "gap": {"label": "нет", "ramp": "coral"}},
@@ -147,7 +153,7 @@ REPORTED = {
     ],
     "grid": ["prev   .", "walk   wake", "write  both", "next   ."],
     "edges": ["prev -> walk", "walk -> write", "walk -> wake | dashed", "wake -> write",
-              "write -> both | dashed", "write -> next"],
+              "write -> both | dashed", "write -> next", "wake -> walk"],
 }
 REPORTED_NAME = "reported-row-line"
 
@@ -445,7 +451,9 @@ def render_page(model, mode, path, paths=None):
         out, _, layout = render.produce(model, mod, args, {}, assets_mode)
     else:
         given = [[tuple(pt) for pt in p] for p in paths]
-        with mock.patch.object(router, "route_all", lambda lat, ends, labelled: given), \
+        # `flow.plan` hands the routing the room of every lattice line, which the search prices the
+        # groups against; the stub answers whatever it is given and takes that keyword to say so
+        with mock.patch.object(router, "route_all", lambda lat, ends, labelled, **kw: given), \
                 mock.patch.object(router, "overfull", lambda paths, nodes, room: []):
             out, _, layout = render.produce(model, mod, args, {}, assets_mode)
     out = out.replace("</body>", PROBE + "</body>", 1) if "</body>" in out else out + PROBE

@@ -5,9 +5,15 @@
   bench_routing.py --json   print the same numbers as one JSON object
 
 Two measurements, each the best of five runs. `flow.plan` on every shipped flow-like example in
-both modes. And routing plus `assign_offsets` plus `crossings` on the dense scenario of
-instances.py for seeds 1-10: the median and the maximum of the time, and the median of the
-crossings.
+both modes. And routing plus `place` — the offsets and the capacity check together — plus
+`crossings` on the dense scenario of instances.py for seeds 1-10: the median and the maximum of the
+time, and the median of the crossings.
+
+The dense scenario is planned the way `flow.plan` plans a page flow: its lattice states the
+capacity of every line, its routing and its offsets are given the room those capacities come from,
+and its paths are placed in the order the search priced them in. Timed without the room the run
+would leave out the one term of the objective that is not pairwise additive — a routing against a
+room pays for `overflow` on every proposal — and report a budget nothing in production ever meets.
 
 The numbers of a run are the baseline the next stage of the routing work compares with. The budgets
 are those of docs/specs/2026-09-19-routing-quality-design.md: an example at or below 25 ms, the
@@ -33,6 +39,10 @@ REPEATS = 5
 SEEDS = range(1, 11)
 EXAMPLE_BUDGET_MS = 25
 DENSE_BUDGET_MS = 300
+
+# The configuration the dense scenario is planned under, as (kind, mode, footnotes): a page flow,
+# the shape most of the shipped examples have.
+DENSE_CONFIG = ("flow", "page", ())
 
 
 def examples():
@@ -66,20 +76,44 @@ def example_numbers():
     return out
 
 
+def planned(cols, cells):
+    """The geometry and the lattice `flow.plan` builds for an instance under DENSE_CONFIG: the
+    extent ends at the last occupied row, the rows of it without a card carry their band, and every
+    lattice line states the capacity of the room the geometry gives it."""
+    kind, mode_name, footnotes = DENSE_CONFIG
+    used = {r for r, _ in cells.values()}
+    extent = max(used) + 1
+    mode = flow.mode_for(kind, mode_name, None)
+    card_w = (mode["total"] - mode["pad_l"] - mode["pad_r"] - mode["gap"] * (cols - 1)) / cols
+    geo = flow.Geometry(mode, card_w, cols, extent, *flow.margin_room(kind, mode_name, footnotes),
+                        empty=[r for r in range(extent) if r not in used])
+
+    def line_capacity(axis, line):
+        room = geo.room(axis, line)
+        return None if room is None else router.capacity(room)
+
+    return geo, router.Lattice(cols, extent, cells, capacity=line_capacity)
+
+
 def dense_numbers():
     """Per seed of the dense scenario: the time of routing, offsets and the count together, and
     the crossings counted. The routing is deterministic, so every run of a seed counts the same
     crossings and only the time is taken from the fastest."""
     out = []
     for seed in SEEDS:
-        cols, rows, cells, edges = instances.dense_scenario(seed)
-        lat = router.Lattice(cols, rows, cells)
+        cols, _, cells, edges = instances.dense_scenario(seed)
+        geo, lat = planned(cols, cells)
         ends = [(router.Lattice.point(*cells[a]), router.Lattice.point(*cells[b])) for a, b in edges]
         labelled = [False] * len(ends)
+        nodes = frozenset(lat.blocked)
 
         def run():
-            paths = [p for p in router.route_all(lat, ends, labelled) if p is not None]
-            router.assign_offsets(paths, nodes=frozenset(lat.blocked))
+            found = [(end, lab, p) for end, lab, p
+                     in zip(ends, labelled, router.route_all(lat, ends, labelled, room=geo.room))
+                     if p is not None]
+            paths = [p for _, _, p in found]
+            router.place([end for end, _, _ in found], [lab for _, lab, _ in found],
+                         paths, nodes, geo.room)
             return len(paths), router.crossings(paths)
 
         runs = [_timed(run) for _ in range(REPEATS)]

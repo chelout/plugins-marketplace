@@ -9,10 +9,12 @@ cards end. The rows above stay as they are, and the author still hears about eve
 grid.
 
 The models below are the branch gate's and the controller's: a row of cards whose lines have to
-leave it, and an empty row under it to leave into. A flow's top margin holds no line, so the lines
-go down, and each of these models put one below the last card row — into the empty row's own cells,
-or along the margin under it. The plans here are drafts, so that a group the trimmed lattice cannot
-hold is a warning and the paths are there to be looked at either way.
+leave it, and an empty row under it to leave into. A flow's top margin is the dearest line of all —
+it holds nothing, and a line leaving through the top pays for that as well — so the lines go down
+first, and each of these models put one below the last card row, into the empty row's own cells or
+along the margin under it. One of them puts a line over the first row too, which is the only way
+the message about the top margin can be measured at all. The plans here are drafts, so that a group
+the trimmed lattice cannot hold is a warning and the paths are there to be looked at either way.
 
 What the browser draws for such a model is case 16 of tests/test_browser_lines.py.
 """
@@ -33,8 +35,10 @@ def step(i):
 
 
 TRAILING = {
-    "two-lines": {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": ["a b c", ". . ."],
-                  "edges": ["a -> c", "a -> c"]},
+    # four lines between one pair of cards, two each way: the margin under the row holds three of
+    # them and the fourth is the one line over the row, which is what the top margin is named by
+    "both-ways": {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": ["a b c", ". . ."],
+                  "edges": ["a -> c", "a -> c", "c -> a", "c -> a"]},
     "three-lines": {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": ["a b c", ". . ."],
                     "edges": ["a -> c"] * 3},
     "four-columns": {"kind": "flow", "nodes": [step(i) for i in "abcd"], "grid": ["a b c d", ". . . ."],
@@ -42,9 +46,12 @@ TRAILING = {
     "swimlane": {"kind": "swimlane", "lanes": ["one", "two", "three"], "groups": LANES,
                  "nodes": [step(i) for i in "abc"], "grid": ["a b c", ". . ."], "edges": ["a -> c"] * 3},
 }
-# A leading empty row and a trailing one: the first gets a track, the second does not.
+# A leading empty row and a trailing one: the first gets a track, the second does not. Four lines,
+# because three of them find room in the gutter under the empty row and in the margin under the
+# cards; the fourth is the one that runs along the empty row's own cells, which is what this model
+# is here to show.
 LEADING = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .", "a b c", ". . ."],
-           "edges": ["a -> c"] * 3}
+           "edges": ["a -> c"] * 4}
 
 
 def planned(model, mode, draft=True):
@@ -105,11 +112,11 @@ class TheMessagesCountTheRowsThatAreDrawn(unittest.TestCase):
 
     def test_a_group_under_the_last_card_row_is_named_by_the_bottom_margin(self):
         got = self.drafted("four-columns", "page")
-        self.assertTrue(any(w.startswith("черновик: по нижнему полю линий 2, помещается 1: a -> c, b -> d")
+        self.assertTrue(any(w.startswith("черновик: по нижнему полю линий 3, помещается 1: a -> c, b -> d, a -> d")
                             for w in got), got)
 
     def test_a_group_over_the_first_one_is_named_by_the_top_margin(self):
-        got = self.drafted("two-lines", "page")
+        got = self.drafted("both-ways", "page")
         self.assertTrue(any(w.startswith("черновик: по верхнему полю линий 1, помещается 0: a -> c")
                             for w in got), got)
 
