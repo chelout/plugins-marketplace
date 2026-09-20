@@ -254,6 +254,27 @@ footnotes. `flow.TOP_ROOM` and `flow.BOTTOM_ROOM` carry the measured px and a br
 them against the page. More vertical padding in `.dg-grid` would give these margins real room; it
 is a template change with a CDN release behind it and is the owner's to take, not this stage's.
 
+### 4.1a Slots are reused (amendment, 2026-09-20, by the owner's word)
+
+The first measurement of the capacity check showed the unit above to be wasteful, not wrong. On 500
+seeded grids the check refused 99 (flow widget), 127 (flow page), 231 (swimlane widget) and 111
+(swimlane page) plans, almost all of them on column gutters, and 57–76 % of the refused groups
+would fit by the load at their busiest point: a chain of six runs was drawn six slots wide with two
+lines side by side anywhere.
+
+So the width of a group is the number of slots it is drawn in, not the number of its runs. The
+order of a group is decided as in §3; then each run, in that order, takes the lowest slot above
+every earlier run it **lies beside** — shares a stretch with, or meets end to end in a gutter.
+Two runs that never lie beside each other may share a slot. Every pair that does lie beside each
+other keeps the relative order it had, and only such pairs can cross or overlap, which is why the
+invariant of §3.4 holds unchanged; the property test is the guard, as for any ordering. The pitch
+of §4.2, the check of §4.4 and its message, and `overfull` all use that width.
+
+Measured with a prototype before it was specified: the invariant held in the 900 surveys of the
+property test and in 2 000 routings of another generator, all 14 renders stayed byte-identical, and
+the refusals fell to 54, 86, 173 and 75. The bound by the busiest point is 29, 56, 130 and 47; the
+rest is held by the orders of §3, and an order chosen for width is left to the objective of stage C.
+
 ### 4.2 Adaptive pitch
 
 `assign_offsets` takes the room per line as an optional argument and picks, per group, the first
@@ -503,6 +524,9 @@ Stage B
 - B3. Shipped examples byte-identical: command output. Owner's pair review of two stress models.
 - B4. Where a detour cheaper than 20 exists, the router leaves a gutter at its capacity instead of
   adding a line to it: a test on a hand-made grid.
+- B5. Two runs of one group that never lie beside each other share a slot, the width of a group is
+  its slot count, and the pitch, `overfull` and the message use it: `tests/test_capacity.py`; the
+  invariant of A2 stays green and the shipped examples byte-identical.
 
 Stage C
 - C1. Fast `Traffic` gives identical paths on the property-test instances: a test; `route` at least
@@ -568,6 +592,12 @@ names the criterion that proves the guarantee.
 The owner took the default of each on 2026-09-19.
 
 - **Q1.** A group over capacity: layout error (default) or warning?
+  Settled by the owner on 2026-09-20 after the pair review of stage B: it stays an error, with the
+  slot reuse of §4.1a taken into the stage before its pull request; the wording of the message and
+  its zero-based numbering stay as built (§4.4). Two alternatives were put to the owner and are not
+  taken now: more vertical padding in `.dg-grid` (§4.1), and removing fully empty rows from the grid
+  before layout, which would retire the band rules of `design.md` §14 at the price of changing how
+  such models look.
 - **Q2.** Advice: on whenever it is triggered, with `--no-advice` (default), or opt-in `--advise`?
 - **Q3.** Order and cut of the stream: A, C fast `Traffic`, B, C, D, E, each a pull request of its
   own (default); or stop after C and decide on D and E from its results?

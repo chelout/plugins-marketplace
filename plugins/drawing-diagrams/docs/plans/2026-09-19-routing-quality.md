@@ -342,6 +342,33 @@ Spec: §4.3, §4.4, criteria B2, B3, B4.
 
 Check: full suite with the browser tests; golden identical; benchmark within budget.
 
+### Task 9a: Slots are reused (added 2026-09-20 by the owner's word)
+
+Spec: §4.1a, criterion B5.
+
+**Files:** Modify `SKILL/diagrams/router.py`, `SKILL/diagrams/flow.py`, `PLUGIN/docs/design.md`,
+`PLUGIN/tests/test_capacity.py`, `PLUGIN/tests/test_label_lines.py`, the dense models under
+`PLUGIN/tests/models/`.
+
+**Interfaces:** the width of a group is its slot count. One place decides order and slots for both
+`assign_offsets` and `overfull` (as `_line_groups` is one place for the groups); `overfull` reports
+the width the message prints.
+
+- [ ] Tests first: two runs chained through a third that lies above both take one slot and the
+  group is two wide; a staircase of orders stays as wide as it is long; runs that meet end to end in
+  a gutter never share a slot; `overfull` and the pitch follow the width; the chain-of-four case of
+  task 8 is restated under the rule.
+- [ ] Implement over the existing order: lowest slot above every earlier run the run lies beside.
+  Property test green under all rooms; golden identical.
+- [ ] The dense models must again reach the 6 and the 5 px pitch (they were found for the old width);
+  fixtures of `tests/test_label_lines.py` that stood on an old width get their premises back, no
+  assertion loosened.
+- [ ] `design.md` §14: the rule, and the sentences that say a group of `w` runs is `w` slots wide.
+- [ ] Commit `feat(drawing-diagrams): runs that never lie side by side share a slot`.
+
+Check: full suite with the browser tests; golden identical; benchmark within budget; the refusal
+rates of the controller's experiment reported before and after.
+
 ### Task 10: Stage B review and gate (controller)
 
 - [ ] Render the examples and the two stress models of task 9 before and after; owner's pair review
