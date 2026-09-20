@@ -92,6 +92,17 @@ TRACK_LEAD = 20
 MEASURED = object()
 
 
+def shared_room(distance):
+    """What a side of a band line facing another lattice line takes of the `distance` to it: half of
+    what is left once one smallest pitch (`router.PITCHES[-1]`) is kept between the two groups, so
+    their outermost lines stay that pitch apart — as near as two lines of one group ever come.
+
+    Sharing the whole distance instead let both groups reach the very same y, and no counter saw it:
+    `router.drawn_overlaps` works in lattice coordinates, where the two lines lie on lines of their
+    own."""
+    return (distance - router.PITCHES[-1]) / 2
+
+
 def margin_room(kind, mode_name, footnotes):
     """(top, bottom) raw room of the outer margins for this kind and mode: only a swimlane carries
     lane headers, so every other kind is measured as a flow. `footnotes` says whether the model has
@@ -159,8 +170,9 @@ class Geometry:
 
         Each run is measured in px from the card edge that ends it, downwards, so its own lines are
         negative and the cards below it are at 0. A side facing a card edge keeps LINE_CLEAR off the
-        distance to it; a side facing another lattice line takes half the distance, the two groups
-        sharing the space between their lines."""
+        distance to it; a side facing another lattice line takes `shared_room` of the distance — the
+        two groups share it, less one smallest pitch kept between them, which is what stops the
+        outermost lines of two neighbouring groups being drawn on one y."""
         runs = []
         for r in self.empty:
             if runs and runs[-1][-1] == r - 1:
@@ -181,21 +193,22 @@ class Geometry:
             # gutters[k] is the lattice line 2 * (a + k), the one above the empty row a + k
             gutters = [first] + [(ys[j - 1] + ys[j]) / 2 for j in range(1, len(ys))] + [ys[-1] / 2]
             for j, y in enumerate(ys):
-                out[2 * (a + j) + 1] = ((y - gutters[j]) / 2, (gutters[j + 1] - y) / 2)
+                out[2 * (a + j) + 1] = (shared_room(y - gutters[j]), shared_room(gutters[j + 1] - y))
             out[2 * a] = (MEASURED if above is None else first - above - LINE_CLEAR,
-                          (ys[0] - first) / 2)
+                          shared_room(ys[0] - first))
             for k in range(1, len(run)):
-                out[2 * (a + k)] = ((gutters[k] - ys[k - 1]) / 2, (ys[k] - gutters[k]) / 2)
-            out[2 * (b + 1)] = ((gutters[-1] - ys[-1]) / 2, -gutters[-1] - LINE_CLEAR)
+                out[2 * (a + k)] = (shared_room(gutters[k] - ys[k - 1]), shared_room(ys[k] - gutters[k]))
+            out[2 * (b + 1)] = (shared_room(gutters[-1] - ys[-1]), -gutters[-1] - LINE_CLEAR)
         return out
 
     def room(self, axis, line):
         """The px the lines of one group on this lattice line may spread over, on each side of it,
         lower coordinate first, with LINE_CLEAR already taken off towards a card and EDGE_CLEAR
         towards whatever bounds them on the other side — the edge that clips or covers them, or,
-        under the bottom margin, the content the section goes on with. Towards another lattice line
-        the room is half the distance to it (`_band`). A negative number says a line on the lattice
-        line itself is already past that bound.
+        under the bottom margin, the content the section goes on with. Towards another lattice line,
+        which only the band of an empty row brings this near, the room is `shared_room` of the
+        distance to it: the two groups share it and keep one smallest pitch between them (`_band`).
+        A negative number says a line on the lattice line itself is already past that bound.
 
         None where there is no room to state: a column of cards, a row of cards — both placed against
         card heights by the script, which this side knows nothing of — and an outer row margin this

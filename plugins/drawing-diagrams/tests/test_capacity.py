@@ -24,6 +24,7 @@ import unittest
 
 import support  # noqa: F401
 import bench_routing
+import test_browser_lines as browser  # the models and the hand-made routes of its band cases
 from diagrams import flow, router
 
 # The five lines come into the column gutter X = 2 from five card rows on the left and leave it at
@@ -109,30 +110,31 @@ BOTTOM_CAPACITY = {("widget", False): 3, ("widget", True): 2, ("page", False): 1
 #
 # Per shape: (rows of the drawn extent, the empty ones among them, {mode: {lattice row line: room}}),
 # each room the pair (towards the lower coordinate, towards the higher). Towards a card edge the room
-# is the distance to it less LINE_CLEAR, towards another lattice line half the distance to it — two
-# groups share the space between their lines — and the away-from-the-cards side of the top margin
-# stays the measured TOP_ROOM of the kind (TOPWARD below), which a leading empty row only pushes the
-# line further from.
+# is the distance to it less LINE_CLEAR. Towards another lattice line the two groups share the
+# distance, but only what is left of it once one smallest pitch (router.PITCHES[-1]) is kept between
+# them: half of (distance - 5), so the outermost lines of the two stay as far apart as two lines of
+# one group ever come. The away-from-the-cards side of the top margin stays the measured TOP_ROOM of
+# the kind (TOPWARD below), which a leading empty row only pushes the line further from.
 TOPWARD = "TOP_ROOM"
 EMPTY_BAND = {
     "one leading": (2, (0,), {
-        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 5.0), 2: (5.0, 6.0)},
-        "page": {0: (TOPWARD, 9.0), 1: (9.0, 5.0), 2: (5.0, 6.0)}}),
+        "widget": {0: (TOPWARD, 3.5), 1: (3.5, 2.5), 2: (2.5, 6.0)},
+        "page": {0: (TOPWARD, 6.5), 1: (6.5, 2.5), 2: (2.5, 6.0)}}),
     "two leading": (3, (0, 1), {
-        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 2.5), 4: (2.5, 1.0)},
-        "page": {0: (TOPWARD, 9.0), 1: (9.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 2.5), 4: (2.5, 1.0)}}),
+        "widget": {0: (TOPWARD, 3.5), 1: (3.5, 0.0), 2: (0.0, 0.0), 3: (0.0, 0.0), 4: (0.0, 1.0)},
+        "page": {0: (TOPWARD, 6.5), 1: (6.5, 0.0), 2: (0.0, 0.0), 3: (0.0, 0.0), 4: (0.0, 1.0)}}),
     "three leading": (4, (0, 1, 2), {
-        "widget": {0: (TOPWARD, 6.0), 1: (6.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 1.25),
-                   4: (1.25, 1.25), 5: (1.25, 1.25), 6: (1.25, -1.5)},
-        "page": {0: (TOPWARD, 9.0), 1: (9.0, 2.5), 2: (2.5, 2.5), 3: (2.5, 1.25),
-                 4: (1.25, 1.25), 5: (1.25, 1.25), 6: (1.25, -1.5)}}),
+        "widget": {0: (TOPWARD, 3.5), 1: (3.5, 0.0), 2: (0.0, 0.0), 3: (0.0, -1.25),
+                   4: (-1.25, -1.25), 5: (-1.25, -1.25), 6: (-1.25, -1.5)},
+        "page": {0: (TOPWARD, 6.5), 1: (6.5, 0.0), 2: (0.0, 0.0), 3: (0.0, -1.25),
+                 4: (-1.25, -1.25), 5: (-1.25, -1.25), 6: (-1.25, -1.5)}}),
     "one interior": (3, (1,), {
-        "widget": {2: (16.0, 10.0), 3: (10.0, 10.0), 4: (10.0, 16.0)},
-        "page": {2: (18.0, 11.0), 3: (11.0, 11.0), 4: (11.0, 18.0)}}),
+        "widget": {2: (16.0, 7.5), 3: (7.5, 7.5), 4: (7.5, 16.0)},
+        "page": {2: (18.0, 8.5), 3: (8.5, 8.5), 4: (8.5, 18.0)}}),
     "two interior": (4, (1, 2), {
-        "widget": {2: (26.0, 15.0), 3: (15.0, 7.5), 4: (7.5, 7.5), 5: (7.5, 7.5), 6: (7.5, 11.0)},
-        "page": {2: (29.0, 16.5), 3: (16.5, 8.25), 4: (8.25, 8.25), 5: (8.25, 8.25),
-                 6: (8.25, 12.5)}}),
+        "widget": {2: (26.0, 12.5), 3: (12.5, 5.0), 4: (5.0, 5.0), 5: (5.0, 5.0), 6: (5.0, 11.0)},
+        "page": {2: (29.0, 14.0), 3: (14.0, 5.75), 4: (5.75, 5.75), 5: (5.75, 5.75),
+                 6: (5.75, 12.5)}}),
 }
 
 # The model the branch gate reported, and the px the browser showed between the gutter above the
@@ -142,6 +144,11 @@ EMPTY_BAND = {
 GATE = {"kind": "flow", "nodes": [{"id": i, "title": i.upper()} for i in "abc"],
         "grid": [". . .", "a b c"], "edges": ["a -> c"] * 6}
 OVER_THE_CARDS = 10.0
+# The same model with one line more, which is what the gate reported next: while the two groups of a
+# band shared the whole distance between their lines, the third line went along the empty row at the
+# offset +5 and the fourth along the gutter under it at -5 — two lattice lines 10 px apart, so a reader
+# saw one line 15 px over the cards where the lattice had two, and no counter said so.
+GATE_SEVEN = dict(GATE, edges=["a -> c"] * 7)
 
 # Three cards in the second row of a two-row grid, the first row empty: a line from the first card to
 # the last can run along the gutter above them (lattice row line Y = 2), along the cells of the empty
@@ -195,6 +202,83 @@ def stated(caps):
 def only(axis, line, cap):
     """A capacity callable that states one lattice line's capacity and leaves every other unstated."""
     return stated({(axis, line): cap})
+
+
+def band_lines(geo):
+    """Where the page draws every lattice row line of every band of `geo`: one {lattice row line: y}
+    per run of empty rows, in px from the top of the cards the run ends at, so the run's own lines are
+    negative. This is the rule case 17 of tests/test_browser_lines.py holds against the browser, and
+    the room of those lines is what `Geometry._band` derives from it: `tracks()` of
+    template/js/head.js invents one track per empty row of the drawn extent and fills them in
+    ascending order, so each sees the tracks above it — a leading run starts flow.TRACK_LEAD px over
+    the first cards and every row after it halves what is left of the way down to them, and a run
+    between two rows of cards halves the span between their card edges, which is (k + 1) row gaps for
+    k empty rows. `by()` of template/js/flow.js then puts a row line on its own track, a gutter halfway
+    between two tracks and the top margin `Geometry.margin` over the first."""
+    runs = []
+    for r in geo.empty:
+        if runs and runs[-1][-1] == r - 1:
+            runs[-1].append(r)
+        else:
+            runs.append([r])
+    out = []
+    for run in runs:
+        if run[0] == 0:
+            ys = [-flow.TRACK_LEAD / 2 ** j for j in range(len(run))]
+            first = ys[0] - geo.margin
+        else:
+            span = (len(run) + 1) * geo.row_gap
+            ys = [-span / 2 ** (j + 1) for j in range(len(run))]
+            first = (-span + ys[0]) / 2
+        band = {2 * run[0]: first, 2 * (run[-1] + 1): ys[-1] / 2}
+        for j, y in enumerate(ys):
+            band[2 * (run[0] + j) + 1] = y
+            if j:
+                band[2 * (run[0] + j)] = (ys[j - 1] + y) / 2
+        out.append(band)
+    return out
+
+
+def band_runs(geo, paths, offsets):
+    """(band, lattice row line, y, x lo, x hi, path index) per horizontal run drawn on a row line of a
+    band, as template/js/flow.js draws it: the line's own y from `band_lines` plus the run's offset
+    across, and the px the run spans, each end its lattice x plus the offset there."""
+    bands = band_lines(geo)
+    out = []
+    for i, (p, off) in enumerate(zip(paths, offsets)):
+        for k in range(len(p) - 1):
+            (x1, y1), (x2, y2) = p[k], p[k + 1]
+            if y1 != y2:
+                continue
+            for b, band in enumerate(bands):
+                if y1 in band:
+                    xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
+                    out.append((b, y1, band[y1] + off[k][1], min(xa, xb), max(xa, xb), i))
+    return out
+
+
+def bands_too_close(geo, paths, offsets, apart=router.PITCHES[-1]):
+    """(misses, compared): pairs of runs on two different row lines of one band that overlap along x
+    and are drawn nearer than `apart` px — one line as far as a reader is concerned, where the lattice
+    has two — and the number of pairs looked at. `router.drawn_overlaps` finds none of them: it counts
+    on the lattice, where the two runs lie on different lines."""
+    found, compared, runs = [], 0, band_runs(geo, paths, offsets)
+    for n, (b, Y, y, lo, hi, i) in enumerate(runs):
+        for b2, Y2, y2, lo2, hi2, j in runs[n + 1:]:
+            if b2 != b or Y2 == Y or max(lo, lo2) >= min(hi, hi2):
+                continue
+            compared += 1
+            if abs(y2 - y) < apart:
+                found.append(f"lines {i} and {j}, on the row lines Y={Y} and Y={Y2}, are drawn "
+                             f"{abs(y2 - y):.2f} px apart over x {max(lo, lo2):.2f}..{min(hi, hi2):.2f}")
+    return found, compared
+
+
+def paths_and_offsets(layout):
+    """The lattice paths of a plan and the (ox, oy) of each of their points, read back from the edge
+    JSON the page is drawn from."""
+    return ([[(x, y) for x, y, _, _ in e["path"]] for e in layout["edges"]],
+            [[(ox, oy) for _, _, ox, oy in e["path"]] for e in layout["edges"]])
 
 
 def geometry_of(layout, mode):
@@ -333,25 +417,27 @@ class EmptyRowRoom(unittest.TestCase):
         # geometry and is stated either way
         geo = flow.Geometry(flow.mode_for("flow", "page", None), 100.0, 3, 2, empty=(0,))
         self.assertIsNone(geo.room("h", 0))
-        self.assertEqual(geo.room("h", 1), (9.0, 5.0))
-        self.assertEqual(geo.room("h", 2), (5.0, 6.0))
+        self.assertEqual(geo.room("h", 1), (6.5, 2.5))
+        self.assertEqual(geo.room("h", 2), (2.5, 6.0))
 
     def test_how_many_lines_the_band_holds(self):
         # what a capacity message prints for these lines. A row gutter between two rows of cards
         # holds eight on a page; with an empty row between them the three lines of the band hold
-        # five each, and a leading empty row leaves three above the cards instead of none.
+        # four each, and a leading empty row leaves two above the cards instead of none.
         self.assertEqual([router.capacity(self.geo("flow", "page", 3, (1,)).room("h", y))
-                          for y in (2, 3, 4)], [5, 5, 5])
+                          for y in (2, 3, 4)], [4, 4, 4])
         self.assertEqual([router.capacity(self.geo("flow", "page", 2, (0,)).room("h", y))
-                          for y in (0, 1, 2)], [0, 3, 3])
+                          for y in (0, 1, 2)], [0, 2, 2])
 
     def test_a_deep_leading_run_ends_in_a_gutter_that_holds_nothing(self):
         # the halving puts the last gutter of a run of three 2.5 px over the cards, inside
-        # LINE_CLEAR of them: no pitch draws a line there, and the message says to move the nodes
+        # LINE_CLEAR of them: no pitch draws a line there, and the message says to move the nodes.
+        # The lines above it are 2.5 px apart too, which is less than the clearance two groups keep
+        # between them, so from the second empty row down the band holds nothing either.
         geo = self.geo("flow", "page", 4, (0, 1, 2))
-        self.assertEqual(geo.room("h", 6), (1.25, -1.5))
+        self.assertEqual(geo.room("h", 6), (-1.25, -1.5))
         self.assertEqual(router.capacity(geo.room("h", 6)), 0)
-        self.assertEqual([router.capacity(geo.room("h", y)) for y in range(7)], [0, 2, 2, 1, 1, 1, 0])
+        self.assertEqual([router.capacity(geo.room("h", y)) for y in range(7)], [0, 1, 1, 0, 0, 0, 0])
 
 
 class AdaptivePitch(unittest.TestCase):
@@ -377,10 +463,10 @@ class AdaptivePitch(unittest.TestCase):
                          [("v", 2, [0, 1, 2, 3, 4], 3)])
 
     def test_five_runs_do_not_fit_a_narrow_row_gutter(self):
-        # (5, 6) is the gutter under a leading empty row in a widget: as little room as the narrowest
-        # column gutter, and the group that does not fit it is named the same way
-        self.assertEqual(router.overfull(HFIVE, HFIVE_NODES, room_of((5, 6))),
-                         [("h", 2, [0, 1, 2, 3, 4], 3)])
+        # (2.5, 6) is the gutter under a leading empty row: less room than the narrowest column
+        # gutter, and the group that does not fit it is named the same way
+        self.assertEqual(router.overfull(HFIVE, HFIVE_NODES, room_of((2.5, 6))),
+                         [("h", 2, [0, 1, 2, 3, 4], 2)])
 
     def test_a_chain_that_only_meets_end_to_end_is_one_group(self):
         self.assertEqual(router.overfull(CHAIN, CHAIN_NODES, room_of((5, 5))),
@@ -404,7 +490,7 @@ class AdaptivePitch(unittest.TestCase):
         self.assertEqual(spread(FIVE, offs, "v", 2), [-10.0, -5.0, 0.0, 5.0, 10.0])
 
     def test_a_group_over_the_capacity_of_a_row_gutter_is_drawn_at_the_smallest_pitch(self):
-        offs = router.assign_offsets(HFIVE, nodes=HFIVE_NODES, room=room_of((5, 6)))
+        offs = router.assign_offsets(HFIVE, nodes=HFIVE_NODES, room=room_of((2.5, 6)))
         self.assertEqual(spread(HFIVE, offs, "h", 2), [-10.0, -5.0, 0.0, 5.0, 10.0])
 
     def test_an_even_group_at_the_smallest_pitch_lands_on_half_pixels(self):
@@ -574,6 +660,60 @@ class TheGateModel(unittest.TestCase):
                                                  geo.room), [])
 
 
+class BandLinesApart(unittest.TestCase):
+    """Two groups on neighbouring row lines of a band keep one smallest pitch between them, so a reader
+    never sees one line where the lattice has two. The band is the only place on the lattice where two
+    lines come near enough for that — every other pair is a row gap or a gutter apart — and it is the
+    one place `router.drawn_overlaps` cannot guard: it counts in lattice coordinates, where the two
+    runs lie on lines of their own.
+
+    Every check here scans every pair of row lines of a band, not the pair the gate reported."""
+
+    def scan(self, geo, paths, offsets, what):
+        misses, compared = bands_too_close(geo, paths, offsets)
+        self.assertEqual(misses, [], f"{what}: two lines of one band drawn as one")
+        return compared
+
+    def test_the_gate_model_is_refused_or_its_band_lines_stay_apart(self):
+        compared = 0
+        for name, model in (("six edges", GATE), ("seven edges", GATE_SEVEN)):
+            for mode in bench_routing.MODES:
+                with self.subTest(model=name, mode=mode):
+                    try:
+                        layout, _ = flow.plan(json.loads(json.dumps(model)), mode)
+                    except flow.ModelError as exc:
+                        # refused: the band holds fewer lines than the model wants and the author
+                        # moves the nodes, so nothing is drawn
+                        self.assertTrue([m for m in exc.layout if "помещается" in m], exc.layout)
+                        continue
+                    compared += self.scan(geometry_of(layout, mode), *paths_and_offsets(layout),
+                                          f"{name} {mode}")
+        # the case exists only if some mode draws lines on two row lines of the band at once
+        self.assertGreater(compared, 0, "harness: no pair of band lines was compared")
+
+    def test_the_hand_routed_pages_of_the_browser_cases(self):
+        # cases 17 and 18 of tests/test_browser_lines.py: the pages that put one line on every row line
+        # of a band and a group at the capacity of each. Their routes are hand-made, as the browser
+        # draws them, so the offsets come from `assign_offsets` with the room of the model's geometry —
+        # everything after routing, which is what those pages measure.
+        compared = 0
+        for name, (model, hand) in sorted(dict(browser.EMPTY_BANDS, **browser.BAND_CAPACITY).items()):
+            for mode in bench_routing.MODES:
+                with self.subTest(page=name, mode=mode):
+                    geo, nodes = self.geometry_and_nodes(model, mode)
+                    paths = [[tuple(pt) for pt in p] for p in hand]
+                    offsets = router.assign_offsets(paths, nodes=nodes, room=geo.room)
+                    compared += self.scan(geo, paths, offsets, f"{name} {mode}")
+        self.assertGreater(compared, 0, "harness: no pair of band lines was compared")
+
+    def geometry_and_nodes(self, model, mode):
+        """The geometry of a model and the points its cards block, from a plan of it with one edge:
+        neither depends on the edges, and a page whose routes are hand-made is drawn with both."""
+        one = dict(json.loads(json.dumps(model)), edges=model["edges"][:1])
+        layout, _ = flow.plan(one, mode)
+        return geometry_of(layout, mode), frozenset(layout["lattice"].blocked)
+
+
 class CapacityMessage(unittest.TestCase):
     """Spec 4.4, criterion B1: the layout error a group over its line's capacity becomes. It names
     the line the way the rest of the renderer names a column or a row, how many lines are drawn
@@ -619,11 +759,12 @@ class CapacityMessage(unittest.TestCase):
                          "переставьте узлы так, чтобы связи шли выше или между рядами")
 
     def test_the_row_line_of_an_empty_row(self):
-        # room (2.5, 2.5) is the row line of the second of two leading empty rows on a page: the
+        # room (0, 0) is the row line of the second of two leading empty rows on a page — its
+        # neighbours lie one smallest pitch away, so the line holds the one line on its own base: the
         # cells beside it are free already, so freeing another would not help and the advice is to
         # take the row out
-        self.assertEqual(self.error("h", 3, 4, room=(2.5, 2.5)),
-                         "в пустом ряду 1 линий 4, помещается 2: n0 -> m0, n1 -> m1, n2 -> m2, "
+        self.assertEqual(self.error("h", 3, 4, room=(0.0, 0.0)),
+                         "в пустом ряду 1 линий 4, помещается 1: n0 -> m0, n1 -> m1, n2 -> m2, "
                          "n3 -> m3; уберите пустой ряд или переставьте узлы")
 
     def test_the_row_line_of_an_empty_row_that_holds_no_line_at_all(self):

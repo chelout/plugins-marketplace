@@ -245,18 +245,29 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   row draws the gutter above its cards 10 px from them, not 22, and the four lines the stage had put
   there at the 8 px pitch reached 2 px inside a card with no capacity error — the branch gate found
   it. `flow.Geometry` now takes the empty rows of the drawn extent and `Geometry._band` answers from
-  the measured rule: towards a card edge the distance to it less `LINE_CLEAR`, towards another
-  lattice line half the distance to it, because the two groups share the space between their lines.
+  the measured rule: towards a card edge the distance to it less `LINE_CLEAR`, towards another lattice
+  line `flow.shared_room` of the distance — the two groups share it, less one smallest pitch
+  (`router.PITCHES[-1]` = 5 px) kept between them, so the outermost lines of two neighbouring groups
+  stay as far apart as two lines of one group ever come. Sharing the whole distance instead let both
+  groups reach the very same y, and no counter saw it: `router.drawn_overlaps` works in lattice
+  coordinates, where the two lines lie on lines of their own. The gate found that too, on the same model
+  with one line more: the third line ran along the empty row at the offset +5 and the fourth along the
+  gutter under it at −5 — two lattice lines 10 px apart, so a reader saw one line 15 px over the cards
+  where the lattice had two.
   The row line of a fully empty row states a room like a gutter, since nothing but `by()` places it,
   while a row of cards keeps stating none; `router.Lattice` therefore resolves the capacity of every
   line and not only the even ones, so the +20 prices a step along a full row of empty cells too, and
   `flow.line_name` names such a line "в пустом ряду N" with "уберите пустой ряд" for advice — beside
-  an empty row the cells are free already and what leaves no room is the row. The halving makes the
-  band tight fast: on a page an empty row between two rows of cards turns one gutter that held eight
-  lines into three lines of five, and under a run of three leading empty rows the last gutter lies
-  2.5 px over the cards and holds nothing at all. Case 17 of `tests/test_browser_lines.py` holds the
-  rule against the page — a flow and a swimlane, both modes, a run of one empty row and a run of two,
-  leading and interior — and case 18 draws a group at the capacity of every line of two such bands.
+  an empty row the cells are free already and what leaves no room is the row. The halving and that
+  clearance make the band tight fast: on a page an empty row between two rows of cards turns one gutter
+  that held eight lines into three lines of four, a leading empty row leaves two lines on its own row
+  line and two in the gutter under it, and under a run of three leading empty rows only its first row
+  line and the gutter under it hold a line at all, one each: every line below them has a neighbour
+  2.5 px away, less than the clearance two groups keep, and the last gutter is inside `LINE_CLEAR` of
+  the cards as well. Case 17 of `tests/test_browser_lines.py` holds the rule against the page — a flow
+  and a swimlane, both modes, a run of one empty row and a run of two, leading and interior — case 18
+  draws a group at the capacity of every line of two such bands, and case 19 measures those groups
+  against each other, which is what the shared distance left to chance.
   Above a leading empty row the top margin has more room than `flow.TOP_ROOM` states, because the
   grid box starts a row gap higher while the line itself sits only 20 px over that row's track: 14 px
   under the box's top edge in a page flow, where the constant says 10 px above it, and 50 px under the

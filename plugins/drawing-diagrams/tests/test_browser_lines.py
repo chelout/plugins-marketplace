@@ -79,6 +79,15 @@ Test cases (written from the declaration of the change, before the implementatio
     CARD_CLEAR from every card it does not end on and stays inside the grid box, as case 15 asks of
     the gutters and the margins. This is what makes the room of such a band a number a diagram can be
     refused on.
+19. The lines of a band against each other, on the page of case 18 and on the model the branch gate
+    reported — a flow with a leading empty row and seven lines between the outer cards of the row under
+    it, routed by the router itself: no two horizontal segments of different edges, matched to different
+    lattice row lines of a band and overlapping along x by more than a corner radius, are drawn nearer
+    than ROWS_APART px in y. Case 18 measures the lines against the cards; this measures them against
+    each other, which is where two neighbouring groups sharing the whole distance between their lines
+    put both on the very same y — `router.drawn_overlaps` counts on the lattice, where the two lines
+    differ, so nothing but the page showed it. A mode whose band does not hold the gate's seven lines
+    refuses the plan and draws nothing at all, which the test asks for instead.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -266,6 +275,13 @@ CAPACITY = {"capacity-at-pitch": (
 # pixels: a line keeps LINE_CLEAR from a card edge by construction; the browser is asked for this
 # much, which leaves a pixel for the layout's own rounding
 CARD_CLEAR = 3.0
+# pixels: two runs drawn on different lattice row lines keep router.PITCHES[-1] = 5 px by construction
+# (the clearance Geometry._band keeps between two groups); the browser is asked for this much, a pixel
+# less, as CARD_CLEAR is
+ROWS_APART = 4.0
+# pixels: RAD of template/js/head.js, the radius roundPath turns a corner with. Two runs that overlap
+# along x by no more than that much can be the arcs of one corner rather than two lines side by side.
+CORNER = 8
 
 # Docstring case 16. Three lines that have to leave the row of cards they run between: a flow's top
 # margin holds none, so they went down, and the empty row at the foot of the grid is where they went
@@ -323,13 +339,13 @@ EMPTY_BAND_CASE = {f"{name}-{kind}": (name, kind)
                    for name in EMPTY_BAND_SHAPES for kind in ("flow", "swimlane")}
 
 # Docstring case 18. A page flow of four columns with a leading empty row and one between its two
-# rows of cards, holding a group at the capacity of every line of the two bands: three along the row
-# line of the leading empty row (Y = 1, pitch 5) and three along the gutter under it (Y = 2), then
-# five along each of the three lines of the interior band (Y = 4, 5 and 6, pitch 5). The top margin
+# rows of cards, holding a group at the capacity of every line of the two bands: two along the row
+# line of the leading empty row (Y = 1, pitch 5) and two along the gutter under it (Y = 2), then
+# four along each of the three lines of the interior band (Y = 4, 5 and 6, pitch 5). The top margin
 # above the leading row and the bottom margin hold 0 and 1, so neither carries a group here. The
 # routes are put in by hand, as the capacity model's are.
 BAND_CAP_IDS = ["abcd", "efgh"]
-BAND_CAP_LINES = ((1, 3), (2, 3), (4, 5), (5, 5), (6, 5))  # (lattice row line, lines along it)
+BAND_CAP_LINES = ((1, 2), (2, 2), (4, 4), (5, 4), (6, 4))  # (lattice row line, lines along it)
 BAND_CAP_PATHS = [[(1, 3), (1, Y), (7, Y), (7, 3 if Y < 3 else 7)]
                   for Y, count in BAND_CAP_LINES for _ in range(count)]
 BAND_CAPACITY = {"empty-band-at-pitch": (
@@ -338,6 +354,15 @@ BAND_CAPACITY = {"empty-band-at-pitch": (
      "edges": [f"{BAND_CAP_IDS[0][0]} -> {BAND_CAP_IDS[0][3] if Y < 3 else BAND_CAP_IDS[1][3]}"
                for Y, count in BAND_CAP_LINES for _ in range(count)]},
     BAND_CAP_PATHS)}
+
+# Docstring case 19. The model the branch gate reported, with one line more than the band above the
+# cards holds: a flow with a leading empty row and seven lines between the outer cards of the row under
+# it, routed by the router itself. A mode whose band no longer holds the seven refuses the plan, and
+# setUpClass leaves that page out — a refusal draws nothing, which is the same guarantee from the other
+# side.
+GATE_NAME = "gate-band"
+GATE_SEVEN = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .", "a b c"],
+              "edges": ["a -> c"] * 7}
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
@@ -757,6 +782,40 @@ def outside_box_misses(layout, names, lines, box):
     return misses, checked
 
 
+def horizontal_runs(layout, lines):
+    """[(lattice row line, pixel y, x lo, x hi, edge index)] of every horizontal run matched to its
+    lattice segment, on any row line — `row_runs` answers for the rows of cards alone."""
+    out = []
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if len(path) != len(lines[i]) + 1:
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            if a[1] == b[1] and lines[i][k][0] == "h":
+                out.append((a[1], lines[i][k][1], lines[i][k][2], lines[i][k][3], i))
+    return out
+
+
+def near_row_misses(layout, names, lines):
+    """(misses, compared): pairs of horizontal runs of different edges, matched to different lattice row
+    lines and overlapping along x by more than a corner radius, drawn nearer than ROWS_APART px in y —
+    one line as far as a reader is concerned, where the lattice has two. Two runs on one row line are
+    left out: they are a group at its own pitch, or two lines a clamp merged, which cases 7 and 8
+    measure."""
+    misses, compared = [], 0
+    runs_here = horizontal_runs(layout, lines)
+    for n, (Y, y, lo, hi, i) in enumerate(runs_here):
+        for Y2, y2, lo2, hi2, j in runs_here[n + 1:]:
+            if Y2 == Y or j == i or min(hi, hi2) - max(lo, lo2) <= CORNER:
+                continue
+            compared += 1
+            if abs(y2 - y) < ROWS_APART:
+                misses.append(f"row lines Y={Y} and Y={Y2}: {names[i]} at y {y:.2f} and {names[j]} at y "
+                              f"{y2:.2f} are {abs(y2 - y):.2f} px apart over x {max(lo, lo2):.2f}.."
+                              f"{min(hi, hi2):.2f}")
+    return misses, compared
+
+
 def row_order_swaps(layout, names, lines):
     """(swaps, compared): pairs of horizontal runs of different edges on one lattice row line (odd
     Y) whose lattice spans overlap and whose router offsets differ, drawn in the opposite order of
@@ -793,6 +852,15 @@ class BrowserLines(unittest.TestCase):
         drawn += [(name, model, paths, MODES) for name, (model, paths) in EMPTY_BANDS.items()]
         drawn += [(name, model, paths, ("page",)) for name, (model, paths) in CAPACITY.items()]
         drawn += [(name, model, paths, ("page",)) for name, (model, paths) in BAND_CAPACITY.items()]
+        # the gate's model is routed by the router itself, so a mode whose band does not hold its seven
+        # lines refuses the plan; that mode has no page, and the test asks the refusal instead
+        cls.gate_refused = {}
+        for mode in MODES:
+            try:
+                flow.plan(json.loads(json.dumps(GATE_SEVEN)), mode)
+            except flow.ModelError as exc:
+                cls.gate_refused[mode] = exc.layout
+        drawn += [(GATE_NAME, GATE_SEVEN, None, tuple(m for m in MODES if m not in cls.gate_refused))]
         jobs, cls.layouts, cls.results = [], {}, {}
         for name, model, paths, modes in drawn:
             for mode in modes:
@@ -1145,11 +1213,11 @@ class BrowserLines(unittest.TestCase):
 
     def test_the_empty_band_model_fills_each_line_of_both_bands(self):
         # the case exists only while each of the five groups is drawn as wide as its line holds:
-        # three at 5 px on the row line of the leading empty row and on the gutter under it, five at
+        # two at 5 px on the row line of the leading empty row and on the gutter under it, four at
         # 5 px on each of the three lines of the interior band
         spread = self.band_capacity_layout()
-        self.assertEqual([spread[1], spread[2]], [[-5.0, 0.0, 5.0]] * 2)
-        self.assertEqual([spread[Y] for Y in (4, 5, 6)], [[-10.0, -5.0, 0.0, 5.0, 10.0]] * 3)
+        self.assertEqual([spread[1], spread[2]], [[-2.5, 2.5]] * 2)
+        self.assertEqual([spread[Y] for Y in (4, 5, 6)], [[-7.5, -2.5, 2.5, 7.5]] * 3)
 
     def test_lines_at_the_capacity_of_an_empty_band_keep_clear_of_the_cards(self):
         """Docstring case 18, criterion B2 on the band of an empty row: with a group at the capacity of
@@ -1164,6 +1232,29 @@ class BrowserLines(unittest.TestCase):
         misses, checked = outside_box_misses(layout, names, lines, got["boxes"]["grid"])
         self.assertEqual(misses, [], f"{name}: a line at capacity leaves the grid box")
         self.assertGreater(checked, 0, "harness: no line was measured against the grid box")
+
+    def test_the_lines_of_a_band_are_drawn_apart(self):
+        """Docstring case 19: on the gate's model and on the band-capacity page of case 18, no two lines
+        matched to different row lines of a band are drawn as one. Case 18 measures the lines against the
+        cards; this measures them against each other, which is what the room of a band left to chance
+        while the two groups shared the whole distance between their lines."""
+        compared = 0
+        pages = [(GATE_NAME, mode) for mode in MODES if mode not in self.gate_refused]
+        pages += [(name, "page") for name in BAND_CAPACITY]
+        for name, mode in pages:
+            with self.subTest(page=name, mode=mode):
+                layout, names, lines = self.measured(name, mode)
+                misses, seen = near_row_misses(layout, names, lines)
+                self.assertEqual(misses, [], f"{name} {mode}: two lines of one band drawn as one")
+                compared += seen
+        for mode, refused in sorted(self.gate_refused.items()):
+            with self.subTest(refused=mode):
+                self.assertTrue([m for m in refused if "помещается" in m], refused)
+        # the case exists only if some page draws lines on two row lines of one band at once, and only
+        # while the gate's model is drawn in at least one mode
+        self.assertGreater(compared, 0, "harness: no two runs of different row lines were compared")
+        self.assertNotEqual(set(self.gate_refused), set(MODES),
+                            "harness: the gate's model is refused in both modes, so no page draws it")
 
     def test_a_trailing_empty_row_leaves_every_line_drawn(self):
         """Docstring case 16: an empty row under the last card row is no part of the lattice, so

@@ -2,7 +2,7 @@ import re
 import unittest
 
 import support
-from diagrams import flow
+from diagrams import flow, router
 from diagrams.common import ModelError, label_width
 
 
@@ -452,21 +452,34 @@ class BesideSecondSegment(unittest.TestCase):
                                                     "линию"), found)
 
     def test_a_line_along_a_gutter_row_counts_by_its_offset(self):
-        # a -> d leaves a sideways, turns up and pins its label to gutter row 4 on the left of its
+        # a -> d leaves a sideways, turns up and pins its label to gutter row 2 on the left of its
         # second segment, then turns along that row 8 px above its base. No card stands on a gutter
         # row, so no line enters or leaves a card sideways there and template/js/flow.js draws a line
-        # along it at its own offset, unclamped: LINE_REACH and more from the text's middle, clear of it
-        model = exit_model([". . d e", ". . . .", ". b c a"],
+        # along it at its own offset, unclamped: LINE_REACH and more from the text's middle, clear of it.
+        #
+        # Three lines share that row — a -> d, d -> a and e -> c — and an ordinary gutter between two
+        # rows of cards has the room to hold the three at the widest of router.PITCHES in both modes,
+        # which is what puts a -> d's own line a whole pitch off the row line. The premise asserts those
+        # three offsets: a row with less room beside it, or one line more on it, closes the group to a
+        # narrower pitch, and the case would then measure an offset it was not written for.
+        model = exit_model([". . d e", ". b c a"],
                            ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c"], terminals=("e",))
+        pitch = float(router.PITCHES[0])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
+                room = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                                     empty=layout["empty_rows"]).room("h", 2)
+                on_row = sorted(oy for e in layout["edges"]
+                                for (_, ya, _, oy), (_, yb, _, _) in zip(e["path"], e["path"][1:]) if ya == yb == 2)
+                self.assertEqual(on_row, [-pitch, 0.0, pitch],
+                                 f"gutter row 2 has room {room}: the lines along it no longer lie {pitch} px apart")
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("a", "d"))
-                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 4, "L"))
-                self.assertEqual(self.along_the_row(layout, ("a", "d"), 4, "L"), [(("a", "d"), -8.0)])
-                self.assertGreaterEqual(8.0, flow.LINE_REACH)
+                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 2, "L"))
+                self.assertEqual(self.along_the_row(layout, ("a", "d"), 2, "L"), [(("a", "d"), -pitch)])
+                self.assertGreaterEqual(pitch, flow.LINE_REACH)
                 self.assertEqual([e for e in layout["edges"]
-                                  if e["path"][0][1] == e["path"][1][1] == 4 or e["path"][-1][1] == e["path"][-2][1] == 4], [])
+                                  if e["path"][0][1] == e["path"][1][1] == 2 or e["path"][-1][1] == e["path"][-2][1] == 2], [])
                 self.assertEqual([w for w in warnings if w.startswith("связь a -> d:")], [], warnings)
 
 
