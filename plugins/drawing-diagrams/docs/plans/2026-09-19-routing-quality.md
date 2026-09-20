@@ -489,17 +489,26 @@ puts `unroutable`, a count, and `overfull`, the list of task 9, into `layout`),
 
 **Interfaces:** `advice.evaluate(model, mode_name) -> (score, errors)`: a draft plan of a deep copy;
 `score` is `(unroutable, overflow, crossings, length)`, `errors` the set of draft-downgraded
-messages. `advice.proxy(model) -> int`. `advice.search(model, mode_name, top=8, max_moves=8,
+messages.
+Amended 2026-09-20 (spec §6 as amended; plan gate findings G2 and G3): `evaluate(model, mode_name,
+overrides)` and `search(model, mode_name, overrides, …)` — every verifying plan gets the overrides
+`render.main` forwards; `score` is `(overflow, crossings, length)` with `overflow` the slots over
+capacity; `flow.plan` with `draft=True` puts `overflow` and `overfull` into `layout` and no
+`unroutable`; no advice for a model over a limit of its mode, and the lane permutations are never
+materialised beyond what the limit allows. `advice.proxy(model) -> int`. `advice.search(model, mode_name, top=8, max_moves=8,
 max_plans=40) -> list[(Move, score_before, score_after)]`, empty when nothing improves.
 
-- [ ] Tests: a draft plan of a walled-in edge reports `unroutable == 1` (today it reports nothing);
+- [ ] Tests (amended 2026-09-20: the walled-in edge of the first text cannot be built from a model and
+  is dropped; a draft plan of `tests/models/overfull-gutter.json` reports its `overflow` and its group):
   on 12 seeded models built from `instances.small` with a naive reading-order grid and ≥ 3
   crossings, `search` returns moves, the final score is lower than the start, equals the score of a
   fresh plan of the advised model, and that plan has no error the start did not have; never more
   than 40 plans (count through a wrapper); the same model twice gives the same moves; a model with
   no improving move gives `[]`; `search` leaves its argument untouched.
 - [ ] Implement. `bench_routing.py --advice`: time of `search` on the dense scenario, reported
-  against 3 s.
+  against 3 s. Amended 2026-09-20: report it also on the twelve seeded models of the test and on the
+  shipped examples, per verifying plan and in all; the number decides whether verifying plans stop at
+  the better start (spec §6 as amended), which is the owner's call on the measurement.
 - [ ] Commit `feat(drawing-diagrams): advice found by a proxy and verified by the router`.
 
 Check: `cd PLUGIN && python3 -m unittest discover -s tests -p 'test_advice.py' -v`; benchmark output.

@@ -393,7 +393,25 @@ capacity, or three or more crossings; never from inside `flow.plan` and never fr
 `render.failure_map`, which plans again. `flow.plan(…, draft=True)` exposes what the search needs in
 `layout`: `unroutable` (a count — today a draft plan drops such edges and reports the crossings of
 the rest) and `overfull` (the groups of §4.4). The score of a grid is the tuple (unroutable,
-overflow, crossings, total length), compared lexicographically.
+overflow, crossings, total length), compared lexicographically (amended below: no `unroutable`).
+
+Amended 2026-09-20, after stages A to C landed, which this section was written before:
+
+- **No `unroutable`.** A grid of cards cannot wall an edge in: cards sit on odd lattice points and
+  the gutters between them are never blocked, so `route` always finds a way (found in stage A; the
+  "нет маршрута" branch of `flow.plan` is kept as a guard and cannot be reached from a model). The
+  trigger is a group over capacity or three or more crossings, and the score is the tuple
+  (overflow, crossings, total length). `overflow` is what Φ counts: the slots over capacity of the
+  groups `router.overfull` names (§4.1a, §5.2). `flow.plan(…, draft=True)` puts that number and the
+  groups into `layout`; nothing else of `layout` changes.
+- **What a verifying plan costs.** A plan now routes with the search of §5.3: a few ms on the
+  shipped examples, about 200 ms on the dense scenario, so 40 verifying plans there are about 8 s
+  against the 3 s this design asked the advice to be reported against. The stage measures it on
+  the dense scenario and on models of the size authors write; if the measurement says so, the
+  first lever is a verifying plan that stops at the better start (`route_all(budget=0)`), with the
+  advised grid planned in full once at the end, and the owner rules on the number.
+- **The capacity error gets its move.** The advice answers the error of §4.4 as well as the
+  crossings warning: "переставьте узлы" is then a verified move, not a wish.
 
 - **Moves:** swap two nodes, or move a node into an empty cell, inside the existing grid size; every
   move is applied to a deep copy of the original model (`flow.plan` writes `_note` and `_text` into
