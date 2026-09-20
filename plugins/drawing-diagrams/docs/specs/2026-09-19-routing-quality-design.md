@@ -119,8 +119,9 @@ Non-goals:
   advises.
 - No third-party layout or routing library, in Python or in the script.
 - No routing or label placement in the browser: errors reach the author before anything is shown.
-- No slot reuse inside a group of runs (left-edge track assignment): a group keeps one slot per run,
-  so a chain of runs that only meet end to end counts as wide as it is drawn (§4.1).
+- No order of a group chosen for its width: slots are reused over the order §3 decides (§4.1a,
+  taken on 2026-09-20; until then this list ruled slot reuse out altogether), and an order that
+  would make a group narrower is left to the objective of stage C.
 - No capacity for lines through cell centres or through banded rows, where `rowY` and `clampY` of
   `flow.js` compress offsets; the browser tests keep their tolerance there.
 - No independence of offsets, label choice, warning order or the anonymous section id
@@ -488,8 +489,8 @@ case is not supported.
   Stage E moves every label over a horizontal second segment.
 - **A capacity error stops a diagram that rendered yesterday.** It rendered with lines on cards; the
   router cost makes the error rare, `--draft` still renders, and Q1 can make it a warning. A chain
-  of runs that only meet end to end is counted as wide as it is drawn; if that proves common, slot
-  reuse is the follow-up.
+  of runs that only meet end to end was counted as wide as it was long; it proved common on the
+  first measurement, and slot reuse was taken into the stage (§4.1a).
 - **The objective trades a crossing for other costs.** Crossings carry 10 against 1–3 for the rest;
   the acceptance of §10 C3 forbids more crossings on the examples.
 - **Large models.** Nothing limits the number of edges or rows (`flow.plan`, `grid.parse_grid`); a
