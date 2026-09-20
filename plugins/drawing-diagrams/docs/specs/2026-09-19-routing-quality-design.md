@@ -331,6 +331,21 @@ and its corner term is symmetric where `route`'s is one-way. `route` stays the p
 Φ is pairwise additive apart from `overflow`, which is recomputed for the lattice lines the old and
 the new path touch.
 
+Amended 2026-09-20, after stage B landed, which this section was written before:
+
+- `own` replays one price more. `route` charges +20 for a step along a line that holds nothing (a
+  flow's top margin, a page's bottom margin under footnotes, a line squeezed by empty rows) with or
+  without traffic, so `own` carries it and stays equal to the cost `route` reports on the lattice
+  `flow.plan` builds. The +20 of a line that is full because of the lines on it depends on traffic
+  and is no part of `own`: Φ sees fullness through `overflow`.
+- `overflow` counts slots: Σ max(0, width − capacity) over the groups `router.overfull` names, with
+  the width of §4.1a.
+- The width of a group depends on the orders of its runs, so `overflow` cannot be read off a table
+  of loads. ΔΦ recomputes it on the lattice lines where the old or the new path has a run, from the
+  groups, orders and slots of those lines alone — the pair orders of the paths that have runs there
+  — and never from the whole routing: the descent asks once per proposal, and a whole-routing
+  `overfull` costs a scan of every pair of paths.
+
 ### 5.3 Orchestration
 
 1. Canonical order: edges sorted by (Manhattan length, source point, target point, labelled), the
