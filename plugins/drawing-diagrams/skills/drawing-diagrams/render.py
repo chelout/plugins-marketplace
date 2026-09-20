@@ -138,16 +138,16 @@ def advise(mod, model, path, args, overrides, layout, batch):
 
     Called once per model, from `main` alone, and only where the renderer has already told the
     author something about the drawing — a group over the capacity of its line, or the crossings
-    the warning counts. The gate is that trigger and not what the search finds: the last term of a
-    score is the length of the lines, so a shorter routing exists on almost every model, and an
-    advice nobody asked for would be noise on every render. Kinds the advice does not know — a
-    schema, a timeline — are never searched."""
+    the warning counts. The gate is that trigger and not what the search finds: an advice nobody
+    asked for would be noise on every render. Kinds the advice does not know — a schema, a
+    timeline — are never searched."""
     if args.no_advice or mod is not flow or not triggered(layout):
         return
     found = advice.search(model, args.mode, overrides)
     if not found:
         return
-    for line in advice_block(found, advised_grid(model, found), f"{path}: " if batch else ""):
+    for line in advice_block(found, advised_grid(model, found), advised_lanes(found),
+                             f"{path}: " if batch else ""):
         print(line, file=sys.stderr)
 
 
@@ -160,24 +160,39 @@ def triggered(layout):
     return layout.get("overflow", 0) > 0 or layout.get("crossings", 0) >= MANY_CROSSINGS
 
 
-def advice_block(found, grid, prefix):
-    """The lines of spec 6's advice block: a headline, the moves numbered from one, and the advised
-    grid under `grid:`, each row as the author would paste it back into the model.
+def advice_block(found, grid, lanes, prefix):
+    """The lines of spec 6's advice block: a headline, the moves numbered from one, the advised grid
+    under `grid:` with each row as the author would paste it back into the model, and the lane order
+    under `lanes:` where a move changed it.
 
-    The block counts one term of the score throughout — the first of (overflow, crossings, length)
-    the moves moved, which is the one that made them an improvement, since the three are compared
-    in that order. So a trigger answered is a trigger counted: where a group was over its capacity
-    and the moves free it, that is what the headline says."""
+    The headline counts the term of the score the whole sequence moved — the first of (overflow,
+    crossings, length) whose two ends differ, which is the one that made the sequence an
+    improvement, since the three are compared in that order. So a trigger answered is a trigger
+    counted: where a group was over its capacity and the moves free it, that is what the headline
+    says. Every step names the term it moved itself: the sequence climbs on the whole score, so a
+    move inside it may have bought nothing but a shorter line, and a step that named the headline's
+    term would then print a count standing still."""
     first, last = found[0][1], found[-1][2]
-    term = next((i for i in range(len(first)) if first[i] != last[i]), len(first) - 1)
+    term = moved_term(first, last)
     moves = len(found)
     out = [f"совет: {prefix}{SCORE_TERMS[term]} {first[term]} → {last[term]} за {moves} "
            f"{plural(moves, ('ход', 'хода', 'ходов'))} (проверено трассировкой)"]
-    out += [f"  {i}. {move.text()}: {before[term]} → {after[term]}"
-            for i, (move, before, after) in enumerate(found, 1)]
+    for i, (move, before, after) in enumerate(found, 1):
+        step = moved_term(before, after)
+        out.append(f"  {i}. {move.text()}: {SCORE_TERMS[step]} {before[step]} → {after[step]}")
     out.append("grid:")
     out += [f"  {json.dumps(row, ensure_ascii=False)}" for row in grid]
+    if lanes is not None:
+        out.append("lanes:")
+        out.append(f"  {json.dumps(lanes, ensure_ascii=False)}")
     return out
+
+
+def moved_term(before, after):
+    """Which term of the score these two ends differ in first — the one they are worth naming by.
+    Nothing moved at all is the length, the last of them, which is the term a caller would read off
+    two equal scores anyway."""
+    return next((i for i in range(len(before)) if before[i] != after[i]), len(before) - 1)
 
 
 def advised_grid(model, found):
@@ -192,6 +207,19 @@ def advised_grid(model, found):
     for move, _, _ in found:
         cells = move.moved(cells)
     return advice.write_grid(model["grid"], cells, width, height)
+
+
+def advised_lanes(found):
+    """The lane order the moves leave behind, or None where no move changed it.
+
+    A `lanes` move changes `lanes` and `grid` together (spec 6): the columns travel with the lanes,
+    so a card stays in the lane the author gave it only while the two are read together. A block
+    that printed the grid alone would hand the cards of one lane to the lane beside it."""
+    lanes = None
+    for move, _, _ in found:
+        if move.kind == "lanes":
+            lanes = list(move.lanes)
+    return lanes
 
 
 def produce(model, mod, args, overrides, assets_mode):

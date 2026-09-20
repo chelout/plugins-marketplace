@@ -9,9 +9,11 @@ disturb the reading.
 
 `search` climbs: it ranks the moves of the grid in hand by `proxy`, a count off the grid itself
 that plans nothing, verifies the best few with `evaluate`, which plans, and takes the best of those
-when it scores lower and brings no message the author's own grid did not already carry. Then it
-does it again from the grid it took, until nothing improves, until the moves run out, or until the
-allowance of plans is spent.
+when it scores lower and brings neither a message nor an extra warning the author's own grid did
+not already carry. Then it does it again from the grid it took, until nothing improves, until the
+moves run out, or until the allowance of plans is spent. What it hands back is less than what it
+climbed over: the sequence ends with the last move that lowered overflow or crossings, so the
+author is never asked for a move that only shortened the lines.
 
 Every move produces a deep copy of the model with a new `grid` and nothing else touched. That is
 not tidiness: `flow.plan` writes `_note` and `_text` into the nodes of the model it plans, so a
@@ -132,14 +134,12 @@ class _Rules:
 
     Two rules, spec 6.
 
-    An edge that runs downward in the original grid keeps running downward. The spec drops a move
-    that puts such a target *above* its source, which leaves a target level with its source
-    allowed; this is read one step stricter and keeps the target strictly below. The sequence is
-    what asks for it: a downward edge made horizontal is the state the next move would have to be
-    judged in, and by then the reading the author wrote — this step follows that one — is already
-    gone, whether or not a later move goes on to turn the edge upward. Strictness costs the search
-    the moves that bring two cards of one edge into one row; it buys a rule the author can read off
-    the advised grid without holding the original beside it.
+    An edge that runs downward in the original grid never has its target above its source. Level is
+    allowed — the two cards of such an edge may come to stand in one row — and it is judging every
+    produced grid against the original that keeps a later move from turning that row upward: by then
+    the grid in hand has nothing left to refuse it with, and the original still has. Reading the
+    rule stricter, target strictly below source, costs the search every move that brings two cards
+    of one edge into one row, and the branch gate measured what that costs on the seeded models.
 
     And a node with no incoming edge that stands in the first row stays there: out of it
     `flow.plan` calls the node unreachable, which is an error the author's own grid did not have. A
@@ -156,7 +156,7 @@ class _Rules:
     def hold(self, cells):
         for a, b in self.down:
             here, there = cells.get(a), cells.get(b)
-            if here is None or there is None or here[0] >= there[0]:
+            if here is None or there is None or here[0] > there[0]:
                 return False
         return all(cells[nid][0] == 0 for nid in self.rooted if nid in cells)
 
@@ -368,13 +368,16 @@ def _turn(a, b, p):
 
 
 def evaluate(model, mode_name, overrides=None):
-    """What a grid is worth once it is routed: (score, messages).
+    """What a grid is worth once it is routed: (score, messages, warnings).
 
     The score is the tuple spec 6 compares lexicographically — the slots the routing takes past what
     its lattice lines hold, the crossings the plan reports (the ones that are drawn, not the ones
     the lattice paths would make), and the Manhattan length of every path in lattice steps. The
     messages are the layout errors the draft plan carried on past, the prefix taken off, as a set:
     the search asks of a move only that it bring none the author's own grid did not already have.
+    `warnings` is how many plain warnings the plan carried, the crossings one left out — `SKILL.md`
+    tells the author to treat a warning as an error, so a move that brings more of them than the
+    start is no advice, and the crossings count is the very number the moves are there to lower.
 
     The plan is a draft — a grid under a move may be one the renderer refuses, and the score of such
     a grid is what says so — and it is made on a deep copy, because `flow.plan` writes `_note` and
@@ -388,7 +391,9 @@ def evaluate(model, mode_name, overrides=None):
     length = sum(abs(a[0] - b[0]) + abs(a[1] - b[1])
                  for p in layout["paths"] for a, b in zip(p, p[1:]))
     messages = {w[len(flow.DRAFT):] for w in warnings if w.startswith(flow.DRAFT)}
-    return (layout["overflow"], layout["crossings"], length), messages
+    counted = sum(1 for w in warnings
+                  if not w.startswith(flow.DRAFT) and not w.startswith(flow.CROSSINGS))
+    return (layout["overflow"], layout["crossings"], length), messages, counted
 
 
 TOP = 8         # moves of one grid the proxy hands on to a verifying plan
@@ -402,9 +407,16 @@ def search(model, mode_name, overrides=None, top=TOP, max_moves=MAX_MOVES, max_p
 
     Spec 6. One step: rank every move of the grid in hand by `proxy`, verify the best `top` with
     `evaluate`, and take the best of the verified where its score is strictly lower than the grid's
-    own and its plan reports no message the author's grid did not already carry. Then step again
-    from the grid that move produces. It stops when no move improves, after `max_moves` of them, or
-    when `max_plans` plans are spent.
+    own, its plan reports no message the author's grid did not already carry, and it carries no more
+    warnings than that grid did. Then step again from the grid that move produces. It stops when no
+    move improves, after `max_moves` of them, or when `max_plans` plans are spent.
+
+    What the author is asked for is less than what the search climbed over (spec 6 as amended). The
+    climb reads the whole score, the length of the lines included, because a move that only shortens
+    them can open the way to one that removes a crossing; the sequence handed back ends with the
+    last move that lowered overflow or crossings, and the moves after it are dropped here rather
+    than at a caller, so every caller gets the same trimmed sequence and the same claim — the score
+    after the last move kept.
 
     `max_plans` bounds every plan the search makes, the one that prices the author's own grid
     included: it is the allowance a caller is charged, and a caller counting plans is counting all
@@ -421,7 +433,7 @@ def search(model, mode_name, overrides=None, top=TOP, max_moves=MAX_MOVES, max_p
     if not found:
         return []
     try:
-        score, allowed = evaluate(model, mode_name, overrides)
+        score, allowed, allowed_warnings = evaluate(model, mode_name, overrides)
     except ModelError:
         return []  # the renderer refuses this model outright; there is nothing to advise about
     spent, current, cells = 1, model, _placement(model)[0]
@@ -434,8 +446,9 @@ def search(model, mode_name, overrides=None, top=TOP, max_moves=MAX_MOVES, max_p
                 break
             candidate = found[k].apply(current)
             spent += 1
-            new, messages = evaluate(candidate, mode_name, overrides)
-            if new < score and not messages - allowed and (best is None or new < best[0]):
+            new, messages, warnings = evaluate(candidate, mode_name, overrides)
+            if (new < score and not messages - allowed and warnings <= allowed_warnings
+                    and (best is None or new < best[0])):
                 best = (new, found[k], candidate)
         if best is None:
             break
@@ -445,4 +458,8 @@ def search(model, mode_name, overrides=None, top=TOP, max_moves=MAX_MOVES, max_p
         found = moves(model, current, mode_name)
         if not found:
             break
+    # the cosmetic tail: a move whose two scores agree on overflow and on crossings moved the length
+    # of the lines and nothing else, and the author is not asked for it
+    while out and out[-1][2][:2] == out[-1][1][:2]:
+        out.pop()
     return out

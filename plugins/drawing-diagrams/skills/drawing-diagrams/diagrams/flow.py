@@ -37,10 +37,18 @@ CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 # had, so the two sides of the prefix are one constant.
 DRAFT = "черновик: "
 
-# The calls of `route` the search inside `route_all` may spend (router.BUDGET). It is a name here,
-# and not a number written at the call, so that the stage D measurement of tools/bench_routing.py
-# can price a verifying plan that stops at the better start (`budget=0`, spec 6 as amended) without
-# a public argument on `plan` that a renderer could reach for. Nothing in the renderer moves it.
+# What the crossings warning starts with. The advice counts the warnings of a plan to drop a move
+# that brings one the author's grid did not have, and this is the one it does not count: lowering
+# that very number is what the moves are for.
+CROSSINGS = "пересечений линий: "
+
+# A measurement switch, and nothing else. It is the calls of `route` the search inside `route_all`
+# may spend (router.BUDGET), named here rather than written at the call so that the stage D
+# measurement of tools/bench_routing.py can price a verifying plan that stops at the better start
+# (`budget=0`, spec 6 as amended) without a public argument on `plan` that a renderer could reach
+# for. No renderer path may set it: the tool moves it for the length of its own measurement and puts
+# it back, and a production value other than router.BUDGET would mean the page is drawn by a routing
+# nothing was measured against.
 _ROUTE_BUDGET = router.BUDGET
 
 # Where drawFlow in template/js/flow.js puts a label, in px; keep the two in step
@@ -840,7 +848,7 @@ def plan(model, mode_name, overrides=None, draft=False):
     # two are the same number, and where they are not the author is told about the drawing
     n_cross = router.drawn_crossings(paths, offsets, frozenset(lat.blocked))
     if n_cross >= 3:
-        warnings.append(f"пересечений линий: {n_cross}; переставьте узлы, чтобы их стало меньше")
+        warnings.append(f"{CROSSINGS}{n_cross}; переставьте узлы, чтобы их стало меньше")
     out_edges = []
     for e, p, off in zip(routed, paths, offsets):
         out = {

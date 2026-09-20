@@ -240,13 +240,13 @@ def _run(model, mode_name):
     the texts, which is what says whether the two advised the same thing."""
     out = {}
     found, ms, plans = _one_search(model, mode_name)
-    before, _ = advice.evaluate(model, mode_name)
+    before = advice.evaluate(model, mode_name)[0]
     out["full"] = _reading(found, ms, plans, before, found[-1][2] if found else before)
     found, ms, plans = _one_search(model, mode_name, budget=0)
     advised = model
     for move, _, _ in found:
         advised = move.apply(advised)
-    lever_ms, (after, _) = _timed(lambda: advice.evaluate(advised, mode_name))
+    lever_ms, (after, _, _) = _timed(lambda: advice.evaluate(advised, mode_name))
     out["start"] = _reading(found, ms + lever_ms, plans + 1, before, after)
     out["same_moves"] = out["full"]["moves"] == out["start"]["moves"]
     out["same_after"] = out["full"]["after"] == out["start"]["after"]
