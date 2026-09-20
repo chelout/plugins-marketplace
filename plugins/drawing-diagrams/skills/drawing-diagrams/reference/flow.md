@@ -96,8 +96,9 @@ prints `lanes:` under the grid as well, and the two are pasted back together —
 the columns travel with the lanes, so the grid on its own would move cards
 into other lanes. Every move is verified — the renderer routes the grid it
 would produce and reports what it measured, not a guess — and no move is
-offered that brings a problem the model did not already have, neither an
-error nor a warning. The advice never changes the model: apply it by editing
+offered that brings an error the model did not already have or leaves it with
+more warnings than it had (the crossings warning aside): a warning may change
+its kind, their number never grows. The advice never changes the model: apply it by editing
 the grid, or leave it and say why. Nothing is printed when no move improves
 the drawing. The search runs only when one of those two problems was
 reported, and costs about half a second on a dozen cards, several seconds on
