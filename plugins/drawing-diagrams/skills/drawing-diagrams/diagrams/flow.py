@@ -261,12 +261,14 @@ def line_name(axis, line, cols, rows):
 
 
 def overfull_error(group, edges, cols, rows):
-    """The layout error for one group of `router.overfull`: where it lies, how many lines are drawn
-    there against how many fit, the edges among them, and what the author can do about it.
+    """The layout error for one group of `router.overfull`, which gives it as
+    (axis, line, width, [path indices], capacity): where it lies, how many lines are drawn there
+    against how many fit, the edges among them, and what the author can do about it.
 
-    The count is the width of the group — one line per run, which is what has to fit — while the
-    list is who to move, so an edge that comes into the gutter twice counts twice and is named
-    once. At most OVERFULL_NAMED of them, in the order of the model's edges.
+    The count is the width — the slots the group is drawn in, which is what has to fit — while the
+    list is who to move: an edge whose two runs in the gutter lie beside each other is two of the
+    lines and one of the names, and where two runs share a slot the list is longer than the count.
+    At most OVERFULL_NAMED of them, in the order of the model's edges.
 
     Where the line holds nothing at all — a flow's top margin, a page's bottom margin under a
     footnote list — freeing a cell beside it would not help: no pitch puts a line there.
@@ -274,7 +276,7 @@ def overfull_error(group, edges, cols, rows):
     Along an empty row the cells are free already, and what leaves the lines no room is the row
     itself: `tracks()` of template/js/head.js draws the whole band of such a row inside what would
     otherwise be one gutter, so the advice there is to take the row out."""
-    axis, line, idx, cap = group
+    axis, line, width, idx, cap = group
     named = [f"{edges[i]['a']} -> {edges[i]['b']}" for i in sorted(set(idx))]
     shown = ", ".join(named[:OVERFULL_NAMED]) + (", …" if len(named) > OVERFULL_NAMED else "")
     if axis == "h" and line % 2:
@@ -286,7 +288,7 @@ def overfull_error(group, edges, cols, rows):
         advice = f"линии здесь не проходят, переставьте узлы так, чтобы связи шли {away} или между рядами"
     else:
         advice = "линии здесь не проходят, переставьте узлы так, чтобы связи шли между столбцами"
-    return f"{line_name(axis, line, cols, rows)} линий {len(idx)}, помещается {cap}: {shown}; {advice}"
+    return f"{line_name(axis, line, cols, rows)} линий {width}, помещается {cap}: {shown}; {advice}"
 
 
 def room_beside(start, side, obstacles, limit):
@@ -741,10 +743,10 @@ def plan(model, mode_name, overrides=None, draft=False):
 
     on_cards = frozenset(lat.blocked)
     offsets = router.assign_offsets(paths, nodes=on_cards, room=geo.room)
-    # the price above makes a full gutter rare and promises nothing: a chain of lines that only
-    # meet end to end loads no unit edge and is still drawn as wide as it is long. What does not
-    # fit at the smallest pitch is refused here, one error per group, so the author moves nodes
-    # instead of reading a line drawn over a card
+    # the price above makes a full gutter rare and promises nothing: it reads the load of one unit
+    # edge, and what a group costs its line is the slots it is drawn in over the whole of its
+    # reach. What does not fit at the smallest pitch is refused here, one error per group, so the
+    # author moves nodes instead of reading a line drawn over a card
     for group in router.overfull(paths, on_cards, geo.room):
         layout_errors.append(overfull_error(group, routed, grid_cols, drawn_rows))
     occupied = set(placed.values())

@@ -1,9 +1,10 @@
 """A gutter has room, a group of lines closes up to fit it, and what does not fit is refused.
 
 The unit is the group of `assign_offsets` — the runs on one lattice line that overlap or meet end
-to end in a gutter — because a group of `w` runs is drawn `w` slots wide wherever it reaches. Its
-outermost line lies (w - 1) * pitch / 2 from the lattice line, and the room is what `Geometry.room`
-states on each side of that line, the clearances already taken off.
+to end in a gutter — and its width is the number of slots it is drawn in (spec 4.1a), which is not
+the number of its runs: two runs that never lie beside each other are drawn in one slot. The
+outermost line of a group `w` slots wide lies (w - 1) * pitch / 2 from the lattice line, and the
+room is what `Geometry.room` states on each side of that line, the clearances already taken off.
 
 The room of the inner gutters and of the side margins follows from the mode tables; the room of the
 top and bottom margins is measured in the browser (tests/test_browser_lines.py) and written into
@@ -40,12 +41,41 @@ HFIVE = [[(x, 1), (x, 2), (11, 2), (11, 3)] for x in (1, 3, 5, 7, 9)]
 HFIVE_NODES = frozenset({(x, 1) for x in (1, 3, 5, 7, 9)} | {(11, 3)})
 
 # Four lines that share no stretch at all: each runs down its own piece of the gutter X = 2 and
-# hands over to the next at a gutter point. Spec 4.1 counts such a chain as wide as it is drawn.
+# hands over to the next at a gutter point. One group of four runs, drawn in three slots: only
+# neighbours in the chain lie beside each other, and the order the end-to-end rule puts them in
+# starts in the middle of it (SharedSlots.test_the_chain_is_three_slots_wide_because_of_its_order).
 CHAIN = [[(1, 1), (2, 1), (2, 3), (3, 3)],
          [(3, 3), (2, 3), (2, 5), (1, 5)],
          [(1, 5), (2, 5), (2, 7), (3, 7)],
          [(3, 7), (2, 7), (2, 9), (1, 9)]]
 CHAIN_NODES = frozenset({(1, 1), (3, 3), (1, 5), (3, 7), (1, 9)})
+
+# The first two of that chain alone: two runs that meet end to end at the gutter point (2, 3) and
+# nowhere else. They lie beside each other, so they never share a slot.
+MEET = CHAIN[:2]
+MEET_NODES = frozenset({(1, 1), (3, 3), (1, 5)})
+
+# The same hand-over at a card instead of in a gutter: one line ends at the node (1, 3) and the next
+# leaves it. Runs that meet at a node are no group at all, as they were before slots were reused.
+AT_NODE = [[(1, 1), (1, 3)], [(1, 3), (1, 5)]]
+AT_NODE_NODES = frozenset({(1, 1), (1, 3), (1, 5)})
+
+# Two lines down their own piece of the gutter X = 2, and a third beside both of them along the
+# whole of it, coming in from the right and leaving to the right so that it is drawn above the two.
+# The two never lie beside each other — their pieces neither overlap nor touch — so they share a
+# slot and the group is two wide where counting its runs made it three.
+TRIO = [[(1, 1), (2, 1), (2, 3), (1, 3)],
+        [(1, 5), (2, 5), (2, 7), (1, 7)],
+        [(3, 1), (2, 1), (2, 7), (3, 7)]]
+TRIO_NODES = frozenset({(1, 1), (1, 3), (1, 5), (1, 7), (3, 1), (3, 7)})
+
+# Three lines down the gutter X = 2, each overlapping the next and each ordered above it. The first
+# and the last do not lie beside each other and the rule alone would share their slot; the order
+# does not let them, because the middle one lies beside both and is drawn between them.
+STAIR = [[(1, 1), (2, 1), (2, 5), (3, 5)],
+         [(1, 3), (2, 3), (2, 9), (3, 9)],
+         [(1, 7), (2, 7), (2, 11), (3, 11)]]
+STAIR_NODES = frozenset({(1, 1), (3, 5), (1, 3), (3, 9), (1, 7), (3, 11)})
 
 # Five cards down column 1 of a two-column, five-row grid, column 0 empty: the lattice the price of
 # a full gutter is measured on (FullGutterCost). A line from one of those cards to another cannot
@@ -184,8 +214,41 @@ def spread(paths, offsets, axis, line):
     return sorted(out)
 
 
+def pieces_on(paths, axis, line):
+    """(path index, lo, hi) per straight piece each path draws on this lattice line. The hand-made
+    fixtures of SharedSlots put at most two pieces of one path on a line and never two in a row, so
+    a piece here is a run of `router._runs` without the test having to ask for one."""
+    return [(i, lo, hi) for i, p in enumerate(paths)
+            for ax, ln, lo, hi in router.segments(p) if (ax, ln) == (axis, line)]
+
+
+def beside(a, b, axis, line, nodes):
+    """Do two pieces on one lattice line lie beside each other — share a stretch of it, or meet end
+    to end at a point that is not a node (spec 4.1a)? Only such a pair can cross or overlap, so only
+    such a pair has to be drawn in two slots. Restated here from the spec rather than read out of
+    the router, so that a fixture whose premise moves fails where the premise is stated."""
+    (_, alo, ahi), (_, blo, bhi) = a, b
+    if max(alo, blo) < min(ahi, bhi):
+        return True
+    met = [end for end, start in ((ahi, blo), (bhi, alo)) if end == start]
+    if not met:
+        return False
+    return ((line, met[0]) if axis == "v" else (met[0], line)) not in nodes
+
+
+def slots_on(paths, offsets, axis, line):
+    """{path index: its offsets across this lattice line, sorted}. Two paths at one offset are
+    drawn in one slot, and the distinct offsets over all of them are the slots the group takes."""
+    out = {}
+    for i, (p, off) in enumerate(zip(paths, offsets)):
+        for (x, y), (ox, oy) in zip(p, off):
+            if (axis == "v" and x == line) or (axis == "h" and y == line):
+                out.setdefault(i, set()).add(ox if axis == "v" else oy)
+    return {i: sorted(offs) for i, offs in out.items()}
+
+
 def widest(pitch, room):
-    """The most runs that fit on a line with this room at this pitch."""
+    """The most lines that fit on a line with this room at this pitch."""
     w = 0
     while router.fits(w + 1, pitch, room):
         w += 1
@@ -440,6 +503,91 @@ class EmptyRowRoom(unittest.TestCase):
         self.assertEqual([router.capacity(geo.room("h", y)) for y in range(7)], [0, 1, 1, 0, 0, 0, 0])
 
 
+class SharedSlots(unittest.TestCase):
+    """Spec 4.1a, criterion B5: the width of a group is the number of slots it is drawn in.
+
+    The order of a group is decided as it was (spec 3); then each run, in that order, takes the
+    lowest slot above every earlier run it lies beside, so two runs that never lie beside each other
+    may share one. Every pair that does lie beside each other keeps the relative order it had —
+    which is the only pair that can cross or overlap, and why the invariant of spec 3.4 is untouched
+    (`tests/test_drawn_property.py` is its guard here as everywhere).
+
+    Each case states its premise — which pieces on the line lie beside which — before it reads the
+    picture, so a fixture that stops standing for its case says so instead of passing for a reason
+    it was not written for."""
+
+    def assertBeside(self, paths, nodes, axis, line, want):
+        found = pieces_on(paths, axis, line)
+        got = {(a[0], b[0]) for n, a in enumerate(found) for b in found[n + 1:]
+               if beside(a, b, axis, line, nodes)}
+        self.assertEqual(got, want, f"the fixture no longer lies beside as this case needs: {found}")
+
+    def test_two_runs_chained_through_a_third_take_one_slot(self):
+        # the two pieces down their own half of the gutter neither overlap nor touch, so nothing
+        # about the picture keeps them apart; the third lies beside both and is drawn above them
+        self.assertBeside(TRIO, TRIO_NODES, "v", 2, {(0, 2), (1, 2)})
+        offs = router.assign_offsets(TRIO, nodes=TRIO_NODES, room=room_of((4, 4)))
+        self.assertEqual(slots_on(TRIO, offs, "v", 2), {0: [-4.0], 1: [-4.0], 2: [4.0]})
+        self.assertEqual(spread(TRIO, offs, "v", 2), [-4.0, 4.0], "the group is two slots wide")
+
+    def test_the_pitch_and_overfull_follow_the_width(self):
+        # (4, 4) holds two lines and not three: counting the runs of TRIO refused it and drew it at
+        # the smallest pitch, counting its slots fits it at the widest
+        self.assertEqual(router.capacity((4, 4)), 2)
+        self.assertEqual(router.overfull(TRIO, TRIO_NODES, room_of((4, 4))), [])
+        offs = router.assign_offsets(TRIO, nodes=TRIO_NODES, room=room_of((4, 4)))
+        self.assertEqual(spread(TRIO, offs, "v", 2)[1] - spread(TRIO, offs, "v", 2)[0], 8.0)
+        # and where even two slots do not fit, the width the error carries is the width drawn
+        self.assertEqual(router.overfull(TRIO, TRIO_NODES, room_of((1, 1))),
+                         [("v", 2, 2, [0, 2, 1], 1)])
+
+    def test_a_staircase_of_orders_stays_as_wide_as_it_is_long(self):
+        # the rule reuses a slot only where the order leaves one free below: here each run lies
+        # beside the one placed before it, so every one of the three is a slot above it, even though
+        # the first and the last never lie beside each other
+        self.assertBeside(STAIR, STAIR_NODES, "v", 2, {(0, 1), (1, 2)})
+        offs = router.assign_offsets(STAIR, nodes=STAIR_NODES, room=room_of((12, 12)))
+        self.assertEqual(slots_on(STAIR, offs, "v", 2), {0: [8.0], 1: [0.0], 2: [-8.0]})
+
+    def test_the_chain_is_three_slots_wide_because_of_its_order(self):
+        # the chain of four of task 8, restated: neighbours in it lie beside each other and nothing
+        # else does, so its width is decided by the order the end-to-end rule puts it in. That order
+        # starts in the middle — the two middle pieces take a slot each — and each outer piece lies
+        # beside one of them only, so each takes the slot above that one and the two of them share.
+        # Ordered along the chain it would be a staircase four wide.
+        self.assertBeside(CHAIN, CHAIN_NODES, "v", 2, {(0, 1), (1, 2), (2, 3)})
+        offs = router.assign_offsets(CHAIN, nodes=CHAIN_NODES, room=room_of((5, 5)))
+        self.assertEqual(slots_on(CHAIN, offs, "v", 2), {0: [0.0], 1: [-5.0], 2: [0.0], 3: [5.0]})
+        self.assertEqual(spread(CHAIN, offs, "v", 2), [-5.0, 0.0, 5.0])
+
+    def test_runs_that_meet_end_to_end_in_a_gutter_never_share_a_slot(self):
+        # the junction the end-to-end rule of spec 3.2 spreads apart: the two arms of it would be
+        # one line to a reader if the two runs took one slot
+        self.assertBeside(MEET, MEET_NODES, "v", 2, {(0, 1)})
+        offs = router.assign_offsets(MEET, nodes=MEET_NODES, room=room_of((10, 10)))
+        self.assertEqual(spread(MEET, offs, "v", 2), [-4.0, 4.0])
+
+    def test_runs_that_meet_at_a_node_are_not_one_group_at_all(self):
+        # unchanged by the rule: a line that ends at a card and one that leaves it join the card
+        # instead of forming a junction, so each is a group of its own and neither is moved
+        self.assertBeside(AT_NODE, AT_NODE_NODES, "v", 1, set())
+        offs = router.assign_offsets(AT_NODE, nodes=AT_NODE_NODES, room=room_of((10, 10)))
+        self.assertEqual(spread(AT_NODE, offs, "v", 1), [0.0])
+
+    def test_a_group_whose_runs_all_lie_beside_each_other_keeps_every_slot(self):
+        # the rule takes nothing away where every pair needs a slot of its own: these are the groups
+        # the pitches of AdaptivePitch are measured on, and they keep the offsets of the stage
+        # before it — slot n of w at the 8 px step, from the middle of the lattice line outwards
+        for count in (5, 4, 3):
+            with self.subTest(lines=count):
+                paths = FIVE[:count]
+                self.assertBeside(paths, FIVE_NODES, "v", 2,
+                                  {(i, j) for i in range(count) for j in range(i + 1, count)})
+                offs = router.assign_offsets(paths, nodes=FIVE_NODES)
+                self.assertEqual(spread(paths, offs, "v", 2),
+                                 [(n - (count - 1) / 2) * 8.0 for n in range(count)])
+
+
 class AdaptivePitch(unittest.TestCase):
     """A group takes the widest pitch its line has room for, and `overfull` names the rest."""
 
@@ -460,30 +608,36 @@ class AdaptivePitch(unittest.TestCase):
 
     def test_five_runs_do_not_fit_a_narrow_gutter(self):
         self.assertEqual(router.overfull(FIVE, FIVE_NODES, room_of((5, 5))),  # gap 18
-                         [("v", 2, [0, 1, 2, 3, 4], 3)])
+                         [("v", 2, 5, [0, 1, 2, 3, 4], 3)])
 
     def test_five_runs_do_not_fit_a_narrow_row_gutter(self):
         # (2.5, 6) is the gutter under a leading empty row: less room than the narrowest column
         # gutter, and the group that does not fit it is named the same way
         self.assertEqual(router.overfull(HFIVE, HFIVE_NODES, room_of((2.5, 6))),
-                         [("h", 2, [0, 1, 2, 3, 4], 2)])
+                         [("h", 2, 5, [0, 1, 2, 3, 4], 2)])
 
     def test_a_chain_that_only_meets_end_to_end_is_one_group(self):
-        self.assertEqual(router.overfull(CHAIN, CHAIN_NODES, room_of((5, 5))),
-                         [("v", 2, [0, 1, 2, 3], 3)])
+        # still one group of four runs — each meets the next at a gutter point — but three slots
+        # wide, which is what the error carries and what a line has to hold. At (5, 5), where task 8
+        # refused it as four, three fit.
+        self.assertEqual(router.overfull(CHAIN, CHAIN_NODES, room_of((2, 2))),
+                         [("v", 2, 3, [0, 1, 2, 3], 1)])
+        self.assertEqual(router.overfull(CHAIN, CHAIN_NODES, room_of((5, 5))), [])
 
     def test_a_group_that_fits_is_not_overfull(self):
         self.assertEqual(router.overfull(FIVE, FIVE_NODES, room_of((12, 12))), [])
         self.assertEqual(router.overfull(FIVE[:3], FIVE_NODES, room_of((10, 10))), [])
 
     def test_the_width_priced_is_the_width_drawn(self):
-        # the two read their groups from one place: a message naming more lines than the picture
-        # shows, or fewer, would send the author after the wrong gutter
-        for paths, nodes in ((FIVE, FIVE_NODES), (CHAIN, CHAIN_NODES)):
+        # the two read their groups, their order and their slots from one place: a message naming
+        # more lines than the picture shows, or fewer, would send the author after the wrong gutter.
+        # The chain is the case where the two could part: it holds four runs and is drawn in three.
+        for paths, nodes, room in ((FIVE, FIVE_NODES, (5, 5)), (CHAIN, CHAIN_NODES, (2, 2))):
             with self.subTest(lines=len(paths)):
-                (axis, line, idx, _), = router.overfull(paths, nodes, room_of((5, 5)))
-                offs = router.assign_offsets(paths, nodes=nodes, room=room_of((5, 5)))
-                self.assertEqual(len(set(spread(paths, offs, axis, line))), len(idx))
+                (axis, line, width, idx, _), = router.overfull(paths, nodes, room_of(room))
+                offs = router.assign_offsets(paths, nodes=nodes, room=room_of(room))
+                self.assertEqual(len(set(spread(paths, offs, axis, line))), width)
+                self.assertEqual(len(idx), len(paths), "harness: the group lost a run")
 
     def test_a_group_over_capacity_is_drawn_at_the_smallest_pitch(self):
         offs = router.assign_offsets(FIVE, nodes=FIVE_NODES, room=room_of((5, 5)))
@@ -494,8 +648,13 @@ class AdaptivePitch(unittest.TestCase):
         self.assertEqual(spread(HFIVE, offs, "h", 2), [-10.0, -5.0, 0.0, 5.0, 10.0])
 
     def test_an_even_group_at_the_smallest_pitch_lands_on_half_pixels(self):
-        offs = router.assign_offsets(CHAIN, nodes=CHAIN_NODES, room=room_of((5, 5)))
-        self.assertEqual(spread(CHAIN, offs, "v", 2), [-7.5, -2.5, 2.5, 7.5])
+        # four of the five, which all lie beside each other, so the group really is four slots wide
+        # and its middle falls between two of them
+        four = FIVE[:4]
+        self.assertEqual(router.overfull(four, FIVE_NODES, room_of((5, 5))),
+                         [("v", 2, 4, [0, 1, 2, 3], 3)], "harness: the four no longer take a slot each")
+        offs = router.assign_offsets(four, nodes=FIVE_NODES, room=room_of((5, 5)))
+        self.assertEqual(spread(four, offs, "v", 2), [-7.5, -2.5, 2.5, 7.5])
 
     def test_without_room_the_offsets_are_todays(self):
         for paths, nodes in ((FIVE, FIVE_NODES), (CHAIN, CHAIN_NODES)):
@@ -785,12 +944,23 @@ class CapacityMessage(unittest.TestCase):
 
     def test_an_edge_with_two_runs_in_the_group_is_named_once(self):
         # the count is the width of the group — what has to fit — and the list is who to move, so
-        # a line that comes into the gutter twice is two of the lines and one of the names
-        paths = [[(1, 1), (2, 1), (2, 3), (3, 3), (3, 5), (2, 5), (2, 7), (1, 7)],
+        # a line whose two runs in the gutter lie beside each other is two of the lines and one of
+        # the names. The first line goes down the whole gutter, out and back, and up part of it.
+        paths = [[(1, 1), (2, 1), (2, 7), (3, 7), (3, 5), (2, 5), (2, 3), (1, 3)],
                  [(1, 1), (2, 1), (2, 7), (1, 7)]]
         (group,) = router.overfull(paths, frozenset(), room_of((2, 2)))
+        self.assertEqual(group[3], [0, 1, 0], "harness: the first edge no longer has two runs here")
         self.assertEqual(flow.overfull_error(group, [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}], 3, 3),
                          "между столбцами 0 и 1 линий 3, помещается 1: a -> b, c -> d; "
+                         "освободите ячейку рядом или переставьте узлы")
+
+    def test_more_edges_may_be_named_than_the_count(self):
+        # where two runs share a slot the list is longer than the width, and both numbers are right:
+        # three edges come into the gutter, two of them one above the other, so two lines are drawn
+        (group,) = router.overfull(TRIO, TRIO_NODES, room_of((1, 1)))
+        edges = [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}, {"a": "e", "b": "f"}]
+        self.assertEqual(flow.overfull_error(group, edges, 3, 4),
+                         "между столбцами 0 и 1 линий 2, помещается 1: a -> b, c -> d, e -> f; "
                          "освободите ячейку рядом или переставьте узлы")
 
     def test_the_edges_are_named_in_the_order_of_the_model(self):
@@ -798,10 +968,10 @@ class CapacityMessage(unittest.TestCase):
         # model writes its edges in: the message follows the model, so the author reads the names
         # where the edges are, and an edge with two runs there is still named once
         paths = [[(1, 5), (2, 5), (2, 11), (1, 11)],
-                 [(1, 3), (2, 3), (2, 7), (3, 7), (3, 9), (2, 9), (2, 11), (1, 11)],
+                 [(1, 3), (2, 3), (2, 9), (3, 9), (3, 7), (2, 7), (2, 11), (1, 11)],
                  [(1, 1), (2, 1), (2, 9), (1, 9)]]
         (group,) = router.overfull(paths, frozenset(), room_of((2, 2)))
-        self.assertEqual(group[2], [2, 1, 0, 1],
+        self.assertEqual(group[3], [2, 1, 0, 1],
                          "harness: the runs no longer lie along the line in another order than the "
                          "model's edges")
         edges = [{"a": "a", "b": "b"}, {"a": "c", "b": "d"}, {"a": "e", "b": "f"}]

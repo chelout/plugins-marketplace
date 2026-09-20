@@ -135,9 +135,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   "пересечений линий: N" with it. A break of the invariant is a defect of the renderer, never a
   message to the author.
 - The unit of a slot and of an order is the run — a maximal straight piece of one path on one
-  lattice line (`router._runs`) — and not the path. So a path with two runs on one line gets a slot
-  for each instead of overwriting its own, and a pair that shares two stretches on one line keeps
-  the order of each. A zero-length segment — two equal consecutive points, which `schema.plan`
+  lattice line (`router._runs`) — and not the path. So a path with two runs on one line is placed
+  twice instead of overwriting its own slot, and a pair that shares two stretches on one line keeps
+  the order of each. (Placed twice, and drawn twice: whether the two land in one slot or in two is
+  the slot rule below, which asks only whether they lie beside each other.) A zero-length segment — two equal consecutive points, which `schema.plan`
   produces — stays a run of its own and does not break the straight piece it lies in, so no output
   of `schema.plan` moves: its `cross_count`, the `off` and `via` of its edges and its warnings are
   what they were. The signature of `assign_offsets` and the shape of its result do not change:
@@ -177,14 +178,36 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - Gutter capacity, stage B: a gutter and a margin hold a stated number of lines, and a diagram that
   wants more is refused. The unit is the **group** of `router.assign_offsets` — the runs on one
   lattice line that overlap or meet end to end in a gutter, formed once in `router._line_groups` —
-  because a group of `w` runs is drawn `w` slots wide wherever it reaches, whatever its load at any
-  one point. At pitch `s` its outermost line lies `(w − 1) · s / 2` from the lattice line, and it
-  fits while that line keeps `flow.LINE_CLEAR` = 4 px from the nearest card edge and
+  because a group is drawn in the same slots wherever it reaches, whatever its load at any one
+  point; how many slots that is, and why it is not the number of its runs, is the bullet below.
+  At pitch `s` a group `w` slots wide has its outermost line `(w − 1) · s / 2` from the lattice
+  line, and it fits while that line keeps `flow.LINE_CLEAR` = 4 px from the nearest card edge and
   `flow.EDGE_CLEAR` = 1 px from whatever bounds it on the other side (`router.fits`).
   `router.PITCHES` is 8, 6, 5 px: with the room in hand `assign_offsets` gives a group the first
   pitch that fits and the smallest where none does, so a group too wide for 8 px closes up instead
   of reaching over a card edge, and `router.capacity(room)` is the width the smallest pitch allows.
   Without the room — `schema.plan` passes none — every group keeps 8 px and no output moves.
+- Slots are reused, and that is what the width of a group is (spec §4.1a, taken into the stage by
+  the owner on 2026-09-20 after the first measurement showed the unit above to be wasteful rather
+  than wrong). The order of a group is decided exactly as the three strengths above decide it;
+  then each run, in that order, takes the lowest slot above every earlier run it **lies beside** —
+  shares a stretch of the line with, or meets end to end at a point that is not a node
+  (`router._beside`) — and two runs that never lie beside each other are drawn in one slot
+  (`router._slots`). So the width is the slots taken and not the runs counted: the chain of four
+  that hand over at three gutter points (`CHAIN` in `tests/test_capacity.py`) is drawn in three
+  slots, because the end-to-end rule places the two middle runs first, and each outer run then lies
+  beside one of those two only: the first shares a slot, the second has to take a third. A
+  staircase, where every run lies beside the one placed before it, stays as wide as it is long.
+  `router._spread` is the one place that decides order and slots, as
+  `_line_groups` is the one place that decides groups, so what `assign_offsets` draws is what
+  `overfull` prices. The invariant of stage A is untouched: only two runs that lie beside each other
+  can cross or overlap, and every such pair keeps the relative order the placing gave it, so
+  `tests/test_drawn_property.py` guards this ordering as it guards any other. Measured over the 500
+  seeded grids of the stage's capacity experiment, the refusals fell from 99, 127, 231 and 111 —
+  flow widget, flow page, swimlane widget, swimlane page — to 54, 86, 173 and 75, against 29, 56,
+  130 and 47 for the bound by the busiest point of a group; the rest is held by the orders, and an
+  order chosen for width is left to the objective of stage C. All 14 shipped renders stayed
+  byte-identical.
 - Where the room comes from, per lattice line, is `flow.Geometry.room`: `gap / 2` in a column
   gutter, `row_gap / 2` in a row gutter between two rows of cards (a gutter beside an empty row is
   the exception, in the last bullet of this section) and, in the side margins, `Geometry.margin`
@@ -214,16 +237,18 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   exists. A line that holds none prices every step along it with or without traffic, which is why
   the router now leaves a flow's top margin alone. It is a heuristic of the proposer: the load of a
   unit edge is not the width of a group, so a chain of runs that only meet end to end loads nothing
-  and is still drawn as wide as it is long.
+  and is still drawn two slots wide or more.
 - The guarantee is the check. After the offsets, `router.overfull(paths, nodes, room)` names every
-  group that does not fit at the smallest pitch — the same groups `assign_offsets` drew, so the
-  width priced is the width drawn — and `flow.overfull_error` turns each into a layout error, which
-  prints the map and which `--draft` downgrades: "между столбцами 0 и 1 линий 4, помещается 3:
+  group that does not fit at the smallest pitch — reading its groups, their order and their slots
+  from `_spread` as `assign_offsets` does, so the width priced is the width drawn — and
+  `flow.overfull_error` turns each into a layout error, which prints the map and which `--draft`
+  downgrades: "между столбцами 0 и 1 линий 4, помещается 3:
   a -> b, …; освободите ячейку рядом или переставьте узлы", with "между рядами" for a row gutter
   and "по левому полю" and its three siblings for the margins, columns and rows counted from zero
-  as every other message counts them. The count is the width of the group, the list names at most
-  four edges once each, and where the line holds nothing the advice is to move the nodes instead,
-  since no cell freed beside it would help.
+  as every other message counts them. The count is the width of the group — the slots that have to
+  fit — while the list names at most four edges once each and may be the longer of the two, since
+  an edge with two runs there is one name and two runs sharing a slot are one line; where the line
+  holds nothing the advice is to move the nodes instead, since no cell freed beside it would help.
 - The lattice ends where the page's rows end. `tracks()` of `template/js/head.js` takes its row count
   from the cards and invents a track for an empty row above or between occupied ones, never for one
   after the last, so `flow.plan` builds the lattice, the `Geometry` and the row count of its

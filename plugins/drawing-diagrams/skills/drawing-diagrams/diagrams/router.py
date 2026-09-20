@@ -317,7 +317,7 @@ PITCHES = (8, 6, 5)  # px between two neighbouring lines of one group, widest fi
 
 
 def fits(w, pitch, room):
-    """Does a group of `w` runs at this pitch stay inside `room`? The outermost
+    """Does a group `w` slots wide at this pitch stay inside `room`? The outermost
     line of such a group lies (w - 1) * pitch / 2 from the lattice line, and
     `room` is the usable px on each side of that line — what Geometry.room
     gives, the clearances already taken off."""
@@ -325,7 +325,7 @@ def fits(w, pitch, room):
 
 
 def capacity(room):
-    """How many runs a line with this room holds, at the smallest pitch: the
+    """How many slots a line with this room holds, at the smallest pitch: the
     widest group `fits` accepts, and 0 where not even a single line does."""
     return max(0, math.floor(2 * min(room) / PITCHES[-1]) + 1)
 
@@ -335,10 +335,10 @@ def _line_groups(runs, nodes):
     line that overlap or meet end to end in a gutter, each knowing its path (`i`) and its index in
     that path (`r`).
 
-    A group of w runs is drawn w slots wide wherever it reaches, whatever its load at any one
-    point, which is why it and not the load is the unit a line's room is spent in. `assign_offsets`
-    and `overfull` both read their groups here, so the width a group is drawn with is the width it
-    is priced at."""
+    A group is drawn over the whole of its reach in as many slots as it takes (_slots), whatever
+    its load at any one point, which is why it and not the load is the unit a line's room is spent
+    in. `assign_offsets` and `overfull` both read their groups, their order and their slots from
+    `_spread`, so the width a group is drawn with is the width it is priced at."""
     items = {}  # (axis, line) -> the runs on that line, each knowing its path and its index in it
     for i, (rs, _) in enumerate(runs):
         for r, d in enumerate(rs):
@@ -371,25 +371,167 @@ def _line_groups(runs, nodes):
 
 
 def _pitch(w, step, room):
-    """The px between two lines of a group of `w` runs: the first of PITCHES its room takes, the
-    smallest where none does, and `step` where the line has no room to state."""
+    """The px between two neighbouring lines of a group `w` slots wide: the first of PITCHES its
+    room takes, the smallest where none does, and `step` where the line has no room to state."""
     if room is None:
         return step
     return next((p for p in PITCHES if fits(w, p, room)), PITCHES[-1])
 
 
+def _beside(u, v, axis, line, nodes):
+    """Do two runs of one group lie beside each other: do they share a stretch
+    of their lattice line — their intervals overlapping by more than a point —
+    or meet end to end at a point that is not a node? Only such a pair can
+    cross or overlap, so only such a pair has to be drawn in two slots; any
+    other two runs of the group are never side by side anywhere and may share
+    one."""
+    if max(u["lo"], v["lo"]) < min(u["hi"], v["hi"]):
+        return True
+    met = [end for end, start in ((u["hi"], v["lo"]), (v["hi"], u["lo"])) if end == start]
+    if not met:
+        return False
+    return ((line, met[0]) if axis == "v" else (met[0], line)) not in nodes
+
+
+def _pair_orders(paths, runs):
+    """Per pair of runs of two paths, the order their shared stretch puts them in: (u, v) -> 1 when
+    run v lies on the higher side of run u, -1 on the lower. Firm where the stretch has no swap,
+    loose where it has one; a pair that shares two stretches on one line keeps the order of each,
+    because the order belongs to the two runs the stretch runs on and not to the two paths."""
+
+    def covering(i, axis, line, lo, hi):
+        """The run of path i on this line whose interval covers [lo, hi]: a straight piece of a
+        stretch belongs to exactly one run of each path it lies on."""
+        for r, d in enumerate(runs[i][0]):
+            if d["axis"] == axis and d["line"] == line and d["lo"] <= lo and hi <= d["hi"]:
+                return (i, r)
+        return None
+
+    firm, loose = {}, {}
+    for i in range(len(paths)):
+        for j in range(i + 1, len(paths)):
+            for pts, first, last in stretches(paths[i], paths[j]):
+                swap = first * last < 0
+                if swap and (len({x for x, _ in pts}) == 1 or len({y for _, y in pts}) == 1):
+                    continue  # along one lattice line they cross at an end of it whatever the order
+                side = _sign(first) or _sign(last) or _higher(pts[0], pts[1])
+                order = loose if swap else firm
+                for a, b in zip(pts, pts[1:]):
+                    axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
+                    lo, hi = sorted((_along(a, axis), _along(b, axis)))
+                    u, v = covering(i, axis, line, lo, hi), covering(j, axis, line, lo, hi)
+                    if u is None or v is None:
+                        continue
+                    order[(u, v)] = side * _higher(a, b)
+                    order[(v, u)] = -side * _higher(a, b)
+    return firm, loose
+
+
+def _order(axis, line, g, firm, loose, nodes):
+    """The order the runs of one group are placed in, the lowest slot first.
+
+    The order of shared stretches comes first, a loose one only where the firm ones allow it, and
+    the end-to-end one only where both do; the ranking places the lines the orders leave free and
+    breaks a cycle among them."""
+    if len(g) == 1:
+        return list(g)
+
+    def pref(d):
+        # the side the line branches to at the ends that lie inside or on another member
+        sides = []
+        for end, side in (("lo", d["lo_side"]), ("hi", d["hi_side"])):
+            x = d[end]
+            if any(o is not d and o["lo"] <= x <= o["hi"] for o in g) and side:
+                sides.append(side)
+        if not sides:
+            sides = [x for x in (d["lo_side"], d["hi_side"]) if x]
+        return sum(sides) / len(sides) if sides else 0
+
+    ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
+
+    # two runs that meet end to end at a gutter point with their arms there pointing to
+    # opposite sides: the one whose arm points to the lower coordinate takes the lower
+    # slot, so each corner moves towards its own arms and the pair does not cross twice.
+    # They share no stretch, so nothing above says anything about them.
+    soft = {}
+    for u in g:
+        for v in g:
+            if u is v or u["hi"] != v["lo"] or not u["hi_side"] or not v["lo_side"]:
+                continue
+            if u["hi_side"] == v["lo_side"]:
+                continue
+            pt = (line, u["hi"]) if axis == "v" else (u["hi"], line)
+            ku, kv = (u["i"], u["r"]), (v["i"], v["r"])
+            if pt in nodes or (ku, kv) in firm or (ku, kv) in loose:
+                continue
+            soft[(ku, kv)], soft[(kv, ku)] = -u["hi_side"], u["hi_side"]
+
+    def free(d, orders):
+        # no run of the group still to place has to lie below d
+        return not any(order.get(((o["i"], o["r"]), (d["i"], d["r"]))) == 1
+                       for order in orders for o in ranked)
+
+    ordered = []
+    while ranked:
+        n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose, soft))), None)
+        if n is None:
+            n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
+        if n is None:
+            n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
+        ordered.append(ranked.pop(n))
+    return ordered
+
+
+def _slots(axis, line, ordered, nodes):
+    """The slot every run of one group is drawn in, {(path index, run index): slot}, and the number
+    of slots that takes — the width of the group.
+
+    Each run, in the order the group was placed in, takes the lowest slot above every earlier run
+    it lies beside (_beside), and shares a slot with the ones it never lies beside. So the width is
+    not the number of runs: a chain of runs that only meet end to end is as wide as the order makes
+    it, and a group whose runs all lie beside each other is as wide as it is long. Every pair that
+    does lie beside each other keeps the relative order the placing gave it — the pick order of
+    _order decides which of the two comes first, and this only numbers them — so the pairs that can
+    cross or overlap are ordered exactly as they were, which is what the invariant rests on."""
+    out = {}
+    for n, d in enumerate(ordered):
+        below = [out[(o["i"], o["r"])] for o in ordered[:n] if _beside(d, o, axis, line, nodes)]
+        out[(d["i"], d["r"])] = max(below) + 1 if below else 0
+    return out, max(out.values()) + 1
+
+
+def _spread(paths, runs, nodes):
+    """Every group of runs on every lattice line with the slots it is drawn in, as
+    (axis, line, group, slots, width): `group` as _line_groups gives it, in the order the runs lie
+    along the line; `slots` and `width` as _slots gives them.
+
+    This is the one place that decides order and slots, as `_line_groups` is the one place that
+    decides groups: `assign_offsets` draws what it says and `overfull` prices the same thing, so no
+    message can name a width the picture does not show."""
+    firm, loose = _pair_orders(paths, runs)
+    out = []
+    for axis, line, g in _line_groups(runs, nodes):
+        ordered = _order(axis, line, g, firm, loose, nodes)
+        slots, width = _slots(axis, line, ordered, nodes)
+        out.append((axis, line, g, slots, width))
+    return out
+
+
 def overfull(paths, nodes, room):
     """The groups that do not fit on their lattice line even at the smallest
-    pitch, as (axis, line, [path indices], capacity): one index per run of the
-    group, in the order the runs lie along the line, so the list is as long as
-    the group is drawn wide. `room` is a callable (axis, line) -> pair or None,
+    pitch, as (axis, line, width, [path indices], capacity). `width` is the
+    number of slots the group is drawn in, which is what has to fit; the
+    indices are one per run of the group, in the order the runs lie along the
+    line, so the list names who to move and may be longer than the width where
+    two runs share a slot. `room` is a callable (axis, line) -> pair or None,
     as Geometry.room is; a line with no room to state holds any group."""
+    runs = [_runs(p) for p in paths]
     out = []
-    for axis, line, g in _line_groups([_runs(p) for p in paths], nodes):
+    for axis, line, g, _, width in _spread(paths, runs, nodes):
         r = room(axis, line)
-        if r is None or fits(len(g), PITCHES[-1], r):
+        if r is None or fits(width, PITCHES[-1], r):
             continue
-        out.append((axis, line, [d["i"] for d in g], capacity(r)))
+        out.append((axis, line, width, [d["i"] for d in g], capacity(r)))
     return out
 
 
@@ -399,12 +541,20 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
 
     The unit is the run: a maximal straight piece of one path on one lattice
     line (_runs). Runs of one line that overlap or meet end to end in a
-    gutter form a group and get distinct slots, so a path with two runs on
-    one line gets one slot for each of them. The order of the slots follows
-    where each line turns: on a horizontal run the line that turns down lies
-    below the one that continues, the line that turns up lies above; on a
-    vertical run the line that turns right lies to the right. So a fan of
-    lines leaving one node never crosses itself when it spreads.
+    gutter form a group and are placed in an order of their own, so a path
+    with two runs on one line is placed twice instead of overwriting itself.
+    The order follows where each line turns: on a horizontal run the line
+    that turns down lies below the one that continues, the line that turns up
+    lies above; on a vertical run the line that turns right lies to the
+    right. So a fan of lines leaving one node never crosses itself when it
+    spreads.
+
+    Slots are then handed out along that order and reused: each run takes the
+    lowest slot above every earlier run it lies beside — shares a stretch
+    with, or meets end to end in a gutter — and two runs that never lie
+    beside each other share one (_slots). The group is as wide as the slots
+    it takes, not as long as the list of its runs, and that width is what the
+    pitch below and `overfull` are read from.
 
     Two lines that share a stretch keep one order along all of it, through
     the corners they turn together, so the line inside such a corner on one
@@ -431,97 +581,18 @@ def assign_offsets(paths, step=8, nodes=frozenset(), room=None):
     order is what the guarantee rests on.
 
     `room`, a callable (axis, line) -> pair or None as Geometry.room is, gives
-    the group its pitch: the first of PITCHES that fits the room on the line,
-    the smallest where none does — a group wider than its line holds is drawn
-    as tightly as the lines can be drawn, and `overfull` is what names it.
+    the group its pitch: the first of PITCHES that fits the slots it takes on
+    the line, the smallest where none does — a group wider than its line holds
+    is drawn as tightly as the lines can be drawn, and `overfull` is what names
+    it.
     Without `room` every group keeps `step`, which is what schema.plan asks
     for, and so does a line whose room is not stated."""
     runs = [_runs(p) for p in paths]
-
-    def covering(i, axis, line, lo, hi):
-        """The run of path i on this line whose interval covers [lo, hi]: a straight piece of a
-        stretch belongs to exactly one run of each path it lies on."""
-        for r, d in enumerate(runs[i][0]):
-            if d["axis"] == axis and d["line"] == line and d["lo"] <= lo and hi <= d["hi"]:
-                return (i, r)
-        return None
-
-    # per pair of runs of two paths, the order their shared stretch puts them in:
-    # (u, v) -> 1 when run v lies on the higher side of run u, -1 on the lower; firm where the
-    # stretch has no swap, loose where it has one
-    firm, loose = {}, {}
-    for i in range(len(paths)):
-        for j in range(i + 1, len(paths)):
-            for pts, first, last in stretches(paths[i], paths[j]):
-                swap = first * last < 0
-                if swap and (len({x for x, _ in pts}) == 1 or len({y for _, y in pts}) == 1):
-                    continue  # along one lattice line they cross at an end of it whatever the order
-                side = _sign(first) or _sign(last) or _higher(pts[0], pts[1])
-                order = loose if swap else firm
-                for a, b in zip(pts, pts[1:]):
-                    axis, line = ("v", a[0]) if a[0] == b[0] else ("h", a[1])
-                    lo, hi = sorted((_along(a, axis), _along(b, axis)))
-                    u, v = covering(i, axis, line, lo, hi), covering(j, axis, line, lo, hi)
-                    if u is None or v is None:
-                        continue
-                    order[(u, v)] = side * _higher(a, b)
-                    order[(v, u)] = -side * _higher(a, b)
-
     slot = {}   # (path index, run index) -> (slot, width, pitch)
-    for axis, line, g in _line_groups(runs, nodes):
-        pitch = _pitch(len(g), step, room(axis, line) if room is not None else None)
-        if len(g) == 1:
-            slot[(g[0]["i"], g[0]["r"])] = (0, 1, pitch)
-            continue
-
-        def pref(d, g=g):
-            # the side the line branches to at the ends that lie inside or on another member
-            sides = []
-            for end, side in (("lo", d["lo_side"]), ("hi", d["hi_side"])):
-                x = d[end]
-                if any(o is not d and o["lo"] <= x <= o["hi"] for o in g) and side:
-                    sides.append(side)
-            if not sides:
-                sides = [x for x in (d["lo_side"], d["hi_side"]) if x]
-            return sum(sides) / len(sides) if sides else 0
-
-        ranked = sorted(g, key=lambda d: (pref(d), (-(d["hi"] - d["lo"]) if pref(d) > 0 else (d["hi"] - d["lo"]))))
-
-        # two runs that meet end to end at a gutter point with their arms there pointing to
-        # opposite sides: the one whose arm points to the lower coordinate takes the lower
-        # slot, so each corner moves towards its own arms and the pair does not cross twice.
-        # They share no stretch, so nothing above says anything about them.
-        soft = {}
-        for u in g:
-            for v in g:
-                if u is v or u["hi"] != v["lo"] or not u["hi_side"] or not v["lo_side"]:
-                    continue
-                if u["hi_side"] == v["lo_side"]:
-                    continue
-                pt = (line, u["hi"]) if axis == "v" else (u["hi"], line)
-                ku, kv = (u["i"], u["r"]), (v["i"], v["r"])
-                if pt in nodes or (ku, kv) in firm or (ku, kv) in loose:
-                    continue
-                soft[(ku, kv)], soft[(kv, ku)] = -u["hi_side"], u["hi_side"]
-
-        def free(d, orders, ranked=ranked):
-            # no run of the group still to place has to lie below d
-            return not any(order.get(((o["i"], o["r"]), (d["i"], d["r"]))) == 1
-                           for order in orders for o in ranked)
-
-        # the order of shared stretches first, a loose one only where the firm ones allow it
-        # and the end-to-end one only where both do; the ranking places the lines they leave
-        # free and breaks a cycle among them
-        ordered = []
-        while ranked:
-            n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose, soft))), None)
-            if n is None:
-                n = next((n for n, d in enumerate(ranked) if free(d, (firm, loose))), None)
-            if n is None:
-                n = next((n for n, d in enumerate(ranked) if free(d, (firm,))), 0)
-            ordered.append(ranked.pop(n))
-        for n, d in enumerate(ordered):
-            slot[(d["i"], d["r"])] = (n, len(ordered), pitch)
+    for axis, line, _, slots, width in _spread(paths, runs, nodes):
+        pitch = _pitch(width, step, room(axis, line) if room is not None else None)
+        for key, n in slots.items():
+            slot[key] = (n, width, pitch)
 
     def off(key):
         sw = slot.get(key)

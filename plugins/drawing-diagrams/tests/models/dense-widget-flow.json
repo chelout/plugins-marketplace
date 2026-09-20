@@ -36,6 +36,7 @@
     "route -> manual",
     "route -> fail",
     "route -> alert",
+    "route -> queue",
     "manual -> closed",
     "lock -> check",
     "queue -> retry",
