@@ -84,6 +84,18 @@ spread 8 px apart, 6 or 5 px where the gutter is too narrow for that, and the
 router sends a line round a gutter that is already full. `--check` prints the map with the routed lines and the
 number of line crossings; three or more crossings are a warning.
 
+Where a gutter holds more lines than fit or three lines cross, stderr also
+carries an advice: the node moves that lower that count, numbered, each with
+the count before and after it, and the grid they leave behind, ready to
+paste back into the model. Every move is verified — the renderer routes the
+grid it would produce and reports what it measured, not a guess — and no move is offered
+that brings a problem the model did not already have. The advice never
+changes the model: apply it by editing the grid, or leave it and say why.
+Nothing is printed when no move improves the drawing. The search runs only
+when one of those two problems was reported, and costs about half a second
+on a dozen cards, several seconds on a full page of thirty; `--no-advice`
+turns it off.
+
 ### Edges
 
 `"a -> b : label [n] | dashed"`. The label sits at the exit of the line next

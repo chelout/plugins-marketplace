@@ -33,7 +33,7 @@ Core principle: you write a small JSON model (content, a grid map, edges); every
    python3 ${CLAUDE_SKILL_DIR}/render.py model.json --mode widget
    ```
 
-   On errors stdout is empty and stderr lists every problem: a text that does not fit names its length and how many characters fit; a line or grid problem also prints the map. Fix all of them in one edit and render again. Treat warnings as errors unless the user accepts the trade-off.
+   On errors stdout is empty and stderr lists every problem: a text that does not fit names its length and how many characters fit; a line or grid problem also prints the map. Fix all of them in one edit and render again. Treat warnings as errors unless the user accepts the trade-off. Where lines cross or do not fit a gutter, stderr also offers verified node moves and the grid they make: apply it or say why not (`--no-advice` turns the search off).
 5. Embed. Chat: pass stdout to `show_widget` unchanged. Page: `--mode page --out file.html`, or `--out-dir DIR` for several models; `--assets none` for every diagram after the first on the same page. Markdown in a repository: `--format mermaid`.
 6. Look at the result outside the chat only when asked or for a new layout: `reference/output.md`.
 
