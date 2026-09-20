@@ -1,0 +1,48 @@
+{
+  "kind": "flow",
+  "id": "dense-widget-flow",
+  "title": "Вебхук вендора: разбор и повторы",
+  "summary": "Плотный поток для проверки шага линий: разбор вебхука, повторная попытка, очередь повторов и ручной разбор.",
+  "groups": {
+    "in": {"label": "приём", "ramp": "teal"},
+    "err": {"label": "ошибки", "ramp": "coral"}
+  },
+  "nodes": [
+    {"id": "hook", "kind": "terminal", "group": "in", "title": "Вебхук вендора"},
+    {"id": "retry", "group": "in", "title": "Повторная попытка", "text": "тело взято из очереди"},
+    {"id": "check", "group": "in", "title": "Проверка вердикта", "text": "подпись, срок, статус заявки"},
+    {"id": "route", "group": "in", "title": "Выбор обработчика"},
+    {"id": "closed", "kind": "terminal", "group": "in", "title": "Заявка закрыта"},
+    {"id": "manual", "group": "err", "title": "Ручной разбор", "text": "дежурный смотрит тело и вердикт"},
+    {"id": "done", "kind": "terminal", "group": "in", "title": "Вердикт записан"},
+    {"id": "lock", "group": "in", "title": "Блокировка дубля"},
+    {"id": "queue", "group": "err", "title": "Очередь повторов", "text": "до пяти попыток с задержкой"},
+    {"id": "fail", "group": "err", "title": "Ошибка обработки"},
+    {"id": "alert", "group": "err", "title": "Сигнал дежурному"}
+  ],
+  "grid": [
+    ".       retry   check",
+    "hook    route   closed",
+    "manual  done    lock",
+    "queue   .       .",
+    "fail    alert   ."
+  ],
+  "edges": [
+    "retry -> lock",
+    "check -> done",
+    "check -> fail",
+    "hook -> check",
+    "hook -> route",
+    "route -> manual",
+    "route -> fail",
+    "route -> alert",
+    "route -> queue",
+    "manual -> closed",
+    "lock -> check",
+    "queue -> retry",
+    "fail -> manual",
+    "fail -> queue",
+    "alert -> retry",
+    "alert -> queue"
+  ]
+}

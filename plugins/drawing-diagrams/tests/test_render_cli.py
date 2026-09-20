@@ -39,6 +39,10 @@ LONG_WORD = {"kind": "flow", "id": "long_word", "groups": GROUPS, "grid": ["a b 
                        {"id": "d", "kind": "terminal", "group": "g", "title": "D"}],
              "edges": ["a -> b", "b -> c", "c -> d"]}
 LONG_WORD_MESSAGE = r"узел a: слово 66 симв\., влезает ~\d+"
+MODELS = Path(__file__).resolve().parent / "models"
+# A swimlane whose first two lanes have four lines in the gutter between them and room for three.
+OVERFULL = MODELS / "overfull-gutter.json"
+OVERFULL_MESSAGE = r"между столбцами \d+ и \d+ линий \d+, помещается \d+: "
 
 
 class RenderCli(unittest.TestCase):
@@ -179,6 +183,38 @@ class RenderCli(unittest.TestCase):
         warnings = [line for line in err.splitlines() if line.startswith("предупреждение:")]
         self.assertEqual(len(warnings), 1, err)
         self.assertRegex(warnings[0], rf"^предупреждение: черновик: {LONG_WORD_MESSAGE}$")
+
+    # A gutter holding more lines than fit is a layout error like the ones above: stdout stays
+    # empty, the message names the gutter, the edges in it and what to do, the map is printed
+    # because the failure is of the layout and not of a length, and --draft downgrades it.
+    def test_a_gutter_over_its_capacity_is_refused_with_the_map(self):
+        code, out, err = self.run_cli(str(OVERFULL))
+        self.assertEqual((code, out), (1, ""), err)
+        errors = [line for line in err.splitlines() if line.startswith("ошибка:")]
+        self.assertEqual(len(errors), 1, err)
+        self.assertRegex(errors[0], rf"^ошибка: {OVERFULL_MESSAGE}")
+        self.assertIn("освободите ячейку рядом или переставьте узлы", errors[0])
+        self.assertIn("[zayavka]", err)  # the ASCII map of the model, not just the message
+
+    def test_draft_downgrades_a_full_gutter_to_a_warning(self):
+        self.publish()
+        code, out, err = self.run_cli(str(OVERFULL), "--draft")
+        self.assertEqual(code, 0, err)
+        self.assertIn('<span class="dg-draft">', out)
+        self.assertNotIn("ошибка:", err)
+        drafts = [line for line in err.splitlines() if line.startswith("предупреждение: черновик:")]
+        self.assertEqual(len(drafts), 1, err)
+        self.assertRegex(drafts[0], rf"^предупреждение: черновик: {OVERFULL_MESSAGE}")
+
+    def test_the_stress_models_render_in_their_mode(self):
+        # the two models the owner reviews the line pitch on: they are only useful while they
+        # render, and tests/test_capacity.py holds them to the pitches they were picked for
+        self.publish()
+        for name, mode in (("dense-widget-flow", "widget"), ("dense-page-swimlane", "page")):
+            with self.subTest(model=name):
+                code, out, err = self.run_cli(str(MODELS / f"{name}.json"), "--mode", mode)
+                self.assertEqual(code, 0, err)
+                self.assertTrue(out, f"{name}: empty output")
 
     # --- G4 (gate.md): every successful render that is not --check prints one summary line to
     # stderr in the --check shape; stdout stays exactly the rendered fragment.

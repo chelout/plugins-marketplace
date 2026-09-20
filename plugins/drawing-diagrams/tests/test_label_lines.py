@@ -2,7 +2,7 @@ import re
 import unittest
 
 import support
-from diagrams import flow
+from diagrams import flow, router
 from diagrams.common import ModelError, label_width
 
 
@@ -166,9 +166,13 @@ def exit_model(grid, edges, terminals=(), nodes=()):
 # A straight exit down or up keeps its label in the gutter under or over the card, 5 px beside the
 # line: template/js/flow.js puts the baseline 14 px under the card's bottom edge or 6 px over its
 # top edge, so the text stands between the card and the middle of the gutter, where lines run.
+#
+# An exit up costs the router more than a step round a free margin, so `d -> c` is the straight one
+# only while the margin beside d is taken: `c -> e` runs down it to the row under the cards, and the
+# row is there for that line alone.
 DOWN = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> c : нет"], terminals=("b", "c"))
-UP = exit_model(["c b", "d a?"], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да", "d -> b : да",
-                                  "d -> c : да"])
+UP = exit_model(["c b", "d a?", "e ."], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да",
+                                         "d -> b : да", "d -> c : да", "c -> e"])
 
 
 class ExitLabelCase(unittest.TestCase):
@@ -264,9 +268,11 @@ class StraightExitLabel(ExitLabelCase):
     def test_a_line_turning_in_the_gutter_from_the_far_side_is_no_warning(self):
         # the other line comes from the far side of the gutter and turns along its middle: it ends
         # where the text ends, short of it
+        # over an exit up the same shape needs the margin beside a? taken, or the line goes round it
+        # instead of straight up: b -> g runs down that margin to the row under the cards
         cases = ((exit_model(["a? b", "c d"], ["b -> c", "d -> c", "a? -> b : да", "d -> b", "a? -> c : да"]),
                   ("a?", "c"), "B", ("b", "c")),
-                 (exit_model(["b e c", "a? f d"], ["b -> c", "a? -> c : да", "a? -> b : да"]),
+                 (exit_model(["b e c", "a? f d", "g h i"], ["b -> c", "a? -> c : да", "a? -> b : да", "b -> g"]),
                   ("a?", "b"), "T", ("b", "c")))
         for model, edge, side, turn in cases:
             for mode in ("widget", "page"):
@@ -284,17 +290,22 @@ class StraightExitLabel(ExitLabelCase):
         cases = (
             # 4 px off the middle away from the card: under the text whatever the mode
             (exit_model(["f e a? g", "c h d b"],
-                        ["a? -> f : да", "a? -> d : да", "b -> f", "g -> h", "g -> f", "a? -> g : да"]),
+                        ["a? -> f : да", "a? -> d : да", "b -> f", "g -> f", "a? -> g : да"]),
              ("a?", "d"), "B", 4.0, {"widget": False, "page": False}),
-            # 8 px off the middle towards the card: through the text whatever the mode
-            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "b -> e", "g -> c", "d -> h",
-                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e"]),
+            # 8 px off the middle towards the card: through the text whatever the mode. Four lines
+            # share that gutter row and are drawn in three slots — d -> h over the first column and
+            # g -> f over the last never lie beside each other and take one between them — so
+            # f -> h, which lies beside all of the others, is a whole pitch off the middle.
+            (exit_model(["e h g b", "d c a? f"], ["g -> h", "a? -> b : да", "g -> c", "d -> h",
+                                                  "a? -> g : да", "g -> f", "f -> h", "d -> e", "f -> c",
+                                                  "e -> h"]),
              ("a?", "g"), "T", 8.0, {"widget": True, "page": True}),
             # 4 px towards the card: through the foot of the text in a widget, clear of it on a page
-            (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c", "d -> c"]),
+            (exit_model(["c a? . f", "e d b ."], ["e -> d", "b -> c", "a? -> d : да", "a? -> c : да", "f -> c",
+                                                  "d -> c", "c -> e"]),
              ("a?", "d"), "B", -4.0, {"widget": True, "page": False}),
             # the same over an exit up: through the top of the text in a widget, clear of it on a page
-            (exit_model([". e b c", ". . a? d"], ["c -> e", "d -> c", "c -> a?", "a? -> e : да", "e -> c", "e -> d",
+            (exit_model([". e b c", ". . a? d"], ["d -> c", "c -> a?", "a? -> e : да", "e -> d",
                                                   "b -> e", "a? -> b : да"]),
              ("a?", "b"), "T", 4.0, {"widget": True, "page": False}),
         )
@@ -304,7 +315,9 @@ class StraightExitLabel(ExitLabelCase):
                     layout, warnings = flow.plan(model, mode)
                     sa, _, near = self.near_label(layout, edge)
                     self.assertEqual(sa, side)
-                    self.assertEqual([n[1:] for n in near], [("h", oy)], near)
+                    self.assertEqual([n[1:] for n in near], [("h", oy)],
+                                     f"the line beside the text no longer runs {oy} px off the middle "
+                                     f"of the gutter, which is what this case measures: {near}")
                     self.assertEqual(len(self.label_warnings(warnings, edge)), int(warned), warnings)
 
 
@@ -420,41 +433,74 @@ class BesideSecondSegment(unittest.TestCase):
         return near
 
     def test_a_line_along_a_row_with_sideways_ends_counts_whatever_its_offset(self):
-        # d -> b leaves d sideways, turns up in the gutter and into b's side. Every other place beside
-        # its second segment is taken; pinned to d's row on the right the text meets only c -> d,
-        # running straight along the row 8 px under its base, LINE_REACH and more from the text's
-        # middle. template/js/flow.js clamps every line on a row line where lines enter or leave cards
-        # sideways into one band, 10 px inside the shortest of those cards, and these cards are one
-        # title line high: c -> d is drawn nearer the base than its offset, through the text
-        model = exit_model(["a b e", "d . c"], ["e -> d", "c -> a", "d -> b : да", "c -> b", "b -> d", "c -> d"])
+        # d -> b leaves d sideways, runs along d's row to the gutter between a and b, turns up there
+        # and into b's side. Every other place beside that second segment is taken; pinned to the
+        # gutter row on its right the text stands past that gutter, where the only line of d's row
+        # is c -> d, running straight across it a whole pitch under its base — LINE_REACH and more
+        # from the text's middle. template/js/flow.js clamps every line on a row line where lines
+        # enter or leave cards sideways into one band, 10 px inside the shortest of those cards, and
+        # these cards are one title line high: c -> d is drawn nearer the base than its offset,
+        # through the text.
+        #
+        # Three lines share d's row — d -> a as far as the gutter beside d, d -> b as far as the one
+        # beside b, and c -> d across the whole of it — and each of the three lies beside the other
+        # two, so each takes a slot of its own at the widest of router.PITCHES. The premise asserts
+        # those offsets and who holds them: a line that stopped lying beside the others would share
+        # its slot, the group would close up, and the case would measure an offset it was not
+        # written for. c -> b, which leaves c the other way, is a group of its own on that row: it
+        # meets c -> d at c, which is a card and not a junction.
+        model = exit_model(["e a b", "d . c"],
+                           ["e -> d", "c -> d", "c -> b", "d -> b : да", "d -> a", "a -> c"],
+                           terminals=("b",))
+        pitch = float(router.PITCHES[0])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
+                on_row = sorted((oy, (e["a"], e["b"])) for e in layout["edges"]
+                                for (_, ya, _, oy), (_, yb, _, _) in zip(e["path"], e["path"][1:])
+                                if ya == yb == 3)
+                self.assertEqual(on_row, [(-pitch, ("d", "a")), (0.0, ("c", "b")), (0.0, ("d", "b")),
+                                          (pitch, ("c", "d"))],
+                                 f"the lines along row 3 no longer take a slot each {pitch} px apart")
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("d", "b"))
                 self.assertEqual((own["sa"], own["path"][0][1], own["path"][1][1] != own["path"][2][1]), ("R", 3, True))
-                self.assertEqual(self.along_the_row(layout, ("d", "b"), 3, "R"), [(("c", "d"), 8.0)])
-                self.assertGreaterEqual(8.0, flow.LINE_REACH)
+                self.assertEqual((own["ly"], own["ls"]), (2, "R"))
+                self.assertEqual(self.along_the_row(layout, ("d", "b"), 3, "R"), [(("c", "d"), pitch)])
+                self.assertGreaterEqual(pitch, flow.LINE_REACH)
                 found = [w for w in warnings if w.startswith("связь d -> b:")]
                 self.assertEqual(len(found), 1, warnings)
                 self.assertTrue(found[0].startswith("связь d -> b: подпись 'да' рядом со вторым отрезком ляжет на другую "
                                                     "линию"), found)
 
     def test_a_line_along_a_gutter_row_counts_by_its_offset(self):
-        # a -> d leaves a sideways, turns up and pins its label to gutter row 4 on the left of its
+        # a -> d leaves a sideways, turns up and pins its label to gutter row 2 on the left of its
         # second segment, then turns along that row 8 px above its base. No card stands on a gutter
         # row, so no line enters or leaves a card sideways there and template/js/flow.js draws a line
-        # along it at its own offset, unclamped: LINE_REACH and more from the text's middle, clear of it
-        model = exit_model([". . d e", ". . . .", ". b c a"],
+        # along it at its own offset, unclamped: LINE_REACH and more from the text's middle, clear of it.
+        #
+        # Three lines share that row — a -> d, d -> a and e -> c — and an ordinary gutter between two
+        # rows of cards has the room to hold the three at the widest of router.PITCHES in both modes,
+        # which is what puts a -> d's own line a whole pitch off the row line. The premise asserts those
+        # three offsets: a row with less room beside it, or one line more on it, closes the group to a
+        # narrower pitch, and the case would then measure an offset it was not written for.
+        model = exit_model([". . d e", ". b c a"],
                            ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c"], terminals=("e",))
+        pitch = float(router.PITCHES[0])
         for mode in ("widget", "page"):
             with self.subTest(mode=mode):
                 layout, warnings = flow.plan(model, mode)
+                room = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                                     empty=layout["empty_rows"]).room("h", 2)
+                on_row = sorted(oy for e in layout["edges"]
+                                for (_, ya, _, oy), (_, yb, _, _) in zip(e["path"], e["path"][1:]) if ya == yb == 2)
+                self.assertEqual(on_row, [-pitch, 0.0, pitch],
+                                 f"gutter row 2 has room {room}: the lines along it no longer lie {pitch} px apart")
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("a", "d"))
-                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 4, "L"))
-                self.assertEqual(self.along_the_row(layout, ("a", "d"), 4, "L"), [(("a", "d"), -8.0)])
-                self.assertGreaterEqual(8.0, flow.LINE_REACH)
+                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 2, "L"))
+                self.assertEqual(self.along_the_row(layout, ("a", "d"), 2, "L"), [(("a", "d"), -pitch)])
+                self.assertGreaterEqual(pitch, flow.LINE_REACH)
                 self.assertEqual([e for e in layout["edges"]
-                                  if e["path"][0][1] == e["path"][1][1] == 4 or e["path"][-1][1] == e["path"][-2][1] == 4], [])
+                                  if e["path"][0][1] == e["path"][1][1] == 2 or e["path"][-1][1] == e["path"][-2][1] == 2], [])
                 self.assertEqual([w for w in warnings if w.startswith("связь a -> d:")], [], warnings)
 
 

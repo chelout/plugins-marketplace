@@ -1,0 +1,35 @@
+{
+  "kind": "swimlane",
+  "id": "overfull-gutter",
+  "title": "Обращение в поддержку",
+  "summary": "Модель, которую проверка отклоняет: между первыми двумя дорожками идёт больше линий, чем помещается в промежуток.",
+  "groups": {
+    "client": {"label": "клиент", "ramp": "pink"},
+    "bot": {"label": "бот", "ramp": "teal"},
+    "duty": {"label": "оператор", "ramp": "coral"}
+  },
+  "lanes": ["client", "bot", "duty"],
+  "nodes": [
+    {"id": "zayavka", "title": "Заявка в чат", "text": "клиент описывает проблему"},
+    {"id": "otvet", "kind": "terminal", "title": "Ответ бота"},
+    {"id": "utochnenie", "title": "Уточнение клиента"},
+    {"id": "robot", "title": "Проверка по базе", "text": "бот ищет похожий случай"},
+    {"id": "peredano", "kind": "terminal", "title": "Передано оператору"},
+    {"id": "ozhidanie", "kind": "terminal", "title": "Клиент ждёт"},
+    {"id": "razbor", "title": "Разбор оператором"}
+  ],
+  "grid": [
+    "zayavka     otvet  .",
+    "utochnenie  robot  peredano",
+    "ozhidanie   .      razbor"
+  ],
+  "edges": [
+    "zayavka -> robot",
+    "zayavka -> ozhidanie",
+    "zayavka -> razbor",
+    "utochnenie -> otvet",
+    "robot -> peredano",
+    "razbor -> otvet",
+    "razbor -> utochnenie"
+  ]
+}

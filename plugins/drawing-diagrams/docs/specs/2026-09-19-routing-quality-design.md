@@ -119,8 +119,9 @@ Non-goals:
   advises.
 - No third-party layout or routing library, in Python or in the script.
 - No routing or label placement in the browser: errors reach the author before anything is shown.
-- No slot reuse inside a group of runs (left-edge track assignment): a group keeps one slot per run,
-  so a chain of runs that only meet end to end counts as wide as it is drawn (§4.1).
+- No order of a group chosen for its width: slots are reused over the order §3 decides (§4.1a,
+  taken on 2026-09-20; until then this list ruled slot reuse out altogether), and an order that
+  would make a group narrower is left to the objective of stage C.
 - No capacity for lines through cell centres or through banded rows, where `rowY` and `clampY` of
   `flow.js` compress offsets; the browser tests keep their tolerance there.
 - No independence of offsets, label choice, warning order or the anonymous section id
@@ -240,10 +241,40 @@ gutter, and in the left and right margins `Geometry.margin` towards the cards an
 towards the box. At `gap` 28 that is 3, 4 and 5 lines at 8, 6 and 5 px; at `gap` 18, 2, 2 and 3; in
 a widget side margin (12 px and 6 px), 2, 2 and 3.
 
-Assumption: the top and bottom margins are not like the side ones — `.dg-grid` in
-`template/css/base.css` pads 8 px vertically, so `by` of `flow.js` puts an unoffset top-margin line
-4 px (widget) or 10 px (page) above the grid box, and swimlane headers sit there too. Their room is
-measured in the browser harness by the first task of the stage and set from that measurement.
+The top and bottom margins are not like the side ones — `.dg-grid` in `template/css/base.css` pads
+8 px vertically, so `by` of `flow.js` puts an unoffset margin line 4 px (widget) or 10 px (page)
+outside the grid box, above it and below it. Their room was an assumption of this design until the
+first task of the stage measured it in the browser harness (2026-09-19), and the measurement
+replaced it: the bound of such a line is not the grid box, which does not clip (`.dg-svg` is
+`overflow:visible`), but what actually clips or covers it. Above the box that is the section's top
+edge in a widget and the title in a page, so a flow's top margin holds no line at all; a swimlane's
+top margin lies a row gap under the lane headers and holds 4 lines (widget) or 6 (page). Below the
+box it is the first content after the grid — the footnote list when the model has one, else the
+legend's text — so the bottom margin holds 3 lines in a widget and 1 in a page, 2 and 0 under
+footnotes. `flow.TOP_ROOM` and `flow.BOTTOM_ROOM` carry the measured px and a browser test holds
+them against the page. More vertical padding in `.dg-grid` would give these margins real room; it
+is a template change with a CDN release behind it and is the owner's to take, not this stage's.
+
+### 4.1a Slots are reused (amendment, 2026-09-20, by the owner's word)
+
+The first measurement of the capacity check showed the unit above to be wasteful, not wrong. On 500
+seeded grids the check refused 99 (flow widget), 127 (flow page), 231 (swimlane widget) and 111
+(swimlane page) plans, almost all of them on column gutters, and 57–76 % of the refused groups
+would fit by the load at their busiest point: a chain of six runs was drawn six slots wide with two
+lines side by side anywhere.
+
+So the width of a group is the number of slots it is drawn in, not the number of its runs. The
+order of a group is decided as in §3; then each run, in that order, takes the lowest slot above
+every earlier run it **lies beside** — shares a stretch with, or meets end to end in a gutter.
+Two runs that never lie beside each other may share a slot. Every pair that does lie beside each
+other keeps the relative order it had, and only such pairs can cross or overlap, which is why the
+invariant of §3.4 holds unchanged; the property test is the guard, as for any ordering. The pitch
+of §4.2, the check of §4.4 and its message, and `overfull` all use that width.
+
+Measured with a prototype before it was specified: the invariant held in the 900 surveys of the
+property test and in 2 000 routings of another generator, all 14 renders stayed byte-identical, and
+the refusals fell to 54, 86, 173 and 75. The bound by the busiest point is 29, 56, 130 and 47; the
+rest is held by the orders of §3, and an order chosen for width is left to the objective of stage C.
 
 ### 4.2 Adaptive pitch
 
@@ -262,9 +293,13 @@ proposer: it makes overflow rare and guarantees nothing; §4.4 is the guarantee.
 ### 4.4 Check and message
 
 A group that does not fit at 5 px is a layout error (it prints the map, `--draft` downgrades it):
-"между столбцами 2 и 3 идут 5 линий, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
+"между столбцами 2 и 3 линий 5, помещается 3: a -> d, c -> b, …; освободите ячейку рядом или
 переставьте узлы". Rows and margins are named the same way ("между рядами", "по левому полю"). Per
-Q1 of §12 it is an error.
+Q1 of §12 it is an error. The noun comes first in the genitive plural, as in the renderer's other
+messages ("узлов 17"), because the first wording of this design, "идут 5 линий", is not Russian for
+1 to 4 lines; columns and rows count from zero, as those messages count them; the count is the
+width of the group, the list names at most four edges; and where the line holds nothing (§4.1) the
+advice is to move the nodes so the edges run elsewhere, since no freed cell would help.
 
 ## 5. Stage C — routing with an objective
 
@@ -454,8 +489,8 @@ case is not supported.
   Stage E moves every label over a horizontal second segment.
 - **A capacity error stops a diagram that rendered yesterday.** It rendered with lines on cards; the
   router cost makes the error rare, `--draft` still renders, and Q1 can make it a warning. A chain
-  of runs that only meet end to end is counted as wide as it is drawn; if that proves common, slot
-  reuse is the follow-up.
+  of runs that only meet end to end was counted as wide as it was long; it proved common on the
+  first measurement, and slot reuse was taken into the stage (§4.1a).
 - **The objective trades a crossing for other costs.** Crossings carry 10 against 1–3 for the rest;
   the acceptance of §10 C3 forbids more crossings on the examples.
 - **Large models.** Nothing limits the number of edges or rows (`flow.plan`, `grid.parse_grid`); a
@@ -490,6 +525,9 @@ Stage B
 - B3. Shipped examples byte-identical: command output. Owner's pair review of two stress models.
 - B4. Where a detour cheaper than 20 exists, the router leaves a gutter at its capacity instead of
   adding a line to it: a test on a hand-made grid.
+- B5. Two runs of one group that never lie beside each other share a slot, the width of a group is
+  its slot count, and the pitch, `overfull` and the message use it: `tests/test_capacity.py`; the
+  invariant of A2 stays green and the shipped examples byte-identical.
 
 Stage C
 - C1. Fast `Traffic` gives identical paths on the property-test instances: a test; `route` at least
@@ -540,7 +578,7 @@ names the criterion that proves the guarantee.
 |---|---|---|---|
 | Run identity does not survive the offset interface | every point knows its runs; signature and result shape unchanged; schema reads as today | one run table with point membership (§3.1) | A1, A3 |
 | Local order rules need not give one complete order | the end-to-end rule never displaces a firm or loose order | the rule is the weakest strength and is dropped where it closes a cycle (§3.2); a hand-made cycle case guards that, the invariant the rest | A1, A2 |
-| Abstract and browser geometry are different objects | the counters claim centrelines only; margins top and bottom are measured, not assumed | §3.3 scope; assumption of §4.1 | A2, B0, B2 |
+| Abstract and browser geometry are different objects | the counters claim centrelines only; margins top and bottom are measured, not assumed | §3.3 scope; measurement of §4.1 | A2, B0, B2 |
 | Capacity has two units | capacity, the check and `overflow` all use the groups of `assign_offsets`; `+20` is a heuristic | §4.1, §4.3, §5.2 | B1, B4, C2 |
 | The objective is not the router's cost | `own` is `route`'s cost by replay; `pair` is declared different; fast `Traffic` keeps boolean semantics | §5.1, §5.2 | C1, C2 |
 | Canonical order is narrower than the output | the promise is routes per (source, target, labelled) only | §2 non-goal, §5.4 | C3 |
@@ -555,6 +593,12 @@ names the criterion that proves the guarantee.
 The owner took the default of each on 2026-09-19.
 
 - **Q1.** A group over capacity: layout error (default) or warning?
+  Settled by the owner on 2026-09-20 after the pair review of stage B: it stays an error, with the
+  slot reuse of §4.1a taken into the stage before its pull request; the wording of the message and
+  its zero-based numbering stay as built (§4.4). Two alternatives were put to the owner and are not
+  taken now: more vertical padding in `.dg-grid` (§4.1), and removing fully empty rows from the grid
+  before layout, which would retire the band rules of `design.md` §14 at the price of changing how
+  such models look.
 - **Q2.** Advice: on whenever it is triggered, with `--no-advice` (default), or opt-in `--advise`?
 - **Q3.** Order and cut of the stream: A, C fast `Traffic`, B, C, D, E, each a pull request of its
   own (default); or stop after C and decide on D and E from its results?

@@ -43,12 +43,58 @@ Test cases (written from the declaration of the change, before the implementatio
     on the lattice, and the page draws none.
 13. "shared-corner", both modes: d -> a and a -> d share a stretch from a through a corner both turn
     at, and part below it; no crossing on the lattice, and the page draws none.
+14. The room of the top and bottom margins, in flow and in swimlane, both modes, with footnotes and
+    without: a line drawn along each of them keeps the px that diagrams/flow.py's TOP_ROOM and
+    BOTTOM_ROOM claim, from the nearest card edge and from the nearest thing that clips or covers
+    it — above the grid box or the section, below the first content the section goes on with, the
+    footnote list or the legend's own text. The measurement that set those constants is this test,
+    so a change of `.dg-foot`'s margin or of `.dg-legend`'s padding fails it instead of silently
+    letting a line run through the text under the diagram. The top room is the same with footnotes
+    and without, which is why only BOTTOM_ROOM is keyed by them.
+15. "capacity-at-pitch", page: a model holding a group at the capacity of a column gutter (5 lines,
+    pitch 6), of a row gutter (8, pitch 5), of a side margin (3, pitch 5) and of the bottom margin
+    (1): every line keeps at least CARD_CLEAR from every card it does not end on and stays inside
+    the grid box, and the line filling the bottom margin — which lies outside that box by design —
+    keeps EDGE_CLEAR from the first content the section goes on with. This is what makes the
+    capacity a number a diagram can be refused on: a group drawn as wide as its line allows is
+    still a group the page draws clear of everything.
+16. An empty row at the foot of the grid, in a flow and in a swimlane, both modes: the page draws a
+    line for every edge, they cross as the lattice says and keep the router's order. `tracks()`
+    invents a track for an empty row above or between the cards and none for one after the last, so
+    a line planned under the last card row is a line `by()` has no y for: the script stops there and
+    the page keeps only the lines it had already drawn. The flow's grid has a leading empty row as
+    well, which does get a track, and one of its three lines runs along it.
+17. The band of an empty row, in flow and in swimlane, both modes, with one leading empty row, with
+    one between occupied rows, and with two of each in a row: where the page draws every lattice row
+    line of the band — the top margin, the row line of each empty row, the gutters around them — from
+    the card edges that bound the band and from one another. The rule the numbers show is the one
+    diagrams/flow.py's `Geometry._band` derives the room from: `tracks()` invents one track per empty
+    row and fills them in ascending order, so each sees the ones above it, the first row of the grid
+    landing `flow.TRACK_LEAD` px over the first cards and every row after it halving what is left of
+    the span below it. An empty implicit grid row is 0 px high and both of its row gaps stay, so that
+    span is (k + 1) row gaps for k empty rows between two rows of cards. A change of `tracks()` fails
+    this instead of letting a line be drawn into a card.
+18. "empty-band-at-pitch", page: a flow with a leading empty row and one between its two rows of
+    cards, holding a group at the capacity of every line of both bands. Every line keeps at least
+    CARD_CLEAR from every card it does not end on and stays inside the grid box, as case 15 asks of
+    the gutters and the margins. This is what makes the room of such a band a number a diagram can be
+    refused on.
+19. The lines of a band against each other, on the page of case 18 and on the model the branch gate
+    reported — a flow with a leading empty row and seven lines between the outer cards of the row under
+    it, routed by the router itself: no two horizontal segments of different edges, matched to different
+    lattice row lines of a band and overlapping along x by more than a corner radius, are drawn nearer
+    than ROWS_APART px in y. Case 18 measures the lines against the cards; this measures them against
+    each other, which is where two neighbouring groups sharing the whole distance between their lines
+    put both on the very same y — `router.drawn_overlaps` counts on the lattice, where the two lines
+    differ, so nothing but the page showed it. A mode whose band does not hold the gate's seven lines
+    refuses the plan and draws nothing at all, which the test asks for instead.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
 """
 import html
 import json
+import math
 import os
 import re
 import shutil
@@ -62,8 +108,8 @@ from unittest import mock
 
 import support
 import render
-from diagrams import router
-from diagrams.flow import LABEL_DROP
+from diagrams import flow, router
+from diagrams.flow import LABEL_DROP, TRACK_LEAD
 
 KINDS = ("flow", "swimlane", "state", "blocks")
 MODES = ("page", "widget")
@@ -124,12 +170,13 @@ CASES = {
     # five straight lines, -16..16, the ones at 8 and 16 leaving from different cards
     "two-point-order": {"kind": "flow", "nodes": [step("a", True), pill("b")], "grid": ["a b"],
                         "edges": ["a -> b"] * 3 + ["b -> a", "a -> b", "b -> a"]},
-    # row line of e: e -> a (16) at the band's upper limit (its largest y), the interior run of a -> d (8)
+    # row line of e: e -> a (16) at the band's upper limit (its largest y), the interior run of a -> d (8);
+    # three lines from e to b keep five on that row line now that the router leaves the top margin alone
     "upper-limit-interior-run": {
         "kind": "flow", "nodes": [pill("d"), pill("b"), pill("e"), pill("c"), step("a", True)],
         "grid": ["d b", "e .", "c a"],
         "edges": ["b -> d", "a -> d", "b -> a", "c -> b", "c -> a", "c -> b", "b -> e", "e -> b", "e -> b",
-                  "a -> d", "e -> a"]},
+                  "e -> b", "a -> d", "e -> a"]},
     # row line of f: f -> a (-16) at the band's lower limit (its smallest y), the interior run of a -> c (-8)
     "lower-limit-interior-run": {
         "kind": "flow", "nodes": [pill(i) for i in "beafcd"], "grid": ["b e a", "f . .", ". c d"],
@@ -162,19 +209,187 @@ CASES = {
 # Five or more lines along one row line (docstring case 7).
 SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run", "lower-limit-interior-run")
 
+# Docstring case 14. Two cards per row and two rows, so the outer lattice lines are Y = 0 and
+# Y = 4, with the paths put in by hand: `route` prices a margin above every inner gutter, so no
+# model of its own would draw one, and what is measured is where by() of template/js/flow.js puts
+# such a line — a question about the script, not about the router. Titles stay one line high and
+# the models carry no title and no scenario, so above the grid box stands nothing but the section:
+# the narrowest the top room ever is. Below it the section always goes on, so each kind comes in
+# two models — without footnotes, where the legend follows the grid box, and with one, where the
+# `.dg-foot` list comes between them — and those are the two bottom rooms.
+MARGIN_PATHS = [[(1, 1), (1, 0), (3, 0), (3, 1)],   # a -> b over the top margin
+                [(1, 3), (1, 4), (3, 4), (3, 3)]]   # c -> d under the bottom margin
+MARGIN_LANES = {"lanes": ["one", "two"],
+                "groups": {"one": {"label": "Первый", "ramp": "teal"},
+                           "two": {"label": "Второй", "ramp": "blue"}}}
+
+
+def margin_model(kind, footnotes):
+    """A margin model of `kind`; with `footnotes` the top-left card carries the only reference, so
+    the two models of a kind differ in the footnote list under the grid and in nothing else the
+    bottom margin can see (the card that grows stands in the top row, the line under the bottom)."""
+    nodes = [step(i) for i in "abcd"]
+    model = {"kind": kind, "nodes": nodes, "grid": ["a b", "c d"], "edges": ["a -> b", "c -> d"]}
+    if kind == "swimlane":
+        model.update(MARGIN_LANES)
+    if footnotes:
+        nodes[0] = {**nodes[0], "text": "Сноска [1]"}
+        model["footnotes"] = ["Что здесь измеряется"]
+    return model
+
+
+MARGINS = {f"margin-{kind}{'-foot' if foot else ''}": (margin_model(kind, foot), MARGIN_PATHS)
+           for kind in ("flow", "swimlane") for foot in (False, True)}
+# Which row of the tables of diagrams/flow.py each margin model measures: (kind, footnotes).
+MARGIN_CASE = {f"margin-{kind}{'-foot' if foot else ''}": (kind, foot)
+               for kind in ("flow", "swimlane") for foot in (False, True)}
+
+# Docstring case 15. A page flow of six columns by four rows, every cell a card, with a group at
+# the capacity of each kind of line: eight lines along the row gutter Y = 2 (pitch 5), five along
+# the column gutter X = 2 (pitch 6), three along the left margin X = 0 (pitch 5) and one under the
+# bottom margin Y = 8, which is all a page holds there. The routes are put in by hand, as the
+# margin models' are: the router prices a line that would fill a gutter, so no model of its own
+# would draw these, and what is measured is where a group drawn as wide as its line allows ends up.
+CAP_COLS, CAP_ROWS = 6, 4
+CAP_IDS = [[f"c{r}{c}" for c in range(CAP_COLS)] for r in range(CAP_ROWS)]
+CAP_EDGES = [("c00", "c15"), ("c01", "c14"), ("c02", "c13"), ("c03", "c12"), ("c04", "c11"),
+             ("c05", "c10"), ("c00", "c14"), ("c05", "c11"),
+             ("c10", "c21"), ("c11", "c20"), ("c20", "c31"), ("c21", "c30"), ("c10", "c30"),
+             ("c00", "c30"), ("c10", "c20"), ("c30", "c00"),
+             ("c30", "c31")]
+CAP_PATHS = [[(1, 1), (1, 2), (11, 2), (11, 3)], [(3, 1), (3, 2), (9, 2), (9, 3)],
+             [(5, 1), (5, 2), (7, 2), (7, 3)], [(7, 1), (7, 2), (5, 2), (5, 3)],
+             [(9, 1), (9, 2), (3, 2), (3, 3)], [(11, 1), (11, 2), (1, 2), (1, 3)],
+             [(1, 1), (1, 2), (9, 2), (9, 3)], [(11, 1), (11, 2), (3, 2), (3, 3)],
+             [(1, 3), (2, 3), (2, 5), (3, 5)], [(3, 3), (2, 3), (2, 5), (1, 5)],
+             [(1, 5), (2, 5), (2, 7), (3, 7)], [(3, 5), (2, 5), (2, 7), (1, 7)],
+             [(1, 3), (2, 3), (2, 7), (1, 7)],
+             [(1, 1), (0, 1), (0, 7), (1, 7)], [(1, 3), (0, 3), (0, 5), (1, 5)],
+             [(1, 7), (0, 7), (0, 1), (1, 1)],
+             [(1, 7), (1, 8), (3, 8), (3, 7)]]
+CAPACITY = {"capacity-at-pitch": (
+    {"kind": "flow", "nodes": [{"id": i, "title": i.upper()} for row in CAP_IDS for i in row],
+     "grid": ["  ".join(row) for row in CAP_IDS],
+     "edges": [f"{a} -> {b}" for a, b in CAP_EDGES]},
+    CAP_PATHS)}
+# pixels: a line keeps LINE_CLEAR from a card edge by construction; the browser is asked for this
+# much, which leaves a pixel for the layout's own rounding
+CARD_CLEAR = 3.0
+# pixels: two runs drawn on different lattice row lines keep router.PITCHES[-1] = 5 px by construction
+# (the clearance Geometry._band keeps between two groups); the browser is asked for this much, a pixel
+# less, as CARD_CLEAR is
+ROWS_APART = 4.0
+# pixels: RAD of template/js/head.js, the radius roundPath turns a corner with. Two runs that overlap
+# along x by no more than that much can be the arcs of one corner rather than two lines side by side.
+CORNER = 8
+
+# Docstring case 16. Three lines that have to leave the row of cards they run between: a flow's top
+# margin holds none, so they went down, and the empty row at the foot of the grid is where they went
+# — into its own cells or along the margin under it, neither of which the page has a track for. The
+# flow's leading empty row is the other half of the rule: that one does get a track, and the third
+# line runs along it. The models are the branch gate's, with the room a page needs to hold three
+# lines that all go around.
+TRAILING_LANES = {"lanes": ["one", "two", "three"],
+                  "groups": {**MARGIN_LANES["groups"], "three": {"label": "Третий", "ramp": "purple"}}}
+TRAILING = {
+    "trailing-row-flow": {"kind": "flow", "nodes": [step(i) for i in "abc"],
+                          "grid": [". . .", "a b c", ". . ."], "edges": ["a -> c"] * 3},
+    "trailing-row-swimlane": {"kind": "swimlane", "nodes": [step(i) for i in "abc"],
+                              "grid": ["a b c", ". . ."], "edges": ["a -> c"] * 3, **TRAILING_LANES},
+}
+
+# Docstring case 17. Two grids, each holding two runs of empty rows — a leading one and one between
+# two rows of cards — so that four shapes are measured on two pages per kind and mode: a run of one
+# of each in "empty-band-1" and a run of two of each in "empty-band-2". The routes are put in by
+# hand, as the margin models' are: what is measured is where by() of template/js/flow.js puts a line
+# on each lattice row line of a band, which is a question about the script and not about the router.
+# One line per row line, so each is a group of one and is drawn on the line's own base, and the
+# columns the lines leave and enter are the outer ones, whose cells below and above hold no card.
+EMPTY_BAND_LANES = {"lanes": ["one", "two", "three"], "groups": TRAILING_LANES["groups"]}
+EMPTY_BAND_SHAPES = {
+    # name: (grid, node ids, the runs as (band lines, the row line the lines leave, the one they enter))
+    "empty-band-1": ([". . .", "a b c", ". . .", "d e f"], "abcdef",
+                     [((0, 1, 2), 3, 3), ((4, 5, 6), 3, 7)]),
+    "empty-band-2": ([". . .", ". . .", "a b c", ". . .", ". . .", "d e f"], "abcdef",
+                     [((0, 1, 2, 3, 4), 5, 5), ((6, 7, 8, 9, 10), 5, 11)]),
+}
+
+
+def empty_band_paths(runs):
+    """One hand-made path per lattice row line of every band: out of the card in the first column,
+    along that row line, into the card in the last one."""
+    return [[(1, src), (1, Y), (5, Y), (5, dst)] for band, src, dst in runs for Y in band]
+
+
+def empty_band_page(kind, name):
+    """(model, paths) of one shape in one kind."""
+    grid, ids, runs = EMPTY_BAND_SHAPES[name]
+    paths = empty_band_paths(runs)
+    model = {"kind": kind, "nodes": [step(i) for i in ids], "grid": grid,
+             "edges": [f"{ids[0]} -> {ids[2]}"] * len(paths)}
+    if kind == "swimlane":
+        model.update(EMPTY_BAND_LANES)
+    return model, paths
+
+
+EMPTY_BANDS = {f"{name}-{kind}": empty_band_page(kind, name)
+               for name in EMPTY_BAND_SHAPES for kind in ("flow", "swimlane")}
+# Which shape and kind each of those pages measures, so a test can name the runs it has to find.
+EMPTY_BAND_CASE = {f"{name}-{kind}": (name, kind)
+                   for name in EMPTY_BAND_SHAPES for kind in ("flow", "swimlane")}
+
+# Docstring case 18. A page flow of four columns with a leading empty row and one between its two
+# rows of cards, holding a group at the capacity of every line of the two bands: two along the row
+# line of the leading empty row (Y = 1, pitch 5) and two along the gutter under it (Y = 2), then
+# four along each of the three lines of the interior band (Y = 4, 5 and 6, pitch 5). The top margin
+# above the leading row and the bottom margin hold 0 and 1, so neither carries a group here. The
+# routes are put in by hand, as the capacity model's are.
+BAND_CAP_IDS = ["abcd", "efgh"]
+BAND_CAP_LINES = ((1, 2), (2, 2), (4, 4), (5, 4), (6, 4))  # (lattice row line, lines along it)
+BAND_CAP_PATHS = [[(1, 3), (1, Y), (7, Y), (7, 3 if Y < 3 else 7)]
+                  for Y, count in BAND_CAP_LINES for _ in range(count)]
+BAND_CAPACITY = {"empty-band-at-pitch": (
+    {"kind": "flow", "nodes": [step(i) for row in BAND_CAP_IDS for i in row],
+     "grid": [". . . .", "  ".join(BAND_CAP_IDS[0]), ". . . .", "  ".join(BAND_CAP_IDS[1])],
+     "edges": [f"{BAND_CAP_IDS[0][0]} -> {BAND_CAP_IDS[0][3] if Y < 3 else BAND_CAP_IDS[1][3]}"
+               for Y, count in BAND_CAP_LINES for _ in range(count)]},
+    BAND_CAP_PATHS)}
+
+# Docstring case 19. The model the branch gate reported, with one line more than the band above the
+# cards holds: a flow with a leading empty row and seven lines between the outer cards of the row under
+# it, routed by the router itself. A mode whose band no longer holds the seven refuses the plan, and
+# setUpClass leaves that page out — a refusal draws nothing, which is the same guarantee from the other
+# side.
+GATE_NAME = "gate-band"
+GATE_SEVEN = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .", "a b c"],
+              "edges": ["a -> c"] * 7}
+
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
 # the renderer handed to the page; `texts`, in the same order, the [x, y] of the group's label text
 # or null; `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
-# mapped into the svg's own coordinates, the ones `d` is written in.
-PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{}},s=document.querySelector('.dg-svg');"
+# mapped into the svg's own coordinates, the ones `d` is written in; `boxes`, the same for the grid
+# box (`grid`), the section that clips what leaves it (`sec`), every swimlane header (`heads`), the
+# footnote list (`foot`, absent when the model has none) and the legend (`legend`, with `legendpad`,
+# its computed padding-top in those same units, the gap between its box top and its first text).
+# Whatever bounds a line drawn along an outer margin stands among them.
+PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{},boxes:{heads:[]}},"
+         "s=document.querySelector('.dg-svg');"
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
          "t=g.querySelector('text');o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
          "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y')]:null)});"
          "if(s){var m=s.getScreenCTM().inverse(),q=s.createSVGPoint();"
          "var u=function(x,y){q.x=x;q.y=y;var w=q.matrixTransform(m);return[w.x,w.y]};"
-         "document.querySelectorAll('.dg-grid [data-t]').forEach(function(c){var t=c.getAttribute('data-t'),r;"
-         "if(o.cards[t])return;r=c.getBoundingClientRect();o.cards[t]=u(r.left,r.top).concat(u(r.right,r.bottom))})}"
+         "var b=function(el){var r=el.getBoundingClientRect();return u(r.left,r.top).concat(u(r.right,r.bottom))};"
+         "document.querySelectorAll('.dg-grid [data-t]').forEach(function(c){var t=c.getAttribute('data-t');"
+         "if(!o.cards[t])o.cards[t]=b(c)});"
+         "var gr=document.querySelector('.dg-grid'),sc=document.querySelector('.dg');"
+         "if(gr)o.boxes.grid=b(gr);if(sc)o.boxes.sec=b(sc);"
+         "document.querySelectorAll('.dg-lanehead').forEach(function(h){o.boxes.heads.push(b(h))});"
+         "var ft=document.querySelector('.dg-foot'),lg=document.querySelector('.dg-legend');"
+         "if(ft)o.boxes.foot=b(ft);"
+         "if(lg){o.boxes.legend=b(lg);"
+         "o.boxes.legendpad=u(0,parseFloat(getComputedStyle(lg).paddingTop)||0)[1]-u(0,0)[1]}}"
          "var pre=document.createElement('pre');pre.id='probe';pre.textContent=JSON.stringify(o);"
          "document.body.appendChild(pre)},800)</script>")
 PROBE_RE = re.compile(r'<pre id="probe">(.*?)</pre>', re.S)
@@ -211,9 +426,14 @@ def flow_like_examples():
     return out
 
 
-def render_page(model, mode, path):
+def render_page(model, mode, path, paths=None):
     """Write the page of `model` in `mode` to `path` through the renderer's own entry points, with
-    the probe appended; returns the layout the page was drawn from."""
+    the probe appended; returns the layout the page was drawn from. With `paths`, the routing of
+    this one page is those lattice paths instead of the router's: everything after routing —
+    offsets, the edge JSON, the script — is the renderer's own, except that the capacity check is
+    silenced. A hand-made route is put where the router would not put one — along a margin that
+    holds no line at all — precisely to measure what stands there, and the check exists to stop
+    the router doing that."""
     argv = [str(path), "--mode", mode, "--assets", "inline"] + (["--harness"] if mode == "widget" else [])
     args = render.parse_args(argv)
     assets_mode, note = render.resolve_assets(args)
@@ -221,7 +441,13 @@ def render_page(model, mode, path):
         raise HarnessError(f"assets mode {assets_mode!r} instead of inline: {note}")
     model = json.loads(json.dumps(model))  # the planner may annotate the model it is given
     mod = render.KINDS[model["kind"]]
-    out, _, layout = render.produce(model, mod, args, {}, assets_mode)
+    if paths is None:
+        out, _, layout = render.produce(model, mod, args, {}, assets_mode)
+    else:
+        given = [[tuple(pt) for pt in p] for p in paths]
+        with mock.patch.object(router, "route_all", lambda lat, ends, labelled: given), \
+                mock.patch.object(router, "overfull", lambda paths, nodes, room: []):
+            out, _, layout = render.produce(model, mod, args, {}, assets_mode)
     out = out.replace("</body>", PROBE + "</body>", 1) if "</body>" in out else out + PROBE
     path.write_text(out)
     return layout
@@ -427,6 +653,169 @@ def second_run_label_misses(layout, names, lines, texts, cards):
     return misses, checked
 
 
+def runs_on_row_lines(layout, lines, wanted):
+    """{Y: [pixel y]} of every horizontal run drawn on one of the lattice row lines `wanted`, matched
+    to its lattice segment."""
+    out = {}
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if len(path) != len(lines[i]) + 1:
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            if a[1] == b[1] and a[1] in wanted and lines[i][k][0] == "h":
+                out.setdefault(a[1], []).append(lines[i][k][1])
+    return out
+
+
+def margin_runs(layout, lines):
+    """{Y: [pixel y]} of every horizontal run drawn along an outer lattice margin — Y = 0, the top,
+    or Y = 2 * rows, the bottom."""
+    return runs_on_row_lines(layout, lines, {0, 2 * layout["grid_rows"]})
+
+
+def card_rows(layout, cards):
+    """{grid row: (top, bottom)} of every row that holds cards, as the page lays them out: the extent
+    tracks() of template/js/head.js takes such a row's track from."""
+    out = {}
+    for nid, box in cards.items():
+        r = layout["cells"][nid][0]
+        t, b = box[1], box[3]
+        out[r] = (min(out[r][0], t), max(out[r][1], b)) if r in out else (t, b)
+    return out
+
+
+def band_bases(margin, run, above, below):
+    """{lattice row line: pixel y} the rule of docstring case 17 gives for one run of empty rows:
+    `run` its row indices in order, `above` the bottom of the cards over it or None where the run
+    leads the grid, `below` the top of the cards under it.
+
+    tracks() of template/js/head.js invents the tracks of the run in ascending order, so each of them
+    sees the one above it: a leading run starts TRACK_LEAD px over the first cards and every row after
+    it halves what is left of the way down to them, and an interior run halves the span between the
+    two card edges the same way. by() then puts a row line on its own track, a gutter halfway between
+    two tracks, and the top margin `margin` px over the first track."""
+    if above is None:
+        ys = [below - TRACK_LEAD / 2 ** j for j in range(len(run))]
+        first = ys[0] - margin
+    else:
+        ys = [below - (below - above) / 2 ** (j + 1) for j in range(len(run))]
+        first = (above + ys[0]) / 2
+    out = {2 * run[0]: first, 2 * (run[-1] + 1): (ys[-1] + below) / 2}
+    for j, y in enumerate(ys):
+        out[2 * (run[0] + j) + 1] = y
+        if j:
+            out[2 * (run[0] + j)] = (ys[j - 1] + y) / 2
+    return out
+
+
+def margin_room(y, top, boxes, cards):
+    """((lower, higher), what bounds the line on the far side from the cards): the raw px a line
+    drawn at pixel `y` along an outer margin keeps on each side, lower coordinate first.
+
+    The cards lie below a top margin and above a bottom one. On the other side stands whatever
+    clips or covers the line. Above: the grid box, the section, which scrolls and so clips what
+    leaves it, or a swimlane header. Below: the section again, and the content the section goes on
+    with — the footnote list when the model has one, then the legend, whose own text starts a
+    padding-top inside its box. The grid box is not among them below, because `.dg-svg` is drawn
+    with `overflow:visible` and the section, not the box, is what clips. The nearest bound is the
+    one taken, and a negative number says the line is drawn past it already."""
+    if top:
+        cardward = min(c[1] for c in cards.values()) - y
+        bounds = [("grid box", y - boxes["grid"][1]), ("section", y - boxes["sec"][1])]
+        bounds += [("swimlane header", y - h[3]) for h in boxes["heads"]]
+    else:
+        cardward = y - max(c[3] for c in cards.values())
+        bounds = [("section", boxes["sec"][3] - y)]
+        if "foot" in boxes:
+            bounds.append(("footnote list", boxes["foot"][1] - y))
+        if "legend" in boxes:
+            bounds.append(("legend text", boxes["legend"][1] + boxes["legendpad"] - y))
+    name, edgeward = min(bounds, key=lambda b: b[1])
+    return ((edgeward, cardward) if top else (cardward, edgeward)), name
+
+
+def gap_to_box(run, box):
+    """How far a drawn run lies from the rectangle `box` = [left, top, right, bottom], in px: 0
+    when it touches or enters it."""
+    axis, coord, lo, hi = run
+    x1, x2, y1, y2 = (lo, hi, coord, coord) if axis == "h" else (coord, coord, lo, hi)
+    dx = max(box[0] - x2, x1 - box[2], 0.0)
+    dy = max(box[1] - y2, y1 - box[3], 0.0)
+    return math.hypot(dx, dy)
+
+
+def card_clearance_misses(layout, names, lines, cards):
+    """(misses, checked): drawn runs that come nearer than CARD_CLEAR to a card their line does not
+    end on. A line meets the two cards of its own edge, so those two are its own; every other card
+    is what LINE_CLEAR keeps a group away from, whatever pitch the group was drawn at."""
+    misses, checked = [], 0
+    for e, name, runs_of in zip(layout["edges"], names, lines):
+        own = {e["a"], e["b"]}
+        for run in runs_of:
+            for card, box in sorted(cards.items()):
+                if card in own:
+                    continue
+                checked += 1
+                gap = gap_to_box(run, box)
+                if gap < CARD_CLEAR - AXIS_TOL:
+                    misses.append(f"{name} {run[0]} at {run[1]:.2f} spanning {run[2]:.2f}..{run[3]:.2f} "
+                                  f"is {gap:.2f} px from {card}")
+    return misses, checked
+
+
+def outside_box_misses(layout, names, lines, box):
+    """(misses, checked): drawn runs that leave the grid box, of the lines that stay inside it. A
+    line along an outer row margin is drawn outside the box by design — `.dg-svg` does not clip —
+    and is measured against what stands there instead (margin_room), so it is left out here."""
+    misses, checked = [], 0
+    last = 2 * layout["grid_rows"]
+    for e, name, runs_of in zip(layout["edges"], names, lines):
+        if any(pt[1] in (0, last) for pt in e["path"]):
+            continue
+        for axis, coord, lo, hi in runs_of:
+            checked += 1
+            xs, ys = ((lo, hi), (coord, coord)) if axis == "h" else ((coord, coord), (lo, hi))
+            if (min(xs) < box[0] - AXIS_TOL or max(xs) > box[2] + AXIS_TOL
+                    or min(ys) < box[1] - AXIS_TOL or max(ys) > box[3] + AXIS_TOL):
+                misses.append(f"{name} {axis} at {coord:.2f} spanning {lo:.2f}..{hi:.2f} leaves the grid "
+                              f"box {box[0]:.2f}..{box[2]:.2f} x {box[1]:.2f}..{box[3]:.2f}")
+    return misses, checked
+
+
+def horizontal_runs(layout, lines):
+    """[(lattice row line, pixel y, x lo, x hi, edge index)] of every horizontal run matched to its
+    lattice segment, on any row line — `row_runs` answers for the rows of cards alone."""
+    out = []
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if len(path) != len(lines[i]) + 1:
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            if a[1] == b[1] and lines[i][k][0] == "h":
+                out.append((a[1], lines[i][k][1], lines[i][k][2], lines[i][k][3], i))
+    return out
+
+
+def near_row_misses(layout, names, lines):
+    """(misses, compared): pairs of horizontal runs of different edges, matched to different lattice row
+    lines and overlapping along x by more than a corner radius, drawn nearer than ROWS_APART px in y —
+    one line as far as a reader is concerned, where the lattice has two. Two runs on one row line are
+    left out: they are a group at its own pitch, or two lines a clamp merged, which cases 7 and 8
+    measure."""
+    misses, compared = [], 0
+    runs_here = horizontal_runs(layout, lines)
+    for n, (Y, y, lo, hi, i) in enumerate(runs_here):
+        for Y2, y2, lo2, hi2, j in runs_here[n + 1:]:
+            if Y2 == Y or j == i or min(hi, hi2) - max(lo, lo2) <= CORNER:
+                continue
+            compared += 1
+            if abs(y2 - y) < ROWS_APART:
+                misses.append(f"row lines Y={Y} and Y={Y2}: {names[i]} at y {y:.2f} and {names[j]} at y "
+                              f"{y2:.2f} are {abs(y2 - y):.2f} px apart over x {max(lo, lo2):.2f}.."
+                              f"{min(hi, hi2):.2f}")
+    return misses, compared
+
+
 def row_order_swaps(layout, names, lines):
     """(swaps, compared): pairs of horizontal runs of different edges on one lattice row line (odd
     Y) whose lattice spans overlap and whose router offsets differ, drawn in the opposite order of
@@ -455,14 +844,29 @@ class BrowserLines(unittest.TestCase):
         cls.addClassCleanup(tmp.cleanup)
         root = Path(tmp.name)
         cls.examples = flow_like_examples()
-        cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + cls.examples
-        models = cls.models
+        cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + list(TRAILING.items()) + cls.examples
+        # the margin and capacity models are routed by hand, so they stand beside the models the
+        # router routed; the capacity one is a page's, and its groups are over a widget's capacity
+        drawn = [(name, model, None, MODES) for name, model in cls.models]
+        drawn += [(name, model, paths, MODES) for name, (model, paths) in MARGINS.items()]
+        drawn += [(name, model, paths, MODES) for name, (model, paths) in EMPTY_BANDS.items()]
+        drawn += [(name, model, paths, ("page",)) for name, (model, paths) in CAPACITY.items()]
+        drawn += [(name, model, paths, ("page",)) for name, (model, paths) in BAND_CAPACITY.items()]
+        # the gate's model is routed by the router itself, so a mode whose band does not hold its seven
+        # lines refuses the plan; that mode has no page, and the test asks the refusal instead
+        cls.gate_refused = {}
+        for mode in MODES:
+            try:
+                flow.plan(json.loads(json.dumps(GATE_SEVEN)), mode)
+            except flow.ModelError as exc:
+                cls.gate_refused[mode] = exc.layout
+        drawn += [(GATE_NAME, GATE_SEVEN, None, tuple(m for m in MODES if m not in cls.gate_refused))]
         jobs, cls.layouts, cls.results = [], {}, {}
-        for name, model in models:
-            for mode in MODES:
+        for name, model, paths, modes in drawn:
+            for mode in modes:
                 page = root / f"{name}-{mode}.html"
                 try:
-                    cls.layouts[name, mode] = render_page(model, mode, page)
+                    cls.layouts[name, mode] = render_page(model, mode, page, paths)
                 except Exception as exc:  # noqa: BLE001 - reported per case, as a harness error
                     cls.results[name, mode] = HarnessError(f"render failed: {exc!r}")
                     continue
@@ -617,6 +1021,261 @@ class BrowserLines(unittest.TestCase):
                     self.assertEqual(len(pixel_crossings(names, lines)), drawn,
                                      f"harness: {name} {mode}: the page draws another number of crossings")
                     self.check_crossings(name, mode)
+
+    def measure_margins(self):
+        """One line per (kind, mode, footnotes, margin): the room the page shows, what bounds it
+        away from the cards, and the constant diagrams/flow.py carries for it. Only the bottom
+        table is keyed by the footnotes as well — above the grid box nothing changes with them."""
+        out = []
+        for name, (kind, foot) in sorted(MARGIN_CASE.items()):
+            for mode in MODES:
+                layout, _, lines = self.measured(name, mode)
+                got = self.results[name, mode]
+                self.assertEqual("foot" in got["boxes"], foot,
+                                 f"harness: {name} {mode}: the page's footnote list does not match the model")
+                found = margin_runs(layout, lines)
+                for where, Y, top in (("top", 0, True), ("bottom", 2 * layout["grid_rows"], False)):
+                    ys = found.get(Y, [])
+                    self.assertEqual(len(ys), 1, f"harness: {name} {mode}: {len(ys)} lines drawn along "
+                                                 f"the {where} margin, one was put there")
+                    room, by = margin_room(ys[0], top, got["boxes"], got["cards"])
+                    want = flow.TOP_ROOM.get((kind, mode)) if top else flow.BOTTOM_ROOM.get((kind, mode, foot))
+                    out.append((kind, mode, foot, where, ys[0], room, by, want))
+        return out
+
+    def test_margin_room_matches_the_constants(self):
+        measured = self.measure_margins()
+        shown = "\n".join(f"  {kind:8} {mode:6} footnotes {str(foot):5} {where:6} line at y {y:8.2f}, room "
+                          f"({room[0]:6.2f}, {room[1]:6.2f}) against the {by}, constant {want}"
+                          for kind, mode, foot, where, y, room, by, want in measured)
+        off = [f"{kind} {mode} footnotes {foot} {where}" for kind, mode, foot, where, _, room, _, want in measured
+               if want is None or max(abs(a - b) for a, b in zip(room, want)) > AXIS_TOL]
+        self.assertEqual(off, [], "the page does not show the room the constants claim:\n" + shown)
+
+    def test_the_top_room_does_not_change_with_the_footnotes(self):
+        """A footnote list goes under the grid box, so it moves the bottom margin's bound and not
+        the top's — which is why only BOTTOM_ROOM is keyed by it."""
+        rooms = {}
+        for kind, mode, foot, where, _, room, by, _ in self.measure_margins():
+            if where == "top":
+                rooms.setdefault((kind, mode), []).append((foot, room, by))
+        for key, seen in sorted(rooms.items()):
+            with self.subTest(kind=key[0], mode=key[1]):
+                self.assertEqual({(room, by) for _, room, by in seen}, {(seen[0][1], seen[0][2])},
+                                 f"the top margin of {key[0]} {key[1]} differs with the footnotes: {seen}")
+
+    def capacity_layout(self):
+        """The layout of the capacity model, with what the offsets came out as: the four groups it
+        is built from, each as wide as its line holds. `render_page` silences the capacity check
+        for a hand-made routing, so the check is run here instead — this model is at capacity, not
+        over it, and a group that grew past it would be measuring something else."""
+        layout = self.layouts["capacity-at-pitch", "page"]
+        geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                            *flow.margin_room(layout["kind"], "page", layout["footnotes"]))
+        self.assertEqual(router.overfull(layout["paths"], frozenset(layout["lattice"].blocked), geo.room), [],
+                         "harness: the model is over its capacity, not at it")
+        spread = {}
+        for e in layout["edges"]:
+            for x, y, ox, oy in e["path"]:
+                if x % 2 == 0:
+                    spread.setdefault(("v", x), set()).add(ox)
+                if y % 2 == 0:
+                    spread.setdefault(("h", y), set()).add(oy)
+        return {key: sorted(offs) for key, offs in spread.items()}
+
+    def test_the_capacity_model_fills_each_line(self):
+        # the case exists only while each of the four groups is drawn as wide as its line holds:
+        # five at 6 px in a column gutter, eight at 5 px in a row gutter, three at 5 px on the
+        # left margin, and the one line a page's bottom margin has room for
+        spread = self.capacity_layout()
+        self.assertEqual(spread[("v", 2)], [-12.0, -6.0, 0.0, 6.0, 12.0])
+        self.assertEqual(spread[("h", 2)], [-17.5, -12.5, -7.5, -2.5, 2.5, 7.5, 12.5, 17.5])
+        self.assertEqual(spread[("v", 0)], [-5.0, 0.0, 5.0])
+        self.assertEqual(spread[("h", 8)], [0.0])
+
+    def test_lines_at_capacity_keep_clear_of_the_cards(self):
+        """Docstring case 15, criterion B2: with a group at the capacity of a column gutter, a row
+        gutter and a side margin, every line still keeps its distance from every card it does not
+        end on and stays inside the grid box — the room the capacity is computed from is the room
+        the page gives."""
+        name = "capacity-at-pitch"
+        layout, names, lines = self.measured(name, "page")
+        got = self.results[name, "page"]
+        misses, checked = card_clearance_misses(layout, names, lines, got["cards"])
+        self.assertEqual(misses, [], f"{name}: a line at capacity comes too near a card")
+        self.assertGreater(checked, 0, "harness: no line was measured against a card")
+        misses, checked = outside_box_misses(layout, names, lines, got["boxes"]["grid"])
+        self.assertEqual(misses, [], f"{name}: a line at capacity leaves the grid box")
+        self.assertGreater(checked, 0, "harness: no line was measured against the grid box")
+
+    def test_a_full_bottom_margin_clears_what_follows_the_grid(self):
+        """The bottom margin lies outside the grid box, so what bounds a line there is the first
+        content the section goes on with: a group filling that margin keeps EDGE_CLEAR from it."""
+        name = "capacity-at-pitch"
+        layout, _, lines = self.measured(name, "page")
+        got = self.results[name, "page"]
+        ys = margin_runs(layout, lines).get(2 * layout["grid_rows"], [])
+        self.assertEqual(len(ys), 1, f"harness: {len(ys)} lines under the bottom margin, one fills it")
+        (lower, higher), by = margin_room(ys[0], False, got["boxes"], got["cards"])
+        self.assertGreaterEqual(higher, flow.EDGE_CLEAR - AXIS_TOL,
+                                f"{name}: the line under the grid is {higher:.2f} px from the {by}")
+        self.assertGreaterEqual(lower, CARD_CLEAR - AXIS_TOL,
+                                f"{name}: the line under the grid is {lower:.2f} px from the cards")
+
+    def measure_bands(self):
+        """One record per (page, mode, run of empty rows): the lattice row lines of that band as the
+        page drew them, and the y the rule of docstring case 17 gives for each, from the card edges
+        that bound the run and from nothing else."""
+        out = []
+        for name, (shape, kind) in sorted(EMPTY_BAND_CASE.items()):
+            runs = EMPTY_BAND_SHAPES[shape][2]
+            for mode in MODES:
+                layout, _, lines = self.measured(name, mode)
+                cards = card_rows(layout, self.results[name, mode]["cards"])
+                margin = max(8, layout["mode"]["pad_l"] - 6)
+                drawn = runs_on_row_lines(layout, lines, {Y for band, _, _ in runs for Y in band})
+                for band, _, _ in runs:
+                    for Y in band:
+                        self.assertEqual(len(drawn.get(Y, [])), 1,
+                                         f"harness: {name} {mode}: {len(drawn.get(Y, []))} lines drawn "
+                                         f"on the row line Y={Y}, one was put there")
+                    run = [r for r in range(layout["grid_rows"]) if r not in cards and 2 * r + 1 in band]
+                    above = cards[run[0] - 1][1] if run[0] else None
+                    below = cards[run[-1] + 1][0]
+                    out.append((name, mode, tuple(run), above, below, layout["mode"]["row_gap"],
+                                {Y: drawn[Y][0] for Y in band}, band_bases(margin, run, above, below)))
+        return out
+
+    def test_the_band_of_an_empty_row_is_drawn_where_the_rule_says(self):
+        """Docstring case 17: every lattice row line of the band — the top margin, the row line of each
+        empty row, the gutters around them — stands where `tracks()` and `by()` put it, which is what
+        `Geometry._band` of diagrams/flow.py takes the room of those lines from."""
+        measured = self.measure_bands()
+        self.assertTrue(measured, "harness: no band was measured")
+        shown, off = [], []
+        for name, mode, run, above, below, _, got, want in measured:
+            where = "leading" if above is None else "interior"
+            for Y in sorted(want):
+                shown.append(f"  {name:22} {mode:6} {where} run {run} line Y={Y:<2} drawn at "
+                             f"{got[Y]:8.2f}, the rule says {want[Y]:8.2f}")
+                if abs(got[Y] - want[Y]) > AXIS_TOL:
+                    off.append(f"{name} {mode} run {run} Y={Y}")
+        self.assertEqual(off, [], "the page draws the band elsewhere than the rule says:\n"
+                         + "\n".join(shown))
+
+    def test_the_cards_around_an_interior_run_stand_one_row_gap_per_row_apart(self):
+        """The halving of an interior run is measured from the span between the card edges, so the span
+        is measured too: an empty implicit grid row is 0 px high and both of its row gaps stay, which
+        puts the edges (k + 1) row gaps apart for k empty rows."""
+        seen = 0
+        for name, mode, run, above, below, row_gap, _, _ in self.measure_bands():
+            if above is None:
+                continue
+            with self.subTest(page=name, mode=mode, run=run):
+                self.assertAlmostEqual(below - above, (len(run) + 1) * row_gap, delta=AXIS_TOL)
+                seen += 1
+        self.assertGreater(seen, 0, "harness: no interior run of empty rows was measured")
+
+    def test_the_top_margin_over_a_leading_empty_row_keeps_more_room_than_the_constant(self):
+        """A leading empty row lifts the top margin a row gap and TRACK_LEAD px further from whatever
+        clips or covers it, so TOP_ROOM — measured over a first row of cards — understates that side.
+        diagrams/flow.py keeps the constant there rather than measuring a second table, and this is
+        what makes keeping it the conservative choice. Towards the cards the nearest thing is no longer
+        a card but the row line of the empty row, and the room is half the way to it instead."""
+        for name, (_, kind) in sorted(EMPTY_BAND_CASE.items()):
+            for mode in MODES:
+                with self.subTest(page=name, mode=mode):
+                    layout, _, lines = self.measured(name, mode)
+                    got = self.results[name, mode]
+                    ys = runs_on_row_lines(layout, lines, {0}).get(0, [])
+                    self.assertEqual(len(ys), 1, f"harness: {len(ys)} lines along the top margin")
+                    (away, _), by = margin_room(ys[0], True, got["boxes"], got["cards"])
+                    want = flow.TOP_ROOM[kind, mode][0]
+                    self.assertGreaterEqual(away, want, f"{name} {mode}: the line is {away:.2f} px from "
+                                                       f"the {by}, less than the constant's {want}")
+
+    def band_capacity_layout(self):
+        """The layout of the empty-band capacity model, with what the offsets came out as: five groups,
+        each as wide as its line of the two bands holds. `render_page` silences the capacity check for
+        a hand-made routing, so the check runs here — this model is at capacity, not over it, and a
+        group that grew past it would be measuring something else."""
+        layout = self.layouts["empty-band-at-pitch", "page"]
+        geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                            *flow.margin_room(layout["kind"], "page", layout["footnotes"]),
+                            layout["empty_rows"])
+        self.assertEqual(router.overfull(layout["paths"], frozenset(layout["lattice"].blocked), geo.room), [],
+                         "harness: the model is over its capacity, not at it")
+        spread = {}
+        for e in layout["edges"]:
+            for _, y, _, oy in e["path"]:
+                spread.setdefault(y, set()).add(oy)
+        return {y: sorted(offs) for y, offs in spread.items()}
+
+    def test_the_empty_band_model_fills_each_line_of_both_bands(self):
+        # the case exists only while each of the five groups is drawn as wide as its line holds:
+        # two at 5 px on the row line of the leading empty row and on the gutter under it, four at
+        # 5 px on each of the three lines of the interior band
+        spread = self.band_capacity_layout()
+        self.assertEqual([spread[1], spread[2]], [[-2.5, 2.5]] * 2)
+        self.assertEqual([spread[Y] for Y in (4, 5, 6)], [[-7.5, -2.5, 2.5, 7.5]] * 3)
+
+    def test_lines_at_the_capacity_of_an_empty_band_keep_clear_of_the_cards(self):
+        """Docstring case 18, criterion B2 on the band of an empty row: with a group at the capacity of
+        every line of a leading band and an interior one, every line still keeps its distance from
+        every card it does not end on and stays inside the grid box."""
+        name = "empty-band-at-pitch"
+        layout, names, lines = self.measured(name, "page")
+        got = self.results[name, "page"]
+        misses, checked = card_clearance_misses(layout, names, lines, got["cards"])
+        self.assertEqual(misses, [], f"{name}: a line at capacity comes too near a card")
+        self.assertGreater(checked, 0, "harness: no line was measured against a card")
+        misses, checked = outside_box_misses(layout, names, lines, got["boxes"]["grid"])
+        self.assertEqual(misses, [], f"{name}: a line at capacity leaves the grid box")
+        self.assertGreater(checked, 0, "harness: no line was measured against the grid box")
+
+    def test_the_lines_of_a_band_are_drawn_apart(self):
+        """Docstring case 19: on the gate's model and on the band-capacity page of case 18, no two lines
+        matched to different row lines of a band are drawn as one. Case 18 measures the lines against the
+        cards; this measures them against each other, which is what the room of a band left to chance
+        while the two groups shared the whole distance between their lines."""
+        compared = 0
+        pages = [(GATE_NAME, mode) for mode in MODES if mode not in self.gate_refused]
+        pages += [(name, "page") for name in BAND_CAPACITY]
+        for name, mode in pages:
+            with self.subTest(page=name, mode=mode):
+                layout, names, lines = self.measured(name, mode)
+                misses, seen = near_row_misses(layout, names, lines)
+                self.assertEqual(misses, [], f"{name} {mode}: two lines of one band drawn as one")
+                compared += seen
+        for mode, refused in sorted(self.gate_refused.items()):
+            with self.subTest(refused=mode):
+                self.assertTrue([m for m in refused if "помещается" in m], refused)
+        # the case exists only if some page draws lines on two row lines of one band at once, and only
+        # while the gate's model is drawn in at least one mode
+        self.assertGreater(compared, 0, "harness: no two runs of different row lines were compared")
+        self.assertNotEqual(set(self.gate_refused), set(MODES),
+                            "harness: the gate's model is refused in both modes, so no page draws it")
+
+    def test_a_trailing_empty_row_leaves_every_line_drawn(self):
+        """Docstring case 16: an empty row under the last card row is no part of the lattice, so
+        every line is drawn where the page has a track for it. A line planned under that row stops
+        the script at the row it cannot read, and the page then holds only the lines before it."""
+        for name, model in TRAILING.items():
+            for mode in MODES:
+                with self.subTest(model=name, mode=mode):
+                    got = self.results[name, mode]
+                    if isinstance(got, Exception):
+                        self.fail(f"harness: {name} {mode}: {got}")
+                    layout = self.layouts[name, mode]
+                    want = [f"{e['a']} {e['b']}" for e in layout["edges"]]
+                    drawn = [n for n, d in got["lines"] if d]
+                    self.assertEqual(drawn, want, f"{name} {mode}: the page draws {len(drawn)} of "
+                                                  f"{len(want)} lines; one was planned where it has no row")
+                    # the case exists only if the grid's last row is the empty one that is left out
+                    self.assertEqual(layout["grid_rows"], len(model["grid"]) - 1,
+                                     f"harness: {name}: the grid's last row is not an empty one")
+                    self.check_crossings(name, mode)
+                    self.check_row_order(name, mode)
 
     def test_examples_found(self):
         self.assertTrue(self.examples, f"no example of kind {', '.join(KINDS)} under {EXAMPLES}")

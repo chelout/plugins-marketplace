@@ -13,16 +13,28 @@ from diagrams import router
 
 class OldTraffic:
     """`router.Traffic` as it stood before task 7: a list of every segment of every path, scanned
-    per question, with exits and entries per node side and the set of corners."""
+    per question, with exits and entries per node side and the set of corners.
+
+    `units` is the one field the frozen class gained. Task 9 prices a step along a unit edge of a
+    line that already carries as many lines as it holds, and `route` reads that load off the
+    traffic it is given, so a traffic without the field answers nothing at all. It is kept under
+    the key `router.Traffic` uses, (axis, line, k) with k the lower coordinate, and it is the only
+    answer taken from it: crosses, shares, corners, exits and entries still come from the segment
+    list, which is what makes this class the oracle for them."""
 
     def __init__(self):
         self.segs = []      # (axis, line, lo, hi)
+        self.units = {}     # (axis, line, k) -> lines along the unit edge from k to k + 1
         self.exits = {}     # (point, dir) -> count
         self.entries = {}   # (point, dir) -> count
         self.corners = set()  # every vertex of every path: where lines turn, start or end
 
     def add(self, path):
-        self.segs.extend(router.segments(path))
+        segs = router.segments(path)
+        self.segs.extend(segs)
+        for axis, line, lo, hi in segs:
+            for k in range(lo, hi):
+                self.units[(axis, line, k)] = self.units.get((axis, line, k), 0) + 1
         self.corners.update(path[1:-1])
         if len(path) >= 2:
             d0 = router.STEPS[(_sign(path[1][0] - path[0][0]), _sign(path[1][1] - path[0][1]))]

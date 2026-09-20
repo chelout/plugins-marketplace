@@ -80,7 +80,8 @@ same way, so their corners sit side by side instead of on top of each
 other. The map still decides most of it: a node placed far from its
 neighbours produces long detours. A line that cannot avoid a node is an error naming
 the edge; free a cell or move a node. Parallel lines on one gutter are
-spread 8 px apart. `--check` prints the map with the routed lines and the
+spread 8 px apart, 6 or 5 px where the gutter is too narrow for that, and the
+router sends a line round a gutter that is already full. `--check` prints the map with the routed lines and the
 number of line crossings; three or more crossings are a warning.
 
 ### Edges
@@ -173,7 +174,9 @@ Widget: up to 4 columns, 16 nodes. Page: up to 6 columns, 30 nodes. More
 means an overview plus detail diagrams. Errors: a node in the map but not
 described or the reverse, a node placed twice, a decision with fewer than two
 exits or an unlabeled branch, a label over the limit without a footnote, a
-route through a pair without an edge, an unroutable line, more nodes or
+route through a pair without an edge, an unroutable line, more lines in one
+gutter, margin or empty row than fit (the message names it, how many go there,
+how many fit and the edges to move), more nodes or
 columns than the mode allows, a title, text, item or label that does not fit (the message names its length and how many
 characters fit), a single word in a text or item wider than its box (the
 message names that word's length instead). Warnings:
