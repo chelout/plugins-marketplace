@@ -2,7 +2,7 @@ import unittest
 
 import support
 import bench_routing
-from diagrams import flow, router
+from diagrams import flow, router, schema
 
 
 def card(i):
@@ -330,6 +330,40 @@ class PlanReportsWhatIsDrawn(unittest.TestCase):
                     nodes = frozenset(layout["lattice"].blocked)
                     self.assertEqual(layout["crossings"],
                                      router.drawn_crossings(layout["paths"], offs, nodes))
+
+
+def keyed_table(name):
+    """A table of three key rows, so that a line can be drawn to any of them."""
+    return {"id": name, "name": name, "group": "g",
+            "columns": [{"name": f"k{n}", "type": "uuid", "flags": [f]}
+                        for n, f in enumerate(("PK", "FK", "FK"))]}
+
+
+# Two tables side by side, and two lines across the gutter between them. a.k1 -> b.k1 joins the same
+# key row of both, so the pseudo path schema.plan builds for it bends twice at one point and its run
+# in the gutter has no length; a.k0 -> b.k2 runs down the gutter past that point. The two lie beside
+# each other there, they are drawn in a slot each, and what the reader sees is one crossing.
+ZERO_RUN_SCHEMA = {"kind": "schema", "id": "zero-run", "title": "Связи в одном жёлобе",
+                   "groups": {"g": {"label": "таблицы", "ramp": "teal"}},
+                   "tables": [keyed_table("a"), keyed_table("b")],
+                   "grid": ["a b"],
+                   "edges": ["a.k1 -> b.k1", "a.k0 -> b.k2"]}
+
+
+class SchemaGutter(unittest.TestCase):
+    """schema.plan counts the crossings of its pseudo paths once the slot offsets are on them, so
+    two lines that lie beside each other in one gutter must not be drawn in one slot — a run of no
+    length, which only schema.plan produces, included."""
+
+    def test_a_run_of_no_length_does_not_hide_a_crossing(self):
+        for mode in ("page", "widget"):
+            with self.subTest(mode=mode):
+                layout, warnings = schema.plan(ZERO_RUN_SCHEMA, mode)
+                first, second = layout["edges"]
+                self.assertNotEqual(first["off"], second["off"],
+                                    "the two lines are drawn in one slot in the gutter")
+                self.assertEqual(layout["crossings"], 1)
+                self.assertIn("связь a.k1 -> b.k1 пересечёт связь a.k0 -> b.k2", " ".join(warnings))
 
 
 if __name__ == "__main__":

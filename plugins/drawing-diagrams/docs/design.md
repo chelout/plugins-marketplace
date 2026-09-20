@@ -193,7 +193,11 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   then each run, in that order, takes the lowest slot above every earlier run it **lies beside** —
   shares a stretch of the line with, or meets end to end at a point that is not a node
   (`router._beside`) — and two runs that never lie beside each other are drawn in one slot
-  (`router._slots`). So the width is the slots taken and not the runs counted: the chain of four
+  (`router._slots`). A run of no length, which only the pseudo paths of `schema.plan` carry, holds a
+  point and no stretch, so it lies beside a run whose interval holds that point — strictly inside it
+  always, at either of its ends under that same node exemption — and without that reading the two
+  would share a slot and a crossing `schema.plan` reports would drop out of its count
+  (`SchemaGutter` in `tests/test_crossings.py`). So the width is the slots taken and not the runs counted: the chain of four
   that hand over at three gutter points (`CHAIN` in `tests/test_capacity.py`) is drawn in three
   slots, because the end-to-end rule places the two middle runs first, and each outer run then lies
   beside one of those two only: the first shares a slot, the second has to take a third. A

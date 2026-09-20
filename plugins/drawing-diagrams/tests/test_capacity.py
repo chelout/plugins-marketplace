@@ -77,6 +77,20 @@ STAIR = [[(1, 1), (2, 1), (2, 5), (3, 5)],
          [(1, 7), (2, 7), (2, 11), (3, 11)]]
 STAIR_NODES = frozenset({(1, 1), (3, 5), (1, 3), (3, 9), (1, 7), (3, 11)})
 
+# A line whose two ends sit at the same height, as `schema.plan` draws one between the same key row
+# of two tables: its path bends twice at one point, so the gutter X = 2 carries a run of no length
+# at (2, 3). The second line runs down the whole of that gutter past it. The point of the short run
+# lies inside the long one, so the two are side by side there and take a slot each.
+INSIDE = [[(1, 1), (2, 1), (2, 5), (3, 5)],
+          [(1, 3), (2, 3), (2, 3), (3, 3)]]
+INSIDE_NODES = frozenset({(1, 1), (3, 5), (1, 3), (3, 3)})
+
+# The same run of no length at an end of the other run instead of inside it, and that end a card:
+# as two runs that meet end to end at a node, the two are no group at all and neither is moved.
+AT_NODE_END = [[(2, 5), (2, 9)],
+               [(1, 5), (2, 5), (2, 5), (3, 5)]]
+AT_NODE_END_NODES = frozenset({(2, 5), (2, 9), (1, 5), (3, 5)})
+
 # Five cards down column 1 of a two-column, five-row grid, column 0 empty: the lattice the price of
 # a full gutter is measured on (FullGutterCost). A line from one of those cards to another cannot
 # go straight down — the cells between them are cards — so it travels in the column gutter X = 2
@@ -217,18 +231,25 @@ def spread(paths, offsets, axis, line):
 def pieces_on(paths, axis, line):
     """(path index, lo, hi) per straight piece each path draws on this lattice line. The hand-made
     fixtures of SharedSlots put at most two pieces of one path on a line and never two in a row, so
-    a piece here is a run of `router._runs` without the test having to ask for one."""
+    a piece here is a run of `router._runs` without the test having to ask for one — except on the
+    line a run of no length sits across, where the pieces on either side of it are one run and no
+    case reads that line."""
     return [(i, lo, hi) for i, p in enumerate(paths)
             for ax, ln, lo, hi in router.segments(p) if (ax, ln) == (axis, line)]
 
 
 def beside(a, b, axis, line, nodes):
-    """Do two pieces on one lattice line lie beside each other — share a stretch of it, or meet end
-    to end at a point that is not a node (spec 4.1a)? Only such a pair can cross or overlap, so only
-    such a pair has to be drawn in two slots. Restated here from the spec rather than read out of
-    the router, so that a fixture whose premise moves fails where the premise is stated."""
+    """Do two pieces on one lattice line lie beside each other — share a stretch of it, meet end to
+    end at a point that is not a node, or, where one of them has no length, sit at a point the other
+    holds: strictly inside it always, at one of its ends under that same node exemption (spec
+    4.1a)? Only such a pair can cross or overlap, so only such a pair has to be drawn in two slots.
+    Restated here from the spec rather than read out of the router, so that a fixture whose premise
+    moves fails where the premise is stated."""
     (_, alo, ahi), (_, blo, bhi) = a, b
     if max(alo, blo) < min(ahi, bhi):
+        return True
+    if any(lo == hi and olo < lo < ohi
+           for (lo, hi), (olo, ohi) in (((alo, ahi), (blo, bhi)), ((blo, bhi), (alo, ahi)))):
         return True
     met = [end for end, start in ((ahi, blo), (bhi, alo)) if end == start]
     if not met:
@@ -573,6 +594,22 @@ class SharedSlots(unittest.TestCase):
         self.assertBeside(AT_NODE, AT_NODE_NODES, "v", 1, set())
         offs = router.assign_offsets(AT_NODE, nodes=AT_NODE_NODES, room=room_of((10, 10)))
         self.assertEqual(spread(AT_NODE, offs, "v", 1), [0.0])
+
+    def test_a_run_of_no_length_inside_another_takes_a_slot_of_its_own(self):
+        # a run of no length is a run of its own and still occupies its point, so it lies beside the
+        # run whose interval holds that point and the two are drawn apart, as they were before slots
+        # were reused: what crosses at that point is a crossing the reader sees
+        self.assertBeside(INSIDE, INSIDE_NODES, "v", 2, {(0, 1)})
+        offs = router.assign_offsets(INSIDE, nodes=INSIDE_NODES, room=room_of((10, 10)))
+        self.assertEqual(spread(INSIDE, offs, "v", 2), [-4.0, 4.0])
+
+    def test_a_run_of_no_length_at_a_node_end_of_another_shares_its_slot(self):
+        # the node exemption reaches the ends of that interval as it reaches two runs meeting end to
+        # end: at a card the two join the card instead of forming a junction, so they are no group
+        # at all and neither is moved
+        self.assertBeside(AT_NODE_END, AT_NODE_END_NODES, "v", 2, set())
+        offs = router.assign_offsets(AT_NODE_END, nodes=AT_NODE_END_NODES, room=room_of((10, 10)))
+        self.assertEqual(spread(AT_NODE_END, offs, "v", 2), [0.0])
 
     def test_a_group_whose_runs_all_lie_beside_each_other_keeps_every_slot(self):
         # the rule takes nothing away where every pair needs a slot of its own: these are the groups

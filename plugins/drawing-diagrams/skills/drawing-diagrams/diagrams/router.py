@@ -381,11 +381,18 @@ def _pitch(w, step, room):
 def _beside(u, v, axis, line, nodes):
     """Do two runs of one group lie beside each other: do they share a stretch
     of their lattice line — their intervals overlapping by more than a point —
-    or meet end to end at a point that is not a node? Only such a pair can
-    cross or overlap, so only such a pair has to be drawn in two slots; any
-    other two runs of the group are never side by side anywhere and may share
-    one."""
+    or meet end to end at a point that is not a node? A run of no length holds
+    a point and no stretch, so neither test reaches it on its own: it lies
+    beside a run whose interval holds that point — always where the point is
+    strictly inside the interval, and at either end of it under the same node
+    exemption as two runs that meet end to end, which is what the test below
+    also gives a pair of them at one point. Only a pair that lies beside each
+    other can cross or overlap, so only such a pair has to be drawn in two
+    slots; any other two runs of the group are never side by side anywhere and
+    may share one."""
     if max(u["lo"], v["lo"]) < min(u["hi"], v["hi"]):
+        return True
+    if any(d["lo"] == d["hi"] and o["lo"] < d["lo"] < o["hi"] for d, o in ((u, v), (v, u))):
         return True
     met = [end for end, start in ((u["hi"], v["lo"]), (v["hi"], u["lo"])) if end == start]
     if not met:
@@ -489,7 +496,10 @@ def _slots(axis, line, ordered, nodes):
     Each run, in the order the group was placed in, takes the lowest slot above every earlier run
     it lies beside (_beside), and shares a slot with the ones it never lies beside. So the width is
     not the number of runs: a chain of runs that only meet end to end is as wide as the order makes
-    it, and a group whose runs all lie beside each other is as wide as it is long. Every pair that
+    it, and a group whose runs all lie beside each other is as wide as it is long. A run of no
+    length is counted here like any other: it is a run of its own that does not break the straight
+    piece it lies in, and it still occupies its point, so it takes a slot of its own from whatever
+    passes through that point. Every pair that
     does lie beside each other keeps the relative order the placing gave it — the pick order of
     _order decides which of the two comes first, and this only numbers them — so the pairs that can
     cross or overlap are ordered exactly as they were, which is what the invariant rests on."""
