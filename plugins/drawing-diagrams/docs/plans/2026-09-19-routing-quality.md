@@ -595,6 +595,10 @@ and §7.2 as amended).
   commit 1 takes `tests/test_advice.py` and `tests/test_render_cli.py` as commit 2's does, and a
   case of `tests/test_label_lines.py` that asserts a warning of the old check is restated with the
   line it now names, never dropped.
+- Task 20 commit 3, the search, reads every place against every rectangle of its rows (spec §7.3
+  as amended the same day): the cost has no family that looks away. Its browser case draws a label
+  under a horizontal second segment — the place no greedy choice ever took — and holds its box
+  clear of the segment; the under-offset turned into the over-offset must fail it.
 - Task 20 commit 2 also anchors every place over or under a horizontal second segment to the
   segment as drawn. Tests: a labelled segment drawn 12 px above the base of its row keeps its label
   over it; over the seeded corpus no label's own line runs through its rectangle. The browser

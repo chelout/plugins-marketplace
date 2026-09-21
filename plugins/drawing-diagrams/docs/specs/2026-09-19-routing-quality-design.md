@@ -553,6 +553,19 @@ horizontal second segment, one per pair of labels in one place. A new place foll
 belongs to — after the bend is over a horizontal second segment, the other new places are beside a
 line. A model that warned once per owner overlapped would change which moves the advice offers.
 
+Amended 2026-09-21, before the search (task 20 commit 3), on what the browser showed after the
+candidates landed. The cost reads every place against every rectangle it shares a row with; the
+families of today's code differ in how a warning is worded, not in what is looked at. Today a label
+on a horizontal second segment is measured against no line along its row and against no label, and
+only a label beside a vertical second segment against the labels placed before it: of the 9 labels
+of the seeded hundred a line or a label runs through while the plan says nothing, 8 are of that
+family. So a label on a horizontal second segment that lies on a line along its row or on another
+label raises the one "ляжет на другую линию или подпись" it would raise anywhere else, beside one
+"пересечёт" per line that crosses it; a pair of labels that overlap in the choice the search
+returns is told about once, on the later of the two in the model's order, as the same place when
+it is the same place. The count of warnings can therefore grow where today's code looked away,
+and criterion E6 is where each such instance is named.
+
 ### 7.4 Python emits the anchor, the script draws it
 
 Each labelled edge carries `la: [pt, ref, Y, dx, dy, anchor]` instead of `ls` and `ly`. `x` is the
