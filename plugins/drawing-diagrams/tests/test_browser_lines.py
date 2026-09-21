@@ -494,6 +494,26 @@ TRAILING = {
                               "grid": ["a b c", ". . ."], "edges": ["a -> c"] * 3, **TRAILING_LANES},
 }
 
+# The band models of tests/test_label_lines.py, which put labels on the lines of a band of empty
+# rows (spec 7.1 as amended a fourth time), so that case 22 reads their inks: name: (model, the
+# modes it is drawn in). A model is drawn in the modes it names and plans in without an error —
+# a leading band of two, in a widget, leaves the label of a -> c no place off card a since the
+# amendment, and says so (tests/test_labels.py, `TheFrameATextIsReadIn`).
+def band_label_modes(model, modes):
+    out = []
+    for mode in modes:
+        try:
+            flow.plan(json.loads(json.dumps(model)), mode)
+        except flow.ModelError:
+            continue
+        out.append(mode)
+    return tuple(out)
+
+
+BAND_LABELS = {f"band-label {name}": (label_cases.band_model(grid, edges),
+                                      band_label_modes(label_cases.band_model(grid, edges), modes))
+               for name, (grid, edges, _, _, modes) in label_cases.BAND_MODELS.items()}
+
 # Docstring case 17. Two grids, each holding two runs of empty rows — a leading one and one between
 # two rows of cards — so that four shapes are measured on two pages per kind and mode: a run of one
 # of each in "empty-band-1" and a run of two of each in "empty-band-2". The routes are put in by
@@ -1309,6 +1329,7 @@ class BrowserLines(unittest.TestCase):
         drawn += [(name, model, paths, MODES) for name, (model, paths) in ANCHOR_HAND.items()]
         drawn += [(name, model, paths, MODES) for name, (model, paths) in MARGINS.items()]
         drawn += [(name, model, paths, MODES) for name, (model, paths) in EMPTY_BANDS.items()]
+        drawn += [(name, model, None, modes) for name, (model, modes) in BAND_LABELS.items()]
         drawn += [(name, model, paths, ("page",)) for name, (model, paths) in CAPACITY.items()]
         drawn += [(name, model, paths, ("page",)) for name, (model, paths) in BAND_CAPACITY.items()]
         # the gate's model is routed by the router itself, so a mode whose band does not hold its seven
@@ -1634,6 +1655,27 @@ class BrowserLines(unittest.TestCase):
                              f"harness: `anchor-exits` is no longer tests/test_label_lines.UP")
         self.assertTrue(below, "harness: no page draws a label under a second segment that is "
                                "itself drawn below the base of its row")
+        # the band models of tests/test_label_lines.py are among the pages read, and put labels on
+        # the lines of their bands: pinned to one, or hanging from a point drawn on one
+        on_band = 0
+        for name, (_, modes) in BAND_LABELS.items():
+            for mode in modes:
+                layout = self.layouts[name, mode]
+                band = set(range(2 * min(layout["empty_rows"]), 2 * max(layout["empty_rows"]) + 3))
+                on_band += sum(1 for e in layout["edges"] if e["label"] and (
+                    (e["la"][1] == "r" and e["la"][2] in band)
+                    or (e["la"][1] == "p" and 0 < e["la"][0] < len(e["path"]) - 1
+                        and e["path"][e["la"][0]][1] in band)))
+        self.assertGreater(on_band, 20, f"harness: only {on_band} labels stand on a band line")
+
+    def test_no_card_is_drawn_shorter_than_the_label_model_assumes(self):
+        """diagrams/labels.py reads a row of cards as at least CARD_LEAST px high, which is how far
+        a line or a text drawn off the middle of such a row can reach past it. Every card of every
+        page here is drawn at least that high."""
+        least = min((down - up, f"{name} {mode} {nid}") for (name, mode), got in self.results.items()
+                    if isinstance(got, dict) and "cards" in got
+                    for nid, (_, up, _, down) in got["cards"].items())
+        self.assertGreaterEqual(least[0], labels.CARD_LEAST, least[1])
 
     def test_planned_crossing(self):
         for mode in MODES:

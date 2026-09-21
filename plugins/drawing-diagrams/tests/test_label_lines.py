@@ -198,6 +198,38 @@ def exit_model(grid, edges, terminals=(), nodes=()):
 # cards, the row is there for that line, and `e -> b` comes back up the other side, which is what
 # leaves the search nothing cheaper than the two steps straight up.
 DOWN = exit_model(["a? x", "b c"], ["a? -> b : да", "a? -> c : нет"], terminals=("b", "c"))
+
+
+def band_model(grid, edges):
+    """A flow on `grid` whose nodes are titled with their own ids, as the band models below are."""
+    return {"kind": "flow", "grid": grid, "edges": edges,
+            "nodes": [{"id": n, "title": n} for n in " ".join(grid).split() if n != "."]}
+
+
+# Plans that put a label on a line of a band of empty rows, where `tracks()` of template/js/head.js
+# invents a track for each empty row and by() of template/js/flow.js places the lines from it, so
+# the lines of the band stand nearer each other and nearer the cards than a row gap. name: (the
+# grid, the edges, how many empty rows the band has, whether it leads the grid, the modes in which
+# the router puts a label on the band). The leading ones are the four the class answer of the fourth
+# round of the branch gate found, each with a place whose text reached the cards under the band
+# while the model said it reached nothing; the interior ones put a label on every kind of line of a
+# band of one, two and three rows between two rows of cards.
+BAND_LEAD_EDGES = ["a -> c : yes", "a -> c : yes", "a -> d : yes"]
+BAND_INNER_EDGES = ["a -> f : yes", "a -> g : yes", "b -> e : yes", "h -> a : yes"]
+BAND_MODELS = {
+    "a leading band of one": ([". . . .", "a b c d"], BAND_LEAD_EDGES + ["c -> a : yes"], 1, True,
+                              ("page",)),
+    "a leading band of two": ([". . . .", ". . . .", "a b c d"], BAND_LEAD_EDGES, 2, True,
+                              ("widget", "page")),
+    "a leading band of three": ([". . . .", ". . . .", ". . . .", "a b c d"], BAND_LEAD_EDGES, 3,
+                                True, ("widget",)),
+    "a leading band of three, turning back": ([". . . .", ". . . .", ". . . .", "a b c d"],
+                                              ["a -> c : yes", "a -> d : yes", "c -> a : yes"], 3,
+                                              True, ("page",)),
+    **{f"an interior band of {n}": (["a b c d"] + [". . . ."] * k + ["e f g h"], BAND_INNER_EDGES, k,
+                                    False, ("widget", "page"))
+       for k, n in ((1, "one"), (2, "two"), (3, "three"))},
+}
 UP = exit_model(["c b", "d a?", "e ."], ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да",
                                          "d -> b : да", "d -> c : да", "c -> e", "e -> b"])
 

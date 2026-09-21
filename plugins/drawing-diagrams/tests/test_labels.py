@@ -83,7 +83,9 @@ LABEL_CASES = {
     'exit down': 'a?->b L | a?->c O',
     'exit up': 'a?->d A | a?->c O | b->d U | c->b A | d->b O | d->c L ; ляжет, ляжет, пересечёт',
     "lines at the source card's own height, beside": 'a?->b R | a?->t A',
-    "lines at the source card's own height, into": 'a?->b R | a?->t B',
+    "lines at the source card's own height, into":
+        ('a?->b R | a?->t A ; ляжет',
+         'a?->b R | a?->t B'),
     "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c B | b?->d R',
     "loop ['. a', 'c b?', '. d'] c -> d": 'b?->c A | b?->d R',
     "loop ['a .', 'b? c', 'd .'] c -> a": 'b?->c B | b?->d R',
@@ -112,7 +114,7 @@ LABEL_CASES = {
 }
 SEEDED_PLACES = {'рядом со вторым отрезком': 161, 'над вторым отрезком': 103, 'под вторым отрезком': 68,
                  'у выхода вбок': 62, 'у выхода вниз': 34, 'у выхода вверх': 14}
-SEEDED_SAID = {LIES: 88, NO_FIT: 24, CROSSES: 23}
+SEEDED_SAID = {LIES: 89, NO_FIT: 24, CROSSES: 24}
 
 # The five seeded instances the end-row reading moves, and what each moves: the label, where it
 # stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
@@ -701,6 +703,7 @@ class TheTableOfPlaces(unittest.TestCase):
 # gutter onto a card is not left either.
 SEEDED_CROSSED = (
     ("seeded #7", "n00 -> n06", "U", 0),
+    ("seeded #11", "n00 -> n04", "O", 1),
     ("seeded #16", "n05 -> n09", "F", 0),
     ("seeded #20", "n15 -> n05", "O", 2),
     ("seeded #33", "n07 -> n09", "U", 0),
@@ -729,7 +732,7 @@ SEEDED_BUDGET = "seeded #86"
 # The seeded instance whose labels fall into two pairs and four labels standing alone: no place of
 # any group can meet a place of another, so each is solved on its own and the nodes the search
 # spends on the whole plan are the nodes the groups spend one at a time.
-SEEDED_APART = ("seeded #11", ((0,), (3, 18), (6, 9), (12,), (15,), (21,)))
+SEEDED_APART = ("seeded #11", ((0, 6, 9), (3, 18), (12,), (15,), (21,)))
 
 
 class TheSearch(unittest.TestCase):
@@ -841,8 +844,9 @@ class TheSearch(unittest.TestCase):
         groups = labels.components(free, keep)
         self.assertEqual(tuple(tuple(g) for g in groups), want,
                          f"premise: the labels of {name} no longer fall into these groups")
-        self.assertEqual(sum(1 for g in groups if len(g) == 2), 2,
-                         "premise: the two pairs this case is named for are gone")
+        self.assertEqual(sum(1 for g in groups if len(g) > 1), 2,
+                         "premise: the two groups of more than one label this case is named for "
+                         "are gone")
         whole, spent = labels.search(order, cands, needs, cards, runs, upright)
         took = {c.edge: c.cand for c in whole}
         apart = 0
@@ -1260,7 +1264,8 @@ class TheRowsATextReaches(unittest.TestCase):
         `row_gap` high about its base and an outer row margin `margin` deep, so a text that leaves
         either stands in the row of cards it reaches. A row of cards states no height here and
         neither does a row line beside an empty row, whose place `tracks()` invents, so a text of
-        one of those keeps the model's uncertainty inside its own row."""
+        one of those keeps the model's uncertainty inside its own row; the lines of a band of empty
+        rows state theirs through `Geometry.frame`."""
         geo = flow.Geometry(flow.mode_for("flow", "widget", None), 200.0, 3, rows=4, empty=(2,))
         half, margin = geo.row_gap / 2, geo.margin
         wide = (-half - 1, half + 1)
@@ -1271,9 +1276,13 @@ class TheRowsATextReaches(unittest.TestCase):
         self.assertEqual(labels.reached(geo, 8, *wide), (7,))        # the bottom margin: above
         self.assertEqual(labels.reached(geo, 8, -margin, margin), ())
         self.assertEqual(labels.reached(geo, 3, *wide), ())          # a row of cards
-        self.assertEqual(labels.reached(geo, 4, *wide), ())          # the gutter over the empty row
-        self.assertEqual(labels.reached(geo, 6, *wide), ())          # and the one under it
+        # the band of the empty row is read in its own frame (spec 7.1 as amended a fourth time):
+        # its first gutter stands 20 px under the cards over it and its last 20 px over the cards
+        # under it, and the empty row's own line 40 px from either
+        self.assertEqual(labels.reached(geo, 4, *wide), (3,))        # the gutter over the empty row
+        self.assertEqual(labels.reached(geo, 6, *wide), (7,))        # and the one under it
         self.assertEqual(labels.reached(geo, 5, *wide), ())          # the empty row's own line
+        self.assertEqual(labels.reached(geo, 5, -2 * half - 1, 2 * half + 1), (3, 7))
         # the two margins are `margin` from the cards and not half a row gap, which is what tells
         # this case from one that read every even row the same way
         self.assertNotEqual(margin, half)
@@ -1288,7 +1297,10 @@ class TheRowsATextReaches(unittest.TestCase):
         for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
             geo = inputs(layout, mode)[0]
             for i, cs in candidates(layout, mode)[1].items():
-                for c in (c for c in cs if c.where in labels.SECOND_RUN):
+                # a segment along a row of cards states no px, and what its text reaches past the
+                # row is `TheFrameATextIsReadIn`'s
+                for c in (c for c in cs if c.where in labels.SECOND_RUN
+                          and geo.frame(c.rects[0].Y) is not None):
                     text = c.rects[0]
                     want = labels.reached(geo, text.Y, text.y0, text.y1)
                     with self.subTest(model=name, edge=i, place=(c.where, c.rank)):
@@ -1305,18 +1317,312 @@ class TheRowsATextReaches(unittest.TestCase):
         along it, the texts standing on its base — is a card height away from that edge, which this
         side does not know; a line that crosses the row passes the text's own row on its way and is
         met there. So every run and every label of a reached row is the place's own `exempt`."""
-        checked = 0
+        checked = framed = 0
         for name, mode, layout, _ in planned(label_models() + seeded()):
             paths = layout["paths"]
+            geo = inputs(layout, mode)[0]
             blind = set(labels.drawn_owners(paths))
             for i, cs in candidates(layout, mode)[1].items():
                 for c in (c for c in cs if c.where in labels.SECOND_RUN and len(c.rects) > 1):
                     checked += 1
                     for rect in c.rects[1:]:
                         with self.subTest(model=name, edge=i, row=rect.Y):
-                            self.assertEqual({o for o in blind if (rect.Y, o) not in c.exempt},
-                                             set())
+                            if geo.frame(rect.Y) is None:
+                                self.assertEqual((rect.y0, rect.y1), (-labels.INF, labels.INF))
+                                self.assertEqual({o for o in blind if (rect.Y, o) not in c.exempt},
+                                                 set())
+                                continue
+                            # a row line the text only pokes into from a row of cards is read in
+                            # its frame, and what is drawn there counts but the label's own path
+                            # (spec 7.1 as amended a fourth time)
+                            framed += 1
+                            self.assertEqual({o for o in blind if (rect.Y, o) in c.exempt},
+                                             {(i, k) for k in range(len(paths[i]) - 1)})
         self.assertGreater(checked, 100, f"harness: only {checked} places reach another row")
+
+
+# The bases of the lines of a band of empty rows, in px from the top of the cards under it, as the
+# class answer of the fourth round of the branch gate worked them out by hand from tracks() of
+# template/js/head.js and by() of template/js/flow.js: one per lattice row line of the band in
+# ascending order — the line over the band, then each empty row's own line and the gutter under it.
+# `M` is the mode's margin and `G` its row gap. A leading band has the top margin over it and no
+# cards; an interior one has the cards of the row over it end at -(k + 1) G.
+LEADING_BASES = {1: lambda M, G: [-20 - M, -20, -10],
+                 2: lambda M, G: [-20 - M, -20, -15, -10, -5],
+                 3: lambda M, G: [-20 - M, -20, -15, -10, -7.5, -5, -2.5]}
+INTERIOR_BASES = {1: lambda M, G: [G * f for f in (-1.5, -1, -0.5)],
+                  2: lambda M, G: [G * f for f in (-2.25, -1.5, -1.125, -0.75, -0.375)],
+                  3: lambda M, G: [G * f for f in (-3, -2, -1.5, -1, -0.75, -0.5, -0.25)]}
+
+SCENE_W = 100.0
+
+
+def scene(mode, grid, paths, offsets):
+    """A plan made by hand: the cards of `grid`, the lattice paths and their offsets as given, and
+    the geometry of a flow of that mode. (geo, the cards and bounds, the lines, and a function giving
+    the places of one path's label as `candidates` offers them.)"""
+    cells = {nid: (r, c) for r, row in enumerate(grid) for c, nid in enumerate(row.split())
+             if nid != "."}
+    empty = [r for r, row in enumerate(grid) if set(row.split()) == {"."}]
+    geo = flow.Geometry(flow.mode_for("flow", mode, None), SCENE_W, len(grid[0].split()),
+                        len(grid), empty=empty)
+    occupied = set(cells.values())
+    rects = labels.occupancy(cells, paths, offsets, geo, occupied)
+
+    def places(i, a, b, need=40.0):
+        return labels.candidates(i, {"a": a, "b": b}, paths[i], need, paths, offsets, geo, cells,
+                                 occupied, SCENE_W)
+    return (geo, [r for r in rects if r.kind in (labels.CARD, labels.BOUND)],
+            [r for r in rects if r.kind == labels.LINE], places)
+
+
+def from_cards(geo, Y, y):
+    """The px `y` of a rectangle of row `Y` stands at from the top of the cards under the frame
+    that row is read in — the one scale the bases above are written in."""
+    frame = geo.frame(Y)
+    return y + frame.at - frame.bottom
+
+
+class TheFrameATextIsReadIn(unittest.TestCase):
+    """Spec 7.1, amended a fourth time on 2026-09-21, after the class ask of the fourth round of the
+    branch gate: wherever the page's geometry is known here — an interior gutter, an outer margin
+    and every line of a band of empty rows — every object is read in one frame, `Geometry.frame`,
+    and a text is compared with the lines, the labels and the cards of every line it reaches in it;
+    where the page's y depends on a card height the rectangle holds every y it can be drawn at.
+
+    The members the gate's map named are each held here by the case it gave: a place on a
+    horizontal second segment and a pinned place on a band line reaching the cards (the band models
+    of tests/test_label_lines.py), a text on one band line against a line and a label on another, a
+    straight exit across a band of two or three rows, the middle of a vertical second segment, the
+    text of a sideways exit reaching the gutter, a text over a segment clamped into its row and a
+    text carried out of a row of cards by its segment's offset."""
+
+    def test_every_band_line_stands_where_tracks_puts_it(self):
+        for mode in MODES:
+            spec = flow.mode_for("flow", mode, None)
+            for k in (1, 2, 3):
+                for lead, rows, empty, first, want in (
+                        (True, k + 1, range(k), 0, LEADING_BASES[k]),
+                        (False, k + 2, range(1, k + 1), 2, INTERIOR_BASES[k])):
+                    geo = flow.Geometry(spec, SCENE_W, 3, rows, empty=empty)
+                    M, G = geo.margin, geo.row_gap
+                    lines = range(first, first + 2 * k + 1)
+                    with self.subTest(mode=mode, k=k, lead=lead):
+                        self.assertEqual([from_cards(geo, Y, 0.0) for Y in lines], want(M, G))
+                        self.assertEqual({geo.frame(Y).row for Y in lines}, {lines[-1]})
+                        self.assertEqual({geo.frame(Y).first for Y in lines}, {first})
+                        top = geo.frame(first).top - geo.frame(first).bottom
+                        self.assertEqual(top, -labels.INF if lead else -(k + 1) * G)
+                        # the rows of cards around it state nothing: their base is a card's middle
+                        self.assertIsNone(geo.frame(lines[-1] + 1))
+                        self.assertTrue(lead or geo.frame(first - 1) is None)
+        geo = flow.Geometry(flow.mode_for("flow", "widget", None), SCENE_W, 3, 2)
+        half, margin = geo.row_gap / 2, geo.margin
+        self.assertEqual(tuple(geo.frame(0)), (0, 0.0, -labels.INF, margin, 0))
+        self.assertEqual(tuple(geo.frame(2)), (2, 0.0, -half, half, 2))
+        self.assertEqual(tuple(geo.frame(4)), (4, 0.0, -margin, labels.INF, 4))
+
+    def test_the_band_models_draw_no_text_on_a_card(self):
+        """Every band model of tests/test_label_lines.py, planned, and each chosen place whose text
+        the page draws from a band line — pinned to one, or hanging from a point drawn on one —
+        read down the page from the bases above and not from the model: no such text shares px with
+        a card of the rows around the band. The places the answer found are candidates still, and
+        are the ones the cards now drop."""
+        found = {"a leading band of one": ("a -> c", "p", 2),
+                 "a leading band of two": ("a -> c", "r", 4),
+                 "a leading band of three": ("a -> d", "r", 5),
+                 "a leading band of three, turning back": ("a -> c", "r", 5)}
+        dropped = checked = 0
+        per = {}
+        for name, (grid, edges, k, lead, modes) in sorted(cases.BAND_MODELS.items()):
+            for mode in modes:
+                layout, _ = flow.plan(cases.band_model(grid, edges), mode, draft=True)
+                geo, paths, offsets, cells, occupied = inputs(layout, mode)
+                first = 0 if lead else 2
+                bases = dict(zip(range(first, first + 2 * k + 1),
+                                 (LEADING_BASES if lead else INTERIOR_BASES)[k](geo.margin,
+                                                                                geo.row_gap)))
+                below = {c for r, c in occupied if 2 * r + 1 == first + 2 * k + 1}
+                above = {c for r, c in occupied if 2 * r + 1 == first - 1}
+                on_band = 0
+                for choice in chosen(layout, mode):
+                    e, p = layout["edges"][choice.edge], paths[choice.edge]
+                    pt, ref, Y, _, dy, _ = e["la"]
+                    if ref == "r" and Y in bases:
+                        mid = bases[Y]
+                    elif ref == "p" and p[pt][1] in bases and pt not in (0, len(p) - 1):
+                        mid = bases[p[pt][1]] + offsets[choice.edge][pt][1] + dy - labels.LABEL_DROP
+                    else:
+                        continue
+                    on_band += 1
+                    top, bottom = mid - labels.TEXT_HALF, mid + labels.TEXT_HALF
+                    x0 = min(r.x0 for r in choice.cand.rects)
+                    x1 = max(r.x1 for r in choice.cand.rects)
+                    hit = [c for c in below if bottom > 0 and geo.left(c) < x1 and x0 < geo.right(c)]
+                    hit += [c for c in above
+                            if top < -(k + 1) * geo.row_gap and geo.left(c) < x1 and x0 < geo.right(c)]
+                    with self.subTest(model=name, mode=mode, edge=f"{e['a']} -> {e['b']}"):
+                        self.assertEqual(hit, [], f"the text {top}..{bottom} is drawn on a card")
+                checked += on_band
+                per[name] = per.get(name, 0) + on_band
+                if name not in found or mode != modes[0]:
+                    continue
+                edge, ref, Y = found[name]
+                i = next(j for j, x in enumerate(layout["edges"])
+                         if f"{x['a']} -> {x['b']}" == edge and any(
+                             c.la[1] == ref and (c.la[2] == Y if ref == "r" else paths[j][1][1] == Y)
+                             for c in candidates(layout, mode)[1].get(j, ())))
+                order, cands, needs, cards, _, _ = candidates(layout, mode)
+                witness = [c for c in cands[i] if c.la[1] == ref
+                           and (c.la[2] == Y if ref == "r" else True)
+                           and any(r.kind == labels.LABEL and r.y0 == -labels.INF
+                                   and r.y1 == labels.INF and r.Y == first + 2 * k + 1
+                                   for r in c.rects)]
+                with self.subTest(model=name, witness=(edge, ref, Y)):
+                    self.assertTrue(witness, "the place the answer found no longer reaches the cards")
+                    self.assertTrue(all(labels.room(c, cards) < needs[i] for c in witness))
+                dropped += len(witness)
+        self.assertGreater(checked, 20, f"harness: only {checked} labels stand on a band")
+        self.assertEqual([n for n, count in per.items() if not count], [],
+                         "harness: a band model puts no label on its band in any mode")
+        self.assertGreaterEqual(dropped, len(found))
+
+    def test_a_text_on_one_band_line_meets_a_line_and_a_label_on_another(self):
+        """The answer's example: over a leading band of one row, a text over a segment on the
+        gutter at -10 spans -29.5 to -16.5 and a line on the empty row's own line at -20 spans -21
+        to -19. Each stands on a lattice row of its own, and both are read in the one frame."""
+        paths = [[(1, 3), (1, 2), (5, 2), (5, 3)], [(3, 3), (3, 1), (0, 1), (0, 3), (1, 3)],
+                 [(5, 3), (5, 1), (1, 1), (1, 3)]]
+        offsets = [[(0.0, 0.0)] * len(q) for q in paths]
+        geo, _, runs, places = scene("widget", [". . . .", "a b c d"], paths, offsets)
+        over = places(0, "a", "c")[0]
+        text = over.rects[0]
+        self.assertEqual((over.where, over.rank), (labels.OVER, 0))
+        self.assertEqual((from_cards(geo, text.Y, text.y0), from_cards(geo, text.Y, text.y1)),
+                         (-29.5, -16.5))
+        line = next(r for r in runs if r.owner == (1, 1))
+        self.assertEqual((from_cards(geo, line.Y, line.y0), from_cards(geo, line.Y, line.y1)),
+                         (-21.0, -19.0))
+        self.assertIn((1, 1), labels.hits(over, runs))
+        # and a label over a segment on that line, -39.5 to -26.5, meets the first one's text
+        wide = [places(0, "a", "c", 130.0)[0], places(2, "c", "a", 130.0)[0]]
+        self.assertEqual([from_cards(geo, c.rects[0].Y, c.rects[0].y0) for c in wide], [-29.5, -39.5])
+        self.assertTrue(labels.meet(*wide))
+
+    def test_a_straight_exit_across_a_band_is_bounded_by_its_own_card(self):
+        """A straight exit down hangs its text LABEL_BELOW under its card, 16.5 px down to the text's
+        far edge; one up stands its text 16.5 px over the card. Across a band of two or three rows
+        the first gutter is not half a row gap under the cards over it, nor the last one over the
+        cards under it, so the bound is the card's and not the gutter's. A band of one row keeps
+        both at half a row gap, and so its bounds where they were."""
+        for mode in MODES:
+            for k in (1, 2, 3):
+                grid = ["a . ."] + [". . ."] * k + ["b . c"]
+                last = 2 * k + 2
+                paths = [[(1, 1), (1, last + 1)], [(1, last + 1), (1, 1)],
+                         [(5, last + 1), (5, 2), (0, 2), (0, 1), (1, 1)],
+                         [(5, last + 1), (5, last), (0, last), (0, 1), (1, 1)]]
+                offsets = [[(0.0, 0.0)] * 2, [(0.0, 0.0)] * 2,
+                           [(0.0, 0.0), (0.0, -8.0), (0.0, -8.0), (0.0, 0.0), (0.0, 0.0)],
+                           [(0.0, 0.0), (0.0, -1.0), (0.0, -1.0), (0.0, 0.0), (0.0, 0.0)]]
+                geo, _, runs, places = scene(mode, grid, paths, offsets)
+                G = geo.row_gap
+                down, up = places(0, "a", "b")[0].rects[0], places(1, "b", "a")[0].rects[0]
+                with self.subTest(mode=mode, k=k):
+                    self.assertEqual(from_cards(geo, down.Y, down.y1), -(k + 1) * G + 16.5)
+                    self.assertEqual(from_cards(geo, up.Y, up.y0), -16.5)
+                if mode != "widget" or k == 1:
+                    continue
+                # a line 8 px over the first gutter's base runs past a text that stops above it,
+                # and one 1 px over the last gutter's base runs through a text that reaches it
+                with self.subTest(mode=mode, k=k, conflict=True):
+                    self.assertNotIn((2, 1), labels.hits(places(0, "a", "b")[0], runs))
+                    self.assertIn((3, 1), labels.hits(places(1, "b", "a")[0], runs))
+
+    def test_the_middle_of_a_vertical_segment_is_read_wherever_it_can_be_drawn(self):
+        """The answer's example, widget: a sideways exit from a 32 px card at the middle of its row,
+        -96 px from the cards under a band of one row, turning down to a bend on the band's last
+        gutter at -20. The script draws the text at the middle of the two drawn points, -58, so it
+        spans -64.5 to -51.5; a line 7.5 px under the band's first gutter, at -60, spans -53.5 to
+        -51.5 and runs through it. That middle depends on the card's height: the model keeps every
+        row between the two ends whole and meets the line."""
+        paths = [[(1, 1), (2, 1), (2, 4), (5, 4), (5, 5)], [(3, 5), (3, 2), (0, 2), (0, 1), (1, 1)]]
+        offsets = [[(0.0, 0.0)] * 5,
+                   [(0.0, 0.0), (0.0, 7.5), (0.0, 7.5), (0.0, 0.0), (0.0, 0.0)]]
+        geo, _, runs, places = scene("widget", ["a . .", ". . .", ". d c"], paths, offsets)
+        mid = (-96 + -20) / 2
+        text = (mid - labels.TEXT_HALF, mid + labels.TEXT_HALF)
+        line = (-60 + 7.5 - 1, -60 + 7.5 + 1)
+        self.assertEqual((text, line), ((-64.5, -51.5), (-53.5, -51.5)))
+        self.assertTrue(text[0] < line[1] and line[0] < text[1])
+        middle = places(0, "a", "c")[0]
+        self.assertEqual((middle.where, middle.la[1]), (labels.BESIDE, "m"))
+        self.assertIn((1, 1), labels.hits(middle, runs))
+
+    def test_the_text_of_a_sideways_exit_is_read_in_the_gutter_it_reaches(self):
+        """The answer's example, widget: a 32 px card, its line drawn at 22 — 6 px under the middle
+        — and the text below that line spanning 24.5 to 37.5, 5.5 px into the gutter under the card.
+        A line 16 px over that gutter's base, at 36, spans 35 to 37 and runs through it."""
+        paths = [[(1, 1), (3, 1)], [(1, 3), (1, 2), (3, 2), (3, 3)]]
+        offsets = [[(0.0, 6.0)] * 2, [(0.0, 0.0), (0.0, -16.0), (0.0, -16.0), (0.0, 0.0)]]
+        geo, _, runs, places = scene("widget", ["a b", "c d"], paths, offsets)
+        line_y = 16 + 6
+        text = (line_y + labels.LABEL_SINK - labels.LABEL_DROP - labels.TEXT_HALF,
+                line_y + labels.LABEL_SINK - labels.LABEL_DROP + labels.TEXT_HALF)
+        run = 32 + geo.row_gap / 2 - 16
+        self.assertEqual((text, (run - 1, run + 1)), ((24.5, 37.5), (35.0, 37.0)))
+        below = places(0, "a", "b", 15.0)[1]
+        self.assertEqual((below.where, below.rank), (labels.SIDEWAYS, 1))
+        self.assertIn((1, 1), labels.hits(below, runs))
+
+    def test_a_text_over_a_clamped_segment_covers_every_place_the_clamp_leaves_it(self):
+        """The answer's example, widget: a horizontal second segment along a row of cards banded by
+        its own end, at +24 from the base of a 32 px band — clamped to 22, 6 px from the base. The
+        text over it spans -13.5 to -0.5 from the base, and a line along the row at the base runs
+        through it; the model reads the text over the line's unclamped offset, where the two part."""
+        paths = [[(3, 1), (3, 3), (5, 3)], [(1, 3), (5, 3)]]
+        offsets = [[(0.0, 0.0), (0.0, 24.0), (0.0, 24.0)], [(0.0, 0.0)] * 2]
+        geo, _, runs, places = scene("widget", [". s .", "a . c"], paths, offsets)
+        drawn = min(24, 32 / 2 - 10)
+        text = (drawn - labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF,
+                drawn - labels.LABEL_OVER - labels.LABEL_DROP + labels.TEXT_HALF)
+        self.assertEqual(text, (-13.5, -0.5))
+        over = places(0, "s", "c", 30.0)[0]
+        self.assertEqual((over.where, over.rank), (labels.OVER, 0))
+        self.assertIn((1, 0), labels.hits(over, runs))
+
+    def test_a_text_carried_out_of_a_row_of_cards_is_read_in_the_next_one(self):
+        """The answer's example: a segment along a row of cards no line enters sideways, 48 px under
+        the middle of a card as short as a card is drawn, takes the text under it past the gutter
+        into the next row, onto the card there; 48 px over the middle, the text over it onto the
+        card of the row above. On the middle, both stay where they were."""
+        grid = [". s . .", "a . . .", ". u . t"]
+        for off, where, rank in ((48.0, labels.BENEATH, 1), (-48.0, labels.OVER, 0),
+                                 (0.0, labels.BENEATH, 1), (0.0, labels.OVER, 0)):
+            paths = [[(3, 1), (3, 3), (7, 3), (7, 5)]]
+            offsets = [[(0.0, 0.0), (0.0, off), (0.0, off), (0.0, 0.0)]]
+            geo, cards, _, places = scene("widget", grid, paths, offsets)
+            place = places(0, "s", "t", 30.0)[rank]
+            self.assertEqual(place.where, where)
+            with self.subTest(offset=off, place=where):
+                if off:
+                    row = 5 if off > 0 else 1
+                    self.assertIn(row, [r.Y for r in place.rects])
+                    self.assertLess(labels.room(place, cards), 30.0)
+                else:
+                    self.assertGreaterEqual(labels.room(place, cards), 30.0)
+
+    def test_an_end_clamped_past_the_base_covers_what_the_clamp_leaves(self):
+        """A vertical run that turns into a banded row ends at its bend, which the clamp draws
+        somewhere between the base of that row and the bend's own offset: the run covers the half
+        row it comes from and on to the offset where that lies past the base."""
+        for off in (8.0, -8.0):
+            paths = [[(3, 1), (3, 2), (2, 2), (2, 3), (1, 3)]]
+            offsets = [[(0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, off), (0.0, off)]]
+            _, _, runs, _ = scene("widget", [". s", "a b"], paths, offsets)
+            end = next(r for r in runs if r.owner == (0, 2) and r.Y == 3)
+            with self.subTest(offset=off):
+                self.assertEqual((end.y0, end.y1), (-labels.INF, max(0.0, off) + 1))
 
 
 class TheLabelsAlreadyPlacedAreConsulted(unittest.TestCase):
@@ -1369,12 +1675,20 @@ class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
                     continue
                 lo, hi = min(p[1][1], p[2][1]), max(p[1][1], p[2][1])
                 bend = {p[1][1]: off[1][1], **({p[2][1]: off[2][1]} if len(p) >= 4 else {})}
+                geo = inputs(layout, mode)[0]
+                frames = {Y: geo.frame(Y) for Y in (lo, hi)}
+                if frames[lo] is not None and frames[hi] is not None \
+                        and frames[lo].row == frames[hi].row:
+                    continue  # both ends in one frame: the middle is drawn where it is computed
                 for rect in (r for c in cs if c.la[1] == "m" for r in c.rects):
-                    if rect.Y not in bend or rect.Y not in (lo, hi):
+                    Y = next((Y for Y in (lo, hi) if Y in bend
+                              and rect.Y == (Y if frames[Y] is None else frames[Y].row)), None)
+                    # a band line near its cards can leave a short segment's text no px past the
+                    # bend; there the frame decides, and `TheFrameATextIsReadIn` holds it
+                    if Y is None or (frames[Y] is not None and frames[Y].row != Y):
                         continue
                     ends += 1
-                    want = ((bend[rect.Y] + 1, labels.INF) if rect.Y == lo
-                            else (-labels.INF, bend[rect.Y] - 1))
+                    want = ((bend[Y] + 1, labels.INF) if Y == lo else (-labels.INF, bend[Y] - 1))
                     self.assertEqual((rect.y0, rect.y1), want,
                                      f"{name}: the text of edge {i} does not stay past the bend")
         self.assertGreater(ends, 10, f"harness: only {ends} end rows are read at all")
@@ -1466,7 +1780,7 @@ class TheEndOfAVerticalRun(unittest.TestCase):
         banded = labels.banded_rows(paths)
         rects = {(r.owner, r.Y): r for r in labels.occupancy(cells, paths, offsets, geo, occupied)
                  if r.kind == labels.LINE}
-        read, kinds = [], {"at a bend": 0, "off the base": 0, "half the row": 0}
+        read, kinds = [], {"at a bend": 0, "off the base": 0, "half the row": 0, "clamped": 0}
         for j, (q, off) in enumerate(zip(paths, offsets)):
             for k in range(len(q) - 1):
                 if q[k][0] != q[k + 1][0]:
@@ -1477,17 +1791,25 @@ class TheEndOfAVerticalRun(unittest.TestCase):
                     # the two the amendment leaves at the base: the clamp of a banded row, and an
                     # end on a card, which is an end of the path itself
                     known = Y not in banded and 0 < at < len(q) - 1
-                    kinds["at a bend" if known else "half the row"] += 1
+                    clamped = Y in banded and 0 < at < len(q) - 1
+                    kinds["at a bend" if known else "clamped" if clamped else "half the row"] += 1
                     kinds["off the base"] += int(known and oy != 0)
-                    rect = rects[(j, k), Y]
-                    want = (oy - 1 if Y == lo else oy + 1) if known else 0.0
+                    # a row line of a known frame is read in it: its rectangles stand in the
+                    # frame's own row, shifted by where this line's base stands there
+                    frame = geo.frame(Y)
+                    shift = 0.0 if frame is None else frame.at
+                    rect = rects[(j, k), Y if frame is None else frame.row]
+                    # a bend the clamp of a banded row draws between the base and its own offset
+                    want = ((oy - 1 if Y == lo else oy + 1) + shift if known
+                            else (min(0.0, oy) - 1 if Y == lo else max(0.0, oy) + 1) if clamped
+                            else 0.0)
                     read.append((rect.y0 if Y == lo else rect.y1, want, (j, k, Y)))
         return read, kinds
 
     def test_every_end_of_the_corpus_is_read_where_its_bend_is_drawn(self):
         """End by end over the whole corpus: the offset of the bend where the run turns in a plain
         row, and the half row it comes from where the row is banded or the run ends on a card."""
-        wrong, tally = [], {"at a bend": 0, "off the base": 0, "half the row": 0}
+        wrong, tally = [], {"at a bend": 0, "off the base": 0, "half the row": 0, "clamped": 0}
         for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
             read, kinds = self.ends(layout, mode)
             wrong += [f"{name} run {end}: {got} for {want}" for got, want, end in read
@@ -1510,7 +1832,9 @@ class TheEndOfAVerticalRun(unittest.TestCase):
         layout, mode, said, i, _, turn = self.named(RUN_END_INVENTED)
         mine, Y = RUN_END_INVENTED[1], RUN_END_INVENTED[4]
         _, cands, _, _, runs, _ = candidates(layout, mode)
-        left = next(c for c in cands[i] if c.la[1] == "m" and c.grow == "L")
+        # the middle of the segment depends on card heights and covers the gutter whole since spec
+        # 7.1 was amended a fourth time; the place pinned to that gutter stands on its base
+        left = next(c for c in cands[i] if c.la[1] == "r" and c.la[2] == Y and c.grow == "L")
         text = next(r for r in left.rects if r.Y == Y)
         self.assertEqual((text.y0, text.y1), (-labels.TEXT_HALF, labels.TEXT_HALF),
                          f"premise: that place no longer stands on the base of row {Y}")
@@ -1519,7 +1843,6 @@ class TheEndOfAVerticalRun(unittest.TestCase):
                         f"{text.x0}..{text.x1}")
         self.assertEqual(sorted(labels.hits(left, runs)), [])
         choice = next(c for c in chosen(layout, mode) if c.edge == i)
-        self.assertEqual(place(dict(layout["edges"][i], la=choice.cand.la)), "L")
         self.assertEqual(choice.clashes, ())
         self.assertEqual([w for w in said if w.startswith(f"связь {mine}:")], [], said)
 
@@ -1560,13 +1883,17 @@ class TheCardALabelHangsFromIsExempt(unittest.TestCase):
         """A line leaving the card sideways and one coming down the gutter into its side are drawn
         within the card's height, above the text hanging under it: with the exemption the label
         stands, without it the very same place offers no room at all. The plan says nothing about
-        either label of the model — the one under the card because of the exemption, the sideways
-        one because it now has the room under its own line (spec 7.2)."""
+        the label under the card, because of the exemption. The sideways one has the room under
+        its own line (spec 7.2) in a page; in a widget the text there, clamped with its line into
+        a? — a card as short as a card is drawn — reaches the gutter under it by up to 5.5 px, where
+        the text under the card begins 3.5 px down, and takes the room over its line instead (spec
+        7.1 as amended a fourth time)."""
         model = cases.exit_model(["p q . .", "a? . t .", "b . . ."],
                                  ["a? -> b : ручная проверка", "a? -> t : нет", "p -> a?",
                                   "q -> a?"], nodes=cases.TALL)
         layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
-        self.assertEqual(said(warnings), [], warnings)
+        self.assertEqual(said([w for w in warnings if w.startswith("связь a? -> b:")]), [], warnings)
+        self.assertEqual(said(warnings), [LIES], warnings)
         under = next(c for c in chosen(layout, "widget") if c.cand.where == labels.DOWN)
         self.assertIsNone(under.room, "the label under a? no longer stands where this case reads it")
         bare = next(c for c in chosen(layout, "widget", exempt=False) if c.cand.where == labels.DOWN)

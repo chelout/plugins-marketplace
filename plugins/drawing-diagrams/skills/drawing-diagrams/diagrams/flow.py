@@ -1,5 +1,7 @@
 """Kinds `flow` (algorithm with decisions) and `swimlane` (steps by participant)."""
+import collections
 import json
+import math
 import re
 
 from . import assets, labels, router
@@ -123,6 +125,15 @@ def margin_room(kind, mode_name, footnotes):
     return TOP_ROOM[key], BOTTOM_ROOM[(*key, bool(footnotes))]
 
 
+# Where the base of a row line stands against the cards around it (`Geometry.frame`). A frame is
+# the run of row lines between two rows of cards — one gutter, an outer margin, or every line of a
+# band of empty rows — and its lines are read in the px of its lowest one, `row`: `at` is the base
+# of the line asked about from the base of `row`, `top` and `bottom` the card edges over and under
+# the frame from that same base, infinite where no row of cards stands on that side, and `first` the
+# frame's highest line.
+Frame = collections.namedtuple("Frame", "row at top bottom first")
+
+
 class Geometry:
     """Pixel x of cards and lattice lines, relative to the grid box, as template/js/flow.js derives
     them (tracks, bx, clampX). Card heights are unknown here, so there is no y, only the gutter
@@ -145,7 +156,9 @@ class Geometry:
         self.margin = max(8, mode["pad_l"] - 6)
         self.top_room, self.bottom_room = top, bottom
         self.empty = sorted(r for r in empty if 0 <= r < rows - 1)
+        self.tracks = self._tracks()
         self.band = self._band()
+        self.frames = {}
 
     def left(self, c):
         return self.pad_l + c * (self.w + self.gap)
@@ -166,32 +179,30 @@ class Geometry:
     def clamp(self, c, x):
         return min(max(x, self.left(c) + 12), self.right(c) - 12)
 
-    def _band(self):
-        """The room of every lattice row line an empty row governs: {line: (lower side, higher side)},
-        with MEASURED in place of the top margin's away-from-the-cards side, which only the browser
-        measurement states.
+    def _tracks(self):
+        """Every run of empty rows of the drawn extent as tracks() of template/js/head.js lays it
+        out: [(a, b, above, {lattice line: px of its base})], `a`..`b` the empty rows of the run and
+        `above` the card edge over it, None over a leading run, which the top margin bounds.
 
-        tracks() of template/js/head.js gives an empty row of the drawn extent a track at one y and
-        fills the empty rows in ascending order, so each of them sees the tracks already invented
-        above it: the first row of the grid lands TRACK_LEAD px above the first cards, and every other
-        empty row halfway between the row above it and the top of the next row of cards. So a run of
-        k empty rows halves what is left of the span below it, k times. An empty implicit grid row is
-        0 px high and both of its row gaps stay, so that span is (k + 1) row gaps between two rows of
-        cards. by() then puts a row line in the middle of its own track, a gutter in the middle
-        between two tracks, and the top margin `margin` above the first track.
+        tracks() gives an empty row of the drawn extent a track at one y and fills the empty rows in
+        ascending order, so each of them sees the tracks already invented above it: the first row of
+        the grid lands TRACK_LEAD px above the first cards, and every other empty row halfway
+        between the row above it and the top of the next row of cards. So a run of k empty rows
+        halves what is left of the span below it, k times. An empty implicit grid row is 0 px high
+        and both of its row gaps stay, so that span is (k + 1) row gaps between two rows of cards.
+        by() then puts a row line in the middle of its own track, a gutter in the middle between two
+        tracks, and the top margin `margin` above the first track.
 
         Each run is measured in px from the card edge that ends it, downwards, so its own lines are
-        negative and the cards below it are at 0. A side facing a card edge keeps LINE_CLEAR off the
-        distance to it; a side facing another lattice line takes `shared_room` of the distance — the
-        two groups share it, less one smallest pitch kept between them, which is what stops the
-        outermost lines of two neighbouring groups being drawn on one y."""
+        negative and the cards below it are at 0. `_band` prices the lines of a run from these px
+        and `frame` states them; neither reads the other."""
         runs = []
         for r in self.empty:
             if runs and runs[-1][-1] == r - 1:
                 runs[-1].append(r)
             else:
                 runs.append([r])
-        out = {}
+        out = []
         for run in runs:
             a, b = run[0], run[-1]
             if a == 0:
@@ -204,14 +215,61 @@ class Geometry:
                 above, first = -span, (-span + ys[0]) / 2
             # gutters[k] is the lattice line 2 * (a + k), the one above the empty row a + k
             gutters = [first] + [(ys[j - 1] + ys[j]) / 2 for j in range(1, len(ys))] + [ys[-1] / 2]
-            for j, y in enumerate(ys):
-                out[2 * (a + j) + 1] = (shared_room(y - gutters[j]), shared_room(gutters[j + 1] - y))
-            out[2 * a] = (MEASURED if above is None else first - above - LINE_CLEAR,
-                          shared_room(ys[0] - first))
-            for k in range(1, len(run)):
-                out[2 * (a + k)] = (shared_room(gutters[k] - ys[k - 1]), shared_room(ys[k] - gutters[k]))
-            out[2 * (b + 1)] = (shared_room(gutters[-1] - ys[-1]), -gutters[-1] - LINE_CLEAR)
+            at = {2 * (a + j): y for j, y in enumerate(gutters)}
+            at.update({2 * (a + j) + 1: y for j, y in enumerate(ys)})
+            out.append((a, b, above, at))
         return out
+
+    def _band(self):
+        """The room of every lattice row line an empty row governs: {line: (lower side, higher side)},
+        with MEASURED in place of the top margin's away-from-the-cards side, which only the browser
+        measurement states. The px of the lines are `_tracks`'.
+
+        A side facing a card edge keeps LINE_CLEAR off the distance to it; a side facing another
+        lattice line takes `shared_room` of the distance — the two groups share it, less one
+        smallest pitch kept between them, which is what stops the outermost lines of two
+        neighbouring groups being drawn on one y."""
+        out = {}
+        for a, b, above, at in self.tracks:
+            for r in range(a, b + 1):
+                y = at[2 * r + 1]
+                out[2 * r + 1] = (shared_room(y - at[2 * r]), shared_room(at[2 * r + 2] - y))
+            out[2 * a] = (MEASURED if above is None else at[2 * a] - above - LINE_CLEAR,
+                          shared_room(at[2 * a + 1] - at[2 * a]))
+            for r in range(a + 1, b + 1):
+                out[2 * r] = (shared_room(at[2 * r] - at[2 * r - 1]),
+                              shared_room(at[2 * r + 1] - at[2 * r]))
+            out[2 * (b + 1)] = (shared_room(at[2 * b + 2] - at[2 * b + 1]), -at[2 * b + 2] - LINE_CLEAR)
+        return out
+
+    def frame(self, line):
+        """Where the base of row line `line` stands against the cards around it, as a Frame, or None
+        where this side cannot say: a row of cards, whose base template/js/flow.js puts in the middle
+        of its tallest card, or of the band its sideways lines are clamped into.
+
+        Every other row line stands at px this side knows from the same construction the room of
+        stage B is priced with: a gutter in the middle of the `row_gap` between two rows of cards, an
+        outer row margin `margin` outside them, and every line of a band of empty rows where
+        `_tracks` puts it. The lines between the same two rows of cards are one frame, read in the px
+        of its lowest line, so that what stands on one of them is measured against what stands on
+        the others (spec 7.1 as amended a fourth time)."""
+        found = self.frames.get(line)
+        if found is None:
+            found = self.frames[line] = self._frame(line)
+        return found
+
+    def _frame(self, line):
+        for a, b, above, at in self.tracks:
+            if 2 * a <= line <= 2 * (b + 1):
+                row = 2 * (b + 1)
+                return Frame(row, at[line] - at[row], -math.inf if above is None else above - at[row],
+                             -at[row], 2 * a)
+        if line % 2:
+            return None
+        g = line // 2
+        top = -math.inf if g == 0 else -(self.margin if g == self.rows else self.row_gap / 2)
+        bottom = math.inf if g == self.rows else (self.margin if g == 0 else self.row_gap / 2)
+        return Frame(line, 0.0, top, bottom, line)
 
     def room(self, axis, line):
         """The px the lines of one group on this lattice line may spread over, on each side of it,

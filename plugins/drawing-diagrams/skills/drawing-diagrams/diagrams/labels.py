@@ -38,6 +38,15 @@ gutter is `row_gap` high about its base and an outer row margin `margin` deep, a
 from a segment drawn off that base can reach past either (spec 7.1 as amended). `reached` says
 which rows it then stands in, and there it lies on the cards it shares px with and on nothing else.
 
+Wherever the page's geometry is known here, every object is read in one frame (spec 7.1 as
+amended a fourth time): the lines between two rows of cards — a gutter, an outer margin, every line
+of a band of empty rows — stand at px `Geometry.frame` states against those cards, and a rectangle
+of any of them is written in the row of the frame's lowest line, shifted by where its own base
+stands there. So a text on one line of a band meets the lines, the labels and the cards of every
+other line it reaches, and a row of cards it reaches drops the place. A row of cards states no px:
+there a rectangle holds every y it can be drawn at, from the least height a card is drawn at and
+from the clamp of a banded row, and the frames beside it are read for whatever it reaches past it.
+
 `place` is what `flow.plan` asks; `candidates` is the source of places it has, the table of spec 7.2
 whole, `terms` prices one place and `cost` a whole choice of them, and `search` looks for the
 cheapest — starting from `greedy`, which takes the first place with the room for each label in turn.
@@ -84,6 +93,19 @@ LABEL_WORD = 8    # two labels in one row keep this much more apart, or they rea
 # Half the height of the text box, in px. A line is drawn 2 px wide, so a line whose centre is
 # nearer than LINE_REACH to the middle of the text is exactly one whose box meets this one.
 TEXT_HALF = LINE_REACH - 1
+
+# The least height template/css draws a card at, in px. The smallest is a note — one line of 11.5 px
+# text at line-height 1.35 under 5 + 7 px of padding — and a header is one line of 13 px at 1.25
+# under 7 + 6, each inside a 1 px border either side: about 29.5 and 31 px. Every other number here
+# that depends on a card's height reads it as unknown; this is the one bound on it, and
+# tests/test_browser_lines.py holds every card it draws to it.
+CARD_LEAST = 28
+
+# How far inside the band of its cards template/js/flow.js holds a point of a banded row: rowY() and
+# clampY() keep it 10 px inside the lowest top and the highest bottom of the cards a line of the row
+# enters or leaves sideways. A card being at least CARD_LEAST high, the clamp moves a point towards
+# the base of its row and never past it.
+CLAMP = 10
 
 CARD, LINE, LABEL, BOUND = "CARD", "LINE", "LABEL", "BOUND"
 
@@ -166,6 +188,84 @@ def _turn(q, off, at, Y, banded):
     return off[at][1]
 
 
+def _key(geo, Y):
+    """(the row a rectangle of lattice row `Y` is written in, the px its y shifts by there): the
+    lowest line of the frame for a line whose frame `Geometry.frame` states, and the row itself,
+    unshifted, for a row of cards."""
+    frame = geo.frame(Y)
+    return (Y, 0.0) if frame is None else (frame.row, frame.at)
+
+
+def _poke(geo, Y, up, down):
+    """What something of the row of cards `Y` reaches past its top edge by `up` px and past its
+    bottom edge by `down`: [(row, y0, y1)] in the frames over and under the row, and the rows of
+    cards beyond those it reaches as well."""
+    spans, rows = [], []
+    if up > 0:
+        frame = geo.frame(Y - 1)
+        spans.append((frame.row, frame.bottom - up, frame.bottom))
+        if frame.bottom - up < frame.top:
+            rows.append(frame.first - 1)
+    if down > 0:
+        frame = geo.frame(Y + 1)
+        spans.append((frame.row, frame.top, frame.top + down))
+        if frame.top + down > frame.bottom:
+            rows.append(frame.row + 1)
+    return spans, rows
+
+
+def _stands(geo, Y, y0, y1, banded, poke=(0, 0)):
+    """([(row, y0, y1)] where a text spanning `y0`..`y1` of lattice row `Y` stands, [the rows of
+    cards it only reaches into]).
+
+    On a line of a known frame the text is written in that frame, and a finite side of it past the
+    card edge on that side reaches the row of cards there. On a row of cards no line enters
+    sideways its y is px from the middle of the row, which is at least CARD_LEAST high, so a side
+    farther than half that from the middle can stand past the row by the rest — in the frame beside
+    it, and on into the next row of cards. On a banded row its y is an order among the lines of the
+    row, which the clamp keeps, and how far it reaches past the row is `poke` (up, down), which only
+    the caller can tell from the clamp."""
+    frame = geo.frame(Y)
+    if frame is not None:
+        a, b = y0 + frame.at, y1 + frame.at
+        rows = []
+        if -INF < a < frame.top:
+            rows.append(frame.first - 1)
+        if INF > b > frame.bottom:
+            rows.append(frame.row + 1)
+        return [(frame.row, a, b)], rows
+    if Y not in banded:
+        half = CARD_LEAST / 2
+        poke = (-y0 - half if y0 > -INF else 0, y1 - half if y1 < INF else 0)
+    spans, rows = _poke(geo, Y, *poke)
+    return [(Y, y0, y1)] + spans, rows
+
+
+def _clamped(oy, near, far):
+    """How far past the edges of a banded row of cards a text drawn `near`..`far` px from a line of
+    that row at offset `oy` can reach: (over its top edge, under its bottom edge). The clamp holds
+    the line CLAMP inside the band of the cards, and it moves the line only towards the base of the
+    row, which stands at least half of CARD_LEAST inside that band, so the line stands no nearer an
+    edge than both of those allow."""
+    top = max(CLAMP, CARD_LEAST / 2 + min(0.0, oy))
+    bottom = max(CLAMP, CARD_LEAST / 2 - max(0.0, oy))
+    return max(0.0, -near - top), max(0.0, far - bottom)
+
+
+def _column(geo, lo, hi, top, bottom):
+    """[(row, y0, y1)] of something drawn down the page from `top` in lattice row `lo` to `bottom`
+    in row `hi`, each from the base of its own row, and through the whole of every row between. A
+    frame it stands in is one rectangle, from the end standing in it or from the edge it enters by,
+    to the other end or the edge it leaves by."""
+    out = {}
+    for Y in range(lo, hi + 1):
+        R, at = _key(geo, Y)
+        a = top + at if Y == lo else -INF
+        b = bottom + at if Y == hi else INF
+        out[R] = (out[R][0], b) if R in out else (a, b)
+    return [(R, a, b) for R, (a, b) in out.items()]
+
+
 def occupancy(cells, paths, offsets, geo, occupied):
     """Every drawn object as rectangles: the cards on `occupied` cells, named by the node standing
     there; the runs of every path, named by (path index, segment index); and the bounds the drawn
@@ -174,9 +274,14 @@ def occupancy(cells, paths, offsets, geo, occupied):
     A card is the whole of its row: its height is unknown here, and cards align to the top of the
     row, so nothing below its bottom edge can be told from inside it. A vertical run covers the
     whole of every row it passes through, and a row it ends in down to the bend drawn there, its own
-    half-width kept; where `_turn` cannot say where that end is drawn, half of the row stays — the
-    half the run comes from. A horizontal run is its offset either way of the base, as wide as it is
-    drawn."""
+    half-width kept. Where `_turn` cannot say where that end is drawn, half of the row stays — the
+    half the run comes from — and in a banded row it runs on to the bend's own offset where that
+    lies past the base, since the clamp draws the bend somewhere between the two. A horizontal run is
+    its offset either way of the base, as wide as it is drawn, and on a row of cards no line enters
+    sideways it can be drawn past the row as `_stands` reads it.
+
+    Every rectangle of a line of a known frame is written in that frame (`_key`), and a run through
+    several lines of one frame is one rectangle there, from end to end."""
     named = {}
     for nid, rc in cells.items():
         if rc in occupied:
@@ -191,19 +296,24 @@ def occupancy(cells, paths, offsets, geo, occupied):
                 x = geo.x(x1) + off[k][0]
                 lo, hi = min(y1, y2), max(y1, y2)
                 above, below = (k, k + 1) if y1 < y2 else (k + 1, k)
-                top, bottom = _turn(q, off, above, lo, banded), _turn(q, off, below, hi, banded)
-                starts = 0.0 if top is None else top - 1
-                stops = 0.0 if bottom is None else bottom + 1
-                for Y in range(lo, hi + 1):
-                    out.append(Rect(Y, -INF if Y > lo else starts, INF if Y < hi else stops,
-                                    x - 1, x + 1, LINE, (j, k)))
+                ends = []
+                for at, Y, way in ((above, lo, -1), (below, hi, 1)):
+                    turn = _turn(q, off, at, Y, banded)
+                    if turn is not None:
+                        ends.append(turn + way)
+                    elif Y in banded and 0 < at < len(q) - 1:
+                        ends.append((min if way < 0 else max)(0.0, off[at][1]) + way)
+                    else:
+                        ends.append(0.0)
+                for R, a, b in _column(geo, lo, hi, *ends):
+                    out.append(Rect(R, a, b, x - 1, x + 1, LINE, (j, k)))
             else:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
-                out.append(Rect(y1, off[k][1] - 1, off[k][1] + 1,
-                                min(xa, xb), max(xa, xb), LINE, (j, k)))
-    for Y in range(2 * geo.rows + 1):
-        out.append(Rect(Y, -INF, INF, -INF, 0.0, BOUND, "left"))
-        out.append(Rect(Y, -INF, INF, geo.total, INF, BOUND, "right"))
+                for R, a, b in _stands(geo, y1, off[k][1] - 1, off[k][1] + 1, banded)[0]:
+                    out.append(Rect(R, a, b, min(xa, xb), max(xa, xb), LINE, (j, k)))
+    for R in sorted({_key(geo, Y)[0] for Y in range(2 * geo.rows + 1)}):
+        out.append(Rect(R, -INF, INF, -INF, 0.0, BOUND, "left"))
+        out.append(Rect(R, -INF, INF, geo.total, INF, BOUND, "right"))
     return out
 
 
@@ -246,6 +356,13 @@ def _text(Y, y0, y1, start, grow, need, owner):
     return Rect(Y, y0, y1, x0, x0 + need, LABEL, owner)
 
 
+def _texts(spans, rows, start, grow, need, owner):
+    """The rectangles of one text standing where `_stands` says: one per span, and the whole of
+    every row of cards it only reaches into."""
+    return (*(_text(R, a, b, start, grow, need, owner) for R, a, b in spans),
+            *(_text(R, -INF, INF, start, grow, need, owner) for R in rows))
+
+
 def _at_card(node, paths):
     """The runs drawn within the height of the card at lattice point `node`: one that leaves or
     enters it along its row, and a vertical that comes down to the row and turns into it. A label
@@ -265,52 +382,110 @@ def _at_card(node, paths):
     return out
 
 
-def _beside(Y, pin, lo, hi, bend, banded):
-    """The y of a text beside a vertical second segment, in row Y.
+def _drawn(geo, q, off, at):
+    """(the frame row, the px y there) of point `at` of path `q` as template/js/flow.js draws it,
+    where this side knows it: a bend on a line of a known frame, or the top edge of a card a
+    vertical segment comes down onto, which is the edge its row begins with. None anywhere else — a
+    point of a row of cards, whose y depends on the height of the row, and a card's bottom edge."""
+    if at in (0, len(q) - 1):
+        if q[at][1] <= q[at - 1][1]:
+            return None
+        frame = geo.frame(q[at][1] - 1)
+        return frame.row, frame.bottom
+    frame = geo.frame(q[at][1])
+    return None if frame is None else (frame.row, frame.at + off[at][1])
 
-    Pinned to a row, and in the rows the middle of the segment can fall in, the text stands on the
-    base of the row: it covers the base either way of it, or the whole row where the clamp of a
-    banded row moves the lines of that row by an unknown amount. In a row the segment ends in, the
-    middle of the text stays beyond the bend drawn there — half a row of the lattice away from it —
-    so it covers the row past that line and no more. `flow.band_obstacles` reads such a row the
-    other way round: every line that crosses it counts, wherever it stops, and every line that runs
-    along it is left out, wherever it runs. That is the one reading the two differ in.
+
+def _least(geo, q, off, lo, hi, banded):
+    """The least px the second segment of `q`, lattice rows `lo` to `hi`, can be drawn long: from
+    its upper end to the edge of that end's row or frame, the whole of every frame between — each
+    its own height — and every row of cards between, at least CARD_LEAST, and on to its lower end.
+    A bend on a line of a known frame stands its px from that frame's edge, one on a banded row
+    CLAMP inside it, one on another row of cards at least half a card from the middle less its own
+    offset, and a card's own edge on it."""
+    upper = 1 if q[1][1] == lo else 2
+
+    def reach(at, Y, down):
+        if at in (0, len(q) - 1):
+            return 0.0
+        frame, oy = geo.frame(Y), off[at][1]
+        if frame is not None:
+            return frame.bottom - frame.at - oy if down else frame.at + oy - frame.top
+        if Y in banded:
+            return CLAMP
+        return CARD_LEAST / 2 - oy if down else CARD_LEAST / 2 + oy
+
+    keys = []
+    for Y in range(lo, hi + 1):
+        R = _key(geo, Y)[0]
+        if not keys or keys[-1][0] != R:
+            keys.append((R, Y))
+    out = reach(upper, lo, True) + reach(3 - upper, hi, False)
+    for _, Y in keys[1:-1]:
+        frame = geo.frame(Y)
+        out += CARD_LEAST if frame is None else frame.bottom - frame.top
+    return out
+
+
+def _middle(geo, q, off, lo, hi, rows, bend, banded):
+    """([(row, y0, y1)], [rows of cards reached]) of the text at the middle of the vertical second
+    segment of path `q`, which template/js/flow.js draws at the middle of the segment's two drawn
+    points, `rows` the lattice rows it can fall in.
+
+    Where both points are drawn on lines of one known frame, that middle is known, and the text
+    stands there. Anywhere else it depends on card heights, and the text covers every row between
+    the two ends whole, and in the row of each end the row past the bend drawn there: past it by
+    1 px where the segment is long enough to keep the text's near edge that far off the bend, and by
+    what `_least` leaves where it is not. `flow.band_obstacles` read such a row the other way round:
+    every line that crosses it counted, wherever it stopped, and every line that runs along it was
+    left out, wherever it ran — the one reading the two differed in.
 
     A banded row is read past the bend here where `_turn` gives a run of that row no y at all: this
     text hangs from the middle of its own second segment, so the clamp that moves the bend moves the
     text with it and the order of the two survives, where the px a clamped line stands from the base
-    of its row do not."""
-    if pin is None and Y in bend and Y in (lo, hi):
-        return (bend[Y] + 1, INF) if Y == lo else (-INF, bend[Y] - 1)
-    return (-INF, INF) if Y in banded else (-TEXT_HALF, TEXT_HALF)
+    of its row do not — unless the segment is too short to keep the text past the bend, and then
+    the whole row."""
+    ends = [_drawn(geo, q, off, 1), _drawn(geo, q, off, 2)]
+    if ends[0] and ends[1] and ends[0][0] == ends[1][0]:
+        m = (ends[0][1] + ends[1][1]) / 2
+        return _stands(geo, ends[0][0], m - TEXT_HALF, m + TEXT_HALF, banded)
+    past = min(1.0, _least(geo, q, off, lo, hi, banded) / 2 - TEXT_HALF)
+    spans, rows_reached = [], []
+    for Y in rows:
+        y0 = bend[Y] + past if Y == lo and Y in bend else -INF
+        y1 = bend[Y] - past if Y == hi and Y in bend else INF
+        if Y in banded and past < 1:
+            y0, y1 = -INF, INF
+        got, reach = _stands(geo, Y, y0, y1, banded)
+        rows_reached += [R for R in reach if R not in rows_reached]
+        for R, a, b in got:
+            if spans and spans[-1][0] == R:
+                spans[-1] = (R, spans[-1][1], b)
+            elif R in [x[0] for x in spans]:
+                k = next(n for n, x in enumerate(spans) if x[0] == R)
+                spans[k] = (R, min(spans[k][1], a), max(spans[k][2], b))
+            else:
+                spans.append((R, a, b))
+    return spans, rows_reached
 
 
 def reached(geo, Y, y0, y1):
     """The rows of cards a text spanning `y0`..`y1` of lattice row `Y` reaches into (spec 7.1 as
-    amended a third time on 2026-09-21: a text stands in every row it reaches, not only in the row
-    of the line it hangs from).
+    amended a third and a fourth time on 2026-09-21: a text stands in every row it reaches, and is
+    read in the frame of the line it hangs from).
 
-    A row line this side states the px of is one whose own row gap is drawn: template/js/head.js
-    `tracks()` and flow.js `by()` put a gutter in the middle of the `row_gap` between two rows of
-    cards and an outer row margin `margin` px outside them, so such a line stands that far from the
-    cards on either side of it. Cards align to the top of their row, so the row under the line
-    begins with its cards and a text reaching into it lies on whatever card it shares px with; the
-    row over it ends with its tallest card, whose height is unknown here, so a text reaching into
-    that one is read the same way.
+    A row line this side states the px of is one of a known frame (`Geometry.frame`): a gutter in
+    the middle of the `row_gap` between two rows of cards, an outer row margin `margin` px outside
+    them, and every line of a band of empty rows where `tracks()` invents its tracks. Cards align to
+    the top of their row, so the row under the frame begins with its cards and a text reaching into
+    it lies on whatever card it shares px with; the row over it ends with its tallest card, whose
+    height is unknown here, so a text reaching into that one is read the same way.
 
-    Nothing comes back for a row this side has no px of: a row of cards, as high as its own tallest
-    card, and a line beside an empty row, which `tracks()` places against the tracks it invents
-    there (`Geometry._band`) and not against a row gap. A text of such a row keeps the model's
-    uncertainty inside it, as every other unknown height here does."""
-    if Y % 2 or Y // 2 - 1 in geo.empty or Y // 2 in geo.empty:
+    Nothing comes back for a row of cards, as high as its own tallest card: what a text there
+    reaches past it is `_stands`'."""
+    if geo.frame(Y) is None:
         return ()
-    g = Y // 2
-    out = []
-    if g and y0 < -(geo.margin if g == geo.rows else geo.row_gap / 2):
-        out.append(Y - 1)
-    if g < geo.rows and y1 > (geo.margin if g == 0 else geo.row_gap / 2):
-        out.append(Y + 1)
-    return tuple(out)
+    return tuple(_stands(geo, Y, y0, y1, ())[1])
 
 
 def drawn_owners(paths):
@@ -320,7 +495,7 @@ def drawn_owners(paths):
             + tuple(range(len(paths))))
 
 
-def _on_segment(i, p, off, x1, x2, need, geo, owners):
+def _on_segment(i, p, off, x1, x2, need, geo, owners, banded):
     """The three places on a horizontal second segment, preferred first (spec 7.2): over it just
     after the bend, under it just after the bend, over it at its far end. `x1` is the px x of the
     bend the segment starts at, `x2` of the end it runs to.
@@ -333,8 +508,10 @@ def _on_segment(i, p, off, x1, x2, need, geo, owners):
     own line is spread to — and not from the base of the row (spec 7.2 as amended): the anchor takes
     the drawn y of the point it hangs from, so the text moves with the line it belongs to, and a
     segment drawn far from the base no longer runs through its own label. A segment drawn far enough
-    off that base takes its text out of the row as well, and `reached` says which rows it then
-    stands in.
+    off that base takes its text out of the row as well, and `_stands` says which rows it then
+    stands in. Along a banded row of cards the clamp moves the segment and its text together: the
+    text covers the row past its own line, and past the row's edge as far as the clamp leaves the
+    line from it.
 
     In a row it only reaches into the text lies on the cards it shares px with, and on nothing else
     (spec 7.1 as amended): it pokes past the edge of that row, and everything else drawn there — the
@@ -353,14 +530,16 @@ def _on_segment(i, p, off, x1, x2, need, geo, owners):
         grow = "R" if away else "L"
         up = where == OVER
         dy = -LABEL_OVER if up else LABEL_UNDER   # from the segment to the baseline
-        mid = seg + dy - LABEL_DROP               # and on to the middle of the text
-        y0, y1 = mid - TEXT_HALF, mid + TEXT_HALF
-        rows = reached(geo, Y, y0, y1)
-        exempt = {(Y2, (i, k)) for Y2 in (Y, *rows) for k in range(len(p) - 1)}
-        exempt |= {(Y2, owner) for Y2 in rows for owner in owners}
-        out.append(Candidate(where, rank,
-                             (_text(Y, y0, y1, start, grow, need, i),
-                              *(_text(Y2, -INF, INF, start, grow, need, i) for Y2 in rows)),
+        near = dy - LABEL_DROP - TEXT_HALF        # and on to the edges of the text
+        far = dy - LABEL_DROP + TEXT_HALF
+        if Y in banded:
+            spans, rows = _stands(geo, Y, *((-INF, seg - 1) if up else (seg + 1, INF)), banded,
+                                  _clamped(seg, near, far))
+        else:
+            spans, rows = _stands(geo, Y, seg + near, seg + far, banded)
+        exempt = {(R, (i, k)) for R in (*(s[0] for s in spans), *rows) for k in range(len(p) - 1)}
+        exempt |= {(R, owner) for R in rows for owner in owners}
+        out.append(Candidate(where, rank, _texts(spans, rows, start, grow, need, i),
                              start, grow, limit,
                              # the place a second label would have to take to land on this text:
                              # the end it hangs from and the way it grows, and the segment's own
@@ -384,6 +563,7 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
     tc = cells[e["b"]][1]
     sa = router.side_of(p[0], p[1])
     banded = banded_rows(paths)
+    owners = drawn_owners(paths)
     if len(p) >= 3 and p[2][1] == p[1][1]:
         x1 = geo.clamp(c, geo.x(p[1][0]) + off[1][0])
         if len(p) == 3:
@@ -392,7 +572,7 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
             x2 = geo.x(p[2][0]) + off[2][0]
             if len(p) == 4:
                 x2 = geo.clamp(tc, x2)
-        return _on_segment(i, p, off, x1, x2, need, geo, drawn_owners(paths))
+        return _on_segment(i, p, off, x1, x2, need, geo, owners, banded)
     if len(p) >= 3:
         # beside the vertical second segment. Anchored to the middle of the segment the script draws
         # the text at a pixel row that depends on card heights: that place is kept when the side is
@@ -411,7 +591,7 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         bend = {Y1: off[1][1]}
         if len(p) >= 4:
             bend[Y2] = off[2][1]
-        exempt = frozenset((Y, (i, 1)) for Y in range(lo, hi + 1))
+        exempt = frozenset((_key(geo, Y)[0], (i, 1)) for Y in range(lo, hi + 1))
         out, rank = [], 0
         for pin, rows in [(None, middle)] + [(Y, [Y]) for Y in pinned]:
             blo, bhi = (lo, hi) if pin is None else (pin, pin)
@@ -419,13 +599,16 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
                 if (side == "R" and X == 2 * geo.cols) or (side == "L" and X == 0):
                     continue  # outside the grid box the section clips the text
                 start = x + LABEL_BEND if side == "R" else x - LABEL_BEND
-                rects = tuple(_text(Y, *_beside(Y, pin, lo, hi, bend, banded), start, side, need, i)
-                              for Y in rows)
+                # pinned, the text stands on the base of its row, or anywhere in a banded one
+                spans, reach = (_middle(geo, p, off, lo, hi, rows, bend, banded) if pin is None
+                                else _stands(geo, pin, *((-INF, INF) if pin in banded
+                                                         else (-TEXT_HALF, TEXT_HALF)), banded))
                 la = (1, "m" if pin is None else "r", 0 if pin is None else pin,
                       LABEL_BEND if side == "R" else -LABEL_BEND, LABEL_DROP,
                       "start" if side == "R" else "end")
-                out.append(Candidate(BESIDE, rank, rects, start, side,
-                                     card_w - 20, ("v", X, blo, bhi, side), exempt, la))
+                out.append(Candidate(BESIDE, rank, _texts(spans, reach, start, side, need, i),
+                                     start, side, card_w - 20, ("v", X, blo, bhi, side),
+                                     exempt | {(R, owner) for R in reach for owner in owners}, la))
                 rank += 1
         return out
     if sa in ("L", "R"):
@@ -433,32 +616,42 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         # target, above the label's own line and then below it. The text is clamped with that line,
         # so above it covers everything over the line's top edge and below it everything under the
         # bottom edge — the order is all the clamp of a banded row leaves of the two
+        # clamped within its card, the line stands inside the card's edges, and the text reaches
+        # past them into the gutter over or under the card as far as `_clamped` leaves it
         Y = p[0][1]
         start = geo.right(c) + LABEL_SIDE if sa == "R" else geo.left(c) - LABEL_SIDE
-        exempt = frozenset({(Y, (i, 0)), (Y, e["a"])})
         dx = LABEL_SIDE if sa == "R" else -LABEL_SIDE
         anchor = "start" if sa == "R" else "end"
-        return [Candidate(SIDEWAYS, rank,
-                          (_text(Y, *rows, start, sa, need, i),),
-                          start, sa, geo.gap + card_w - 20, (e["a"], sa, up), exempt,
-                          (0, "p", 0, dx, -LABEL_LIFT if up else LABEL_SINK, anchor))
-                for rank, (up, rows) in enumerate(((True, (-INF, off[0][1] - 1)),
-                                                   (False, (off[0][1] + 1, INF))))]
+        out = []
+        for rank, (up, rows) in enumerate(((True, (-INF, off[0][1] - 1)),
+                                           (False, (off[0][1] + 1, INF)))):
+            dy = -LABEL_LIFT if up else LABEL_SINK
+            near, far = dy - LABEL_DROP - TEXT_HALF, dy - LABEL_DROP + TEXT_HALF
+            spans, reach = _stands(geo, Y, *rows, banded | {Y}, _clamped(off[0][1], near, far))
+            exempt = ({(Y, (i, 0)), (Y, e["a"])}
+                      | {(R, owner) for R in reach for owner in owners})
+            out.append(Candidate(SIDEWAYS, rank, _texts(spans, reach, start, sa, need, i),
+                                 start, sa, geo.gap + card_w - 20, (e["a"], sa, up),
+                                 frozenset(exempt), (0, "p", 0, dx, dy, anchor)))
+        return out
     # straight down or up: the text stands in the gutter under or over the card, between the card
     # and the middle of the gutter, where lines run, on the right of its own line and then on the
     # left. Under a card shorter than its row it stands higher, never lower, so when the row holds
     # other cards it may stand in the row as well
+    # the card edge is the frame's own, wherever the line the text stands on lies in it
     Y, up = (p[0][1] + 1, False) if sa == "B" else (p[0][1] - 1, True)
+    frame = geo.frame(Y)
     middle = LABEL_ABOVE + LABEL_DROP if up else LABEL_BELOW - LABEL_DROP  # off the card edge
-    mid = geo.row_gap / 2 - middle if up else middle - geo.row_gap / 2     # off the base of the row
+    mid = frame.bottom - middle if up else frame.top + middle
     x = geo.clamp(c, geo.x(p[1][0]) + off[1][0])
-    y0, y1 = (mid - TEXT_HALF, INF) if up else (-INF, mid + TEXT_HALF)
+    spans, reach = _stands(geo, frame.row, *((mid - TEXT_HALF, INF) if up
+                                             else (-INF, mid + TEXT_HALF)), banded)
     in_row = not up and any(rr == r and cc != c for rr, cc in occupied)
     out = []
     for rank, side in enumerate(("R", "L")):
         start = x + LABEL_BESIDE if side == "R" else x - LABEL_BESIDE
-        rects = [_text(Y, y0, y1, start, side, need, i)]
-        exempt = {(Y, (i, 0))}
+        rects = list(_texts(spans, reach, start, side, need, i))
+        exempt = {(frame.row, (i, 0))} | {(R, owner) for R in reach for owner in owners}
         if in_row:
             # the rectangle of that row is the height of the card the text hangs from, which this
             # side does not know, and it is there for the cards of the row and for the lines drawn
