@@ -1026,9 +1026,10 @@ class WhatALabelAnswersFor(unittest.TestCase):
     never for the ones after, and what "the very same place" means is the place's own key."""
 
     def test_two_labels_at_one_bend_and_two_offsets_are_not_one_place(self):
-        """Two labels on horizontal second segments starting at one bend and running one way: what
-        tells the two places apart is the offset each segment is drawn at, which is where the text
-        hangs from since spec 7.2 as amended, so the two keys differ however near the texts stand.
+        """Two labels on horizontal second segments starting at one bend and running one way, the
+        segments drawn at two offsets: the two keys differ however near the texts stand. Both pairs
+        here stand on opposite sides of their segments, so the side tells their places apart as
+        well; the pair on one side, where the offset is all that does, is the case after this one.
 
         On `ONE_BEND` the one segment is drawn below the base of its gutter row and the other above
         it, so since spec 7.1 as amended a third time one label keeps only the place over its
@@ -1070,6 +1071,28 @@ class WhatALabelAnswersFor(unittest.TestCase):
         self.assertNotEqual(first.cand.key, second.cand.key)
         self.assertEqual([c.kind for c in second.clashes].count(labels.ON_LINE), 1, second.clashes)
         self.assertEqual([c for c in second.clashes if c.kind == labels.SAME_PLACE], [])
+
+    def test_two_labels_over_one_bend_at_two_offsets_are_not_one_place(self):
+        """The same pair on one side: two segments leave one bend along one gutter row the same way,
+        drawn 0 and 5 px off its base, and each label stands over its own, just after the bend. The
+        two anchors are one and the same, so the offset each segment is drawn at is the one thing
+        that tells the two places apart — it is where each text hangs from since spec 7.2 as
+        amended. The texts meet, and the later label says so once: that it lies on something, and
+        not that the two took one place, which would be two warnings for one overlap."""
+        paths = [[(1, 3), (1, 4), (3, 4), (3, 5)], [(1, 3), (1, 4), (5, 4), (5, 5)]]
+        offsets = [[(0.0, 0.0)] * 4, [(0.0, 0.0), (0.0, 5.0), (0.0, 5.0), (0.0, 0.0)]]
+        _, cards, runs, places = scene("widget", ["x . .", "a . .", ". c d"], paths, offsets)
+        first, second = places(0, "a", "c")[0], places(1, "a", "d")[0]
+        self.assertEqual({(c.where, c.rank) for c in (first, second)}, {(labels.OVER, 0)},
+                         "premise: the two places are no longer both over the segment after the bend")
+        self.assertEqual(first.la, second.la, "premise: the two texts no longer hang alike")
+        self.assertNotEqual(first.rects[0].y0, second.rects[0].y0,
+                            "premise: the two segments are no longer drawn at different offsets")
+        self.assertTrue(labels.meet(first, second), "premise: the two texts no longer meet")
+        later = labels.verdicts([0, 1], {0: first, 1: second}, {}, cards, runs,
+                                labels.uprights(paths))[1]
+        self.assertEqual([c.kind for c in later.clashes], [labels.ON_LINE], later.clashes)
+        self.assertNotEqual(first.key, second.key)
 
     def test_the_error_of_a_label_names_nothing_placed_after_it(self):
         """Which label a fit error may name: the nearest thing of all is the text of the label
@@ -1394,8 +1417,10 @@ class TheFrameATextIsReadIn(unittest.TestCase):
     horizontal second segment and a pinned place on a band line reaching the cards (the band models
     of tests/test_label_lines.py), a text on one band line against a line and a label on another, a
     straight exit across a band of two or three rows, the middle of a vertical second segment, the
-    text of a sideways exit reaching the gutter, a text over a segment clamped into its row and a
-    text carried out of a row of cards by its segment's offset."""
+    text of a sideways exit reaching the gutter, a text over a segment clamped into its row — in
+    that row and in the gutter past its edge — and a text carried out of a row of cards by its
+    segment's offset. The confirmation round of the qa review found one more, held here as well: a
+    vertical run carried out of such a row by the bend it turns at."""
 
     def test_every_band_line_stands_where_tracks_puts_it(self):
         for mode in MODES:
@@ -1634,6 +1659,30 @@ class TheFrameATextIsReadIn(unittest.TestCase):
         self.assertEqual((over.where, over.rank), (labels.OVER, 0))
         self.assertIn((1, 0), labels.hits(over, runs))
 
+    def test_a_text_over_a_segment_clamped_near_its_rows_edge_reaches_the_gutter_beyond(self):
+        """The other half of the same place: the segment drawn 24 px over the base of its banded row,
+        which the clamp holds 10 px inside the top edge of a band as short as a card is drawn —
+        4 px over the base. The text over it spans -23.5 to -10.5 from the base, 9.5 px past that
+        edge into the gutter over the row: 10.5 to 20 in the gutter's frame. A line along the
+        gutter 14 px under its base, 13 to 15, runs through the text; one on the base stays clear."""
+        for gutter, through in ((14.0, True), (0.0, False)):
+            paths = [[(3, 1), (3, 3), (5, 3)], [(3, 1), (3, 2), (5, 2), (5, 3)]]
+            offsets = [[(0.0, 0.0), (0.0, -24.0), (0.0, -24.0)],
+                       [(0.0, 0.0), (0.0, gutter), (0.0, gutter), (0.0, 0.0)]]
+            geo, _, runs, places = scene("widget", [". s .", "a . c"], paths, offsets)
+            drawn = max(-24.0, -labels.CARD_LEAST / 2 + labels.CLAMP)
+            top = drawn - labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF
+            edge = geo.frame(2).bottom
+            over = places(0, "s", "c", 30.0)[0]
+            with self.subTest(gutter=gutter):
+                self.assertEqual((drawn, top), (-4.0, -23.5))
+                self.assertEqual((over.where, over.rank), (labels.OVER, 0))
+                self.assertEqual([(r.y0, r.y1) for r in runs if r.owner == (1, 1)],
+                                 [(gutter - 1, gutter + 1)])
+                (self.assertIn if through else self.assertNotIn)((1, 1), labels.hits(over, runs))
+                self.assertEqual([(r.y0, r.y1) for r in over.rects if r.Y == 2],
+                                 [(edge - (-top - labels.CARD_LEAST / 2), edge)])
+
     def test_a_text_carried_out_of_a_row_of_cards_is_read_in_the_next_one(self):
         """The answer's example: a segment along a row of cards no line enters sideways, 48 px under
         the middle of a card as short as a card is drawn, takes the text under it past the gutter
@@ -1654,6 +1703,41 @@ class TheFrameATextIsReadIn(unittest.TestCase):
                     self.assertLess(labels.room(place, cards), 30.0)
                 else:
                     self.assertGreaterEqual(labels.room(place, cards), 30.0)
+
+    def test_a_run_turning_past_a_row_of_cards_is_read_in_the_next_frame(self):
+        """The same reading for the run that turns at such a segment's bend. Drawn 20 or 48 px off
+        the middle of a row of cards no line enters sideways, the bend stands past the edge of a
+        card as short as a card is drawn, and so does the end of the vertical run that comes to it:
+        it goes on into the gutter beside the row, as the horizontal run leaving the bend does. A
+        text standing on that gutter's side of a segment along it has the run through it as well as
+        the segment — a "пересечёт" beside the "ляжет" — whether the run comes down to the bend or
+        leaves it upwards. At 13 px the bend stays inside the row, and so do both runs."""
+        rows = (("down", [". s . .", "a . . .", ". u . t"], [(3, 1), (3, 3), (7, 3), (7, 5)],
+                 [(3, 5), (3, 4), (1, 4), (1, 3)], 4, 1, labels.OVER, 0),
+                ("up", [". u . t", "a . . .", ". s . ."], [(3, 5), (3, 3), (7, 3), (7, 1)],
+                 [(3, 1), (3, 2), (1, 2), (1, 3)], 2, -1, labels.BENEATH, 1))
+        for way, grid, turning, along, R, sign, where, rank in rows:
+            for off in (20.0, 48.0, 13.0):
+                paths = [turning, along]
+                offsets = [[(0.0, 0.0), (0.0, sign * off), (0.0, sign * off), (0.0, 0.0)],
+                           [(8.0, 0.0), (8.0, 0.0), (0.0, 0.0), (0.0, 0.0)]]
+                geo, cards, runs, places = scene("widget", grid, paths, offsets)
+                frame = geo.frame(R)
+                past = off + 1 - labels.CARD_LEAST / 2
+                text = places(1, "u", "a")[rank]
+                end = [(r.y0, r.y1) for r in runs if r.owner == (0, 0) and r.Y == R]
+                kinds = sorted(c.kind for c in labels.verdicts(
+                    [1], {1: text}, {}, cards, runs, labels.uprights(paths))[0].clashes)
+                with self.subTest(way=way, offset=off):
+                    self.assertEqual((text.where, [r.Y for r in text.rects]), (where, [R]))
+                    if past <= 0:
+                        self.assertEqual(end, [])
+                        self.assertEqual(labels.hits(text, runs), frozenset())
+                        continue
+                    self.assertEqual(kinds, [labels.CROSSED, labels.ON_LINE])
+                    self.assertEqual(sorted(labels.hits(text, runs)), [(0, 0), (0, 1)])
+                    self.assertEqual(end, [(frame.top, frame.top + past) if sign > 0
+                                           else (frame.bottom - past, frame.bottom)])
 
     def test_an_end_clamped_past_the_base_covers_what_the_clamp_leaves(self):
         """A vertical run that turns into a banded row ends at its bend, which the clamp draws
@@ -1720,9 +1804,6 @@ class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
                 bend = {p[1][1]: off[1][1], **({p[2][1]: off[2][1]} if len(p) >= 4 else {})}
                 geo = inputs(layout, mode)[0]
                 frames = {Y: geo.frame(Y) for Y in (lo, hi)}
-                if frames[lo] is not None and frames[hi] is not None \
-                        and frames[lo].row == frames[hi].row:
-                    continue  # both ends in one frame: the middle is drawn where it is computed
                 for rect in (r for c in cs if c.la[1] == "m" for r in c.rects):
                     Y = next((Y for Y in (lo, hi) if Y in bend
                               and rect.Y == (Y if frames[Y] is None else frames[Y].row)), None)

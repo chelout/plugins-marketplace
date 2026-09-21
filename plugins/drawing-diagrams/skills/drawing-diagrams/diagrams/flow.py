@@ -481,7 +481,9 @@ def plan(model, mode_name, overrides=None, draft=False):
             errors.append(f"узел {nid}: kind {k!r} не из {NODE_KINDS}")
         if nid.endswith("?") and k != "decision":
             errors.append(f"узел {nid}: id с ? на конце это развилка, а kind = {k}")
-        if not n.get("title"):
+        # a title of white space alone draws a card lower than labels.CARD_LEAST, the least height
+        # the label model reads every card at, so it is no title at all
+        if not str(n.get("title") or "").strip():
             errors.append(f"узел {nid}: нет title")
             continue
         if n.get("group") and n["group"] not in groups:

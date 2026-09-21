@@ -137,9 +137,12 @@ line off it or parts it from another label, and keeps it otherwise.
   a line leaving or entering the same side of the card beside it runs through
   it, and so does a line along the gutter moved towards the card (4 px is
   enough in a widget, 8 px on a page); a line from the far side that turns
-  along the middle stays clear. A card shorter than its row hangs the text
-  inside the row, so when the row holds other cards the next card ends the
-  room, and a line drawn there at another card's height lies on the label.
+  along the middle stays clear, except over a card with two or more empty rows
+  above it: there the gutter next to the card stands 16.5 px or less over it,
+  and a line along its middle lies on the label of an exit up. A card shorter
+  than its row hangs the text inside the row, so when the row holds other
+  cards the next card ends the room, and a line drawn there at another card's
+  height lies on the label.
 - A straight sideways exit starts the label 3 px from the card edge, above its
   own line and, where that room is taken, below it. Into an occupied
   neighbour the room is the gutter less 5 px: 23 px in a widget flow, state or
@@ -152,8 +155,11 @@ line off it or parts it from another label, and keeps it otherwise.
   a gutter, not a whole cell. It is drawn 9 px over that segment as the
   segment itself is drawn, so parallel lines moving it take their labels with
   them. Where a line comes down through the text there, the label goes 17 px
-  under the same segment instead, or back to its far end — the three places
-  have one room between them, so what chooses is what runs through each.
+  under the same segment instead, or back to its far end. The three places
+  have one room between them, unless a text reaches out of its gutter into the
+  row of cards beside it, as one over or under a segment drawn far off the
+  gutter's middle does: a card in its way there ends that place's room.
+  Otherwise what chooses is what runs through each.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
   it on the segment, at a height that depends on how tall the cards are, which

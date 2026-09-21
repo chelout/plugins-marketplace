@@ -277,8 +277,9 @@ def occupancy(cells, paths, offsets, geo, occupied):
     half-width kept. Where `_turn` cannot say where that end is drawn, half of the row stays — the
     half the run comes from — and in a banded row it runs on to the bend's own offset where that
     lies past the base, since the clamp draws the bend somewhere between the two. A horizontal run is
-    its offset either way of the base, as wide as it is drawn, and on a row of cards no line enters
-    sideways it can be drawn past the row as `_stands` reads it.
+    its offset either way of the base, as wide as it is drawn. On a row of cards no line enters
+    sideways either can be drawn past the row as `_stands` reads it: the horizontal run by its
+    offset, and the vertical run by the bend it ends at, which is where that same offset puts it.
 
     Every rectangle of a line of a known frame is written in that frame (`_key`), and a run through
     several lines of one frame is one rectangle there, from end to end."""
@@ -296,16 +297,22 @@ def occupancy(cells, paths, offsets, geo, occupied):
                 x = geo.x(x1) + off[k][0]
                 lo, hi = min(y1, y2), max(y1, y2)
                 above, below = (k, k + 1) if y1 < y2 else (k + 1, k)
-                ends = []
+                ends, beyond = [], []
                 for at, Y, way in ((above, lo, -1), (below, hi, 1)):
                     turn = _turn(q, off, at, Y, banded)
                     if turn is not None:
                         ends.append(turn + way)
+                        if geo.frame(Y) is None:
+                            # a bend on a row of cards no line enters sideways: past the edge of
+                            # a card as short as a card is drawn the run goes on into the frame
+                            # beside the row, as the horizontal run leaving that bend does
+                            span = (turn + way, INF) if way < 0 else (-INF, turn + way)
+                            beyond += _stands(geo, Y, *span, banded)[0][1:]
                     elif Y in banded and 0 < at < len(q) - 1:
                         ends.append((min if way < 0 else max)(0.0, off[at][1]) + way)
                     else:
                         ends.append(0.0)
-                for R, a, b in _column(geo, lo, hi, *ends):
+                for R, a, b in _column(geo, lo, hi, *ends) + beyond:
                     out.append(Rect(R, a, b, x - 1, x + 1, LINE, (j, k)))
             else:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
@@ -382,20 +389,6 @@ def _at_card(node, paths):
     return out
 
 
-def _drawn(geo, q, off, at):
-    """(the frame row, the px y there) of point `at` of path `q` as template/js/flow.js draws it,
-    where this side knows it: a bend on a line of a known frame, or the top edge of a card a
-    vertical segment comes down onto, which is the edge its row begins with. None anywhere else — a
-    point of a row of cards, whose y depends on the height of the row, and a card's bottom edge."""
-    if at in (0, len(q) - 1):
-        if q[at][1] <= q[at - 1][1]:
-            return None
-        frame = geo.frame(q[at][1] - 1)
-        return frame.row, frame.bottom
-    frame = geo.frame(q[at][1])
-    return None if frame is None else (frame.row, frame.at + off[at][1])
-
-
 def _least(geo, q, off, lo, hi, banded):
     """The least px the second segment of `q`, lattice rows `lo` to `hi`, can be drawn long: from
     its upper end to the edge of that end's row or frame, the whole of every frame between — each
@@ -432,23 +425,20 @@ def _middle(geo, q, off, lo, hi, rows, bend, banded):
     segment of path `q`, which template/js/flow.js draws at the middle of the segment's two drawn
     points, `rows` the lattice rows it can fall in.
 
-    Where both points are drawn on lines of one known frame, that middle is known, and the text
-    stands there. Anywhere else it depends on card heights, and the text covers every row between
-    the two ends whole, and in the row of each end the row past the bend drawn there: past it by
-    1 px where the segment is long enough to keep the text's near edge that far off the bend, and by
-    what `_least` leaves where it is not. `flow.band_obstacles` read such a row the other way round:
-    every line that crosses it counted, wherever it stopped, and every line that runs along it was
-    left out, wherever it ran — the one reading the two differed in.
+    That middle depends on card heights wherever a plan puts the segment: its first point is the
+    bend the sideways exit along the source card's row turns at, and a row of cards states no px
+    here. So the text covers every row between the two ends whole, and in the row of each end the
+    row past the bend drawn there: past it by 1 px where the segment is long enough to keep the
+    text's near edge that far off the bend, and by what `_least` leaves where it is not.
+    `flow.band_obstacles` read such a row the other way round: every line that crosses it counted,
+    wherever it stopped, and every line that runs along it was left out, wherever it ran — the one
+    reading the two differed in.
 
     A banded row is read past the bend here where `_turn` gives a run of that row no y at all: this
     text hangs from the middle of its own second segment, so the clamp that moves the bend moves the
     text with it and the order of the two survives, where the px a clamped line stands from the base
     of its row do not — unless the segment is too short to keep the text past the bend, and then
     the whole row."""
-    ends = [_drawn(geo, q, off, 1), _drawn(geo, q, off, 2)]
-    if ends[0] and ends[1] and ends[0][0] == ends[1][0]:
-        m = (ends[0][1] + ends[1][1]) / 2
-        return _stands(geo, ends[0][0], m - TEXT_HALF, m + TEXT_HALF, banded)
     past = min(1.0, _least(geo, q, off, lo, hi, banded) / 2 - TEXT_HALF)
     spans, rows_reached = [], []
     for Y in rows:
