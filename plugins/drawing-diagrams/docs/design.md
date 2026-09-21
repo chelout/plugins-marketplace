@@ -630,8 +630,11 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   card, run and bound is a rectangle `(Y, y0, y1, x0, x1, kind, owner)` of one lattice row, `y` from
   the row's `base()` as the script computes it, `x` from `Geometry`. Card heights are unknown in
   Python and the model keeps that instead of guessing: a card is the whole of its row, a vertical
-  run the whole of every row it passes and half of a row it ends in, a text whose place depends on
-  a height covers every row it can fall in. `room` measures a text from its near edge outwards,
+  run the whole of every row it passes and, in a row it ends in, as far as the bend drawn there —
+  half the row where the row is banded or the run ends on a card — and a text whose place depends
+  on a height covers every row it can fall in. The first model cut every such run at the base of
+  the row; the second round of the branch gate found what that costs (634 of the 1 168 such ends
+  of the seeded corpus are drawn off the base). `room` measures a text from its near edge outwards,
   `hits` names the owners it lies on, `meet` tests two texts. What `room_beside`, `band_obstacles`,
   `under_card`, `label_spots` and the pass after the label loop did with `half`, `reach`,
   `horizontal` and a second pass are values of `y0`, `y1`; all five are gone from `flow.py`. A
@@ -683,13 +686,16 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   its row and no label — and 8 of the 9 labels of the hundred that a line or a label ran through
   while the plan said nothing were of that family.
 - Criterion E6, the seeded hundred, 442 labels, `main` at `c2b3f36` against the stage: "пересечёт"
-  133 → 9, "ляжет" 49 → 53, one place 0 → 0, labels that do not fit 24 → 24. Eleven instances
-  grow, all in "ляжет": ten are a line along the row of a label on a horizontal second segment,
-  which `main` never read (#14, #16, #33, #48, #52, #75, #77, #80, #87, #90), the eleventh is #57,
-  the end-row reading. In the browser the labels a line or another label runs through are 91 on
-  `main`, 91 after the switch, 71 after the places, 57 after the search; the ones the plan is
-  silent about 20, 10, 9, 3; the false alarms 66, 19, 18, 26; the lines through a label on a
-  horizontal second segment 42, 42, 25, 12. Over the 174 plans of the corpus the places moved
+  133 → 10, "ляжет" 49 → 51, one place 0 → 0, labels that do not fit 24 → 24. Ten instances grow
+  in "ляжет": nine are a line along the row of a label on a horizontal second segment, which
+  `main` never read (#14, #16, #48, #52, #75, #77, #80, #87, #90), the tenth is #57, the end-row
+  reading; #33 was an eleventh until a run was read to its bend. No instance grows in "пересечёт"
+  against `main`; against the stage's own search #87 gains one, a turn drawn 4 px above the base
+  of its gutter whose run the page does draw through the text. In the browser the labels a line or another label runs through are 91 on
+  `main`, 91 after the switch, 71 after the places, 57 after the search and 58 at the end of the
+  stage; the ones the plan is silent about 20, 10, 9, 3 and 4, the fourth being the earlier label
+  of a pair the plan tells about on the later; the false alarms 66, 19, 18, 26 and 24; the lines
+  through a label on a horizontal second segment 42, 42, 25, 12 and 12. Over the 174 plans of the corpus the places moved
   242 of 646 labels and the label messages fell from 152 to 106 before the search. In the shipped
   examples three labels moved to just after their bend in both modes (`four-blocks` "1 читает
   approved", `kyc-trace` "ссылка", `resolver-rules` "нет") and the search moved two more of
@@ -703,10 +709,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   text in the svg's own frame (a box is 13 px high, the em box of the 11 px text, the baseline
   about 2 px above its bottom; widths within 2.3 % of `common.label_width` on the one example
   measured, Cyrillic only), and case 21 holds every box inside the rectangle Python chose and
-  recomputes each anchor from the drawn line, for all sixteen anchor forms; the place under a
+  recomputes each anchor from the drawn line, for all eighteen anchor forms; the place under a
   segment fails it when its offset is the over-offset. Inside is both ways (criterion E5 as
-  amended): across for all 104 places, with 5 % of the width allowed at the far edge for what the
-  glyph table is known to within, and down the page for the 64 whose rows the page lets it read —
+  amended): across for all 108 places, with 5 % of the width allowed at the far edge for what the
+  glyph table is known to within, and down the page for the 68 whose rows the page lets it read —
   a rectangle moved 8 px without its anchor fails it. When the anchor replaced `ls` and `ly` no
   label moved: the fragments were equal once the three fields were dropped, and the browser drew
   the 442 labels of the hundred at the x and y it had drawn them at. A fragment with `la` needs
