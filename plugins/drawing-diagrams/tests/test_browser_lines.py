@@ -107,9 +107,12 @@ Test cases (written from the declaration of the change, before the implementatio
     and the glyph table's own width error at the far edge, and the text stands where the anchor
     says. Where the anchor asks is recomputed from the line the page drew and from `la` alone — the
     x of the point it hangs from, and the drawn y of that point, the middle of the second segment or
-    `base(Y)` — and the page's x, y and text-anchor are held to it. Down the page the rectangle is
-    mostly unbounded, because card heights are unknown in Python; the anchor is what answers for it
-    there.
+    `base(Y)` — and the page's x, y and text-anchor are held to it. Criterion E5 as amended on
+    2026-09-21: inside is both ways. Down the page the rectangle is often unbounded, because card
+    heights are unknown in Python; wherever a bound is finite the box keeps BOX_TOL of it, in the
+    page's own frame, which `place_bands` reads off the drawn lines the way the row checks do. A
+    place reaching into several rows is held to one of them, and a place whose rows the page does
+    not show is left to the anchor alone.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -131,7 +134,7 @@ from unittest import mock
 import support
 import render
 from diagrams import common, flow, labels, router
-from diagrams.flow import LABEL_DROP, LABEL_OVER, TRACK_LEAD
+from diagrams.flow import LABEL_DROP, TRACK_LEAD
 
 KINDS = ("flow", "swimlane", "state", "blocks")
 MODES = ("page", "widget")
@@ -841,8 +844,19 @@ def label_boxes(layout, names, texts, boxes):
 # of its anchor, `rect` the (x0, x1) of the rectangle diagrams/labels.py measured its text in,
 # `box` the (x0, x1) the page drew it in, `width` what the glyph table gives the text, `want` the
 # (x, y) the anchor asks for read off the drawn line or None where the page shows no base for the
-# row it takes, and `drawn` the [x, y, text-anchor] the page used.
-LabelPlace = namedtuple("LabelPlace", "mode name text form anchor rect box width want drawn")
+# row it takes, `drawn` the [x, y, text-anchor] the page used, `bands` the same rectangles down the
+# page — one (top, bottom) per row the place can fall in, in the page's own frame, `None` for a
+# bound the model leaves open and empty where the page cannot be read for this place — and `boxy`
+# the (top, bottom) the page drew the box at.
+LabelPlace = namedtuple("LabelPlace",
+                        "mode name text form anchor rect box width want drawn bands boxy")
+
+
+def px(value, width=7):
+    """A number the page recorded, for a message. The probe writes null for an attribute the page
+    did not set — a missing `x` or `text-anchor` — and a test that cannot format what it found
+    raises where it should be failing with its own message."""
+    return f"{value:{width}.2f}" if isinstance(value, (int, float)) else f"{str(value):>{width}}"
 
 
 def chosen_rects(layout, mode):
@@ -919,11 +933,43 @@ def anchor_form(la, sa):
             + ("at its middle" if ref == "m" else "on a row"))
 
 
+def place_bands(e, cand, want, bases, bands):
+    """[(top, bottom)] in the page's own frame, one per rectangle of the place the page can be read
+    for; `None` stands for a bound the model leaves open down the page, and a place the page cannot
+    be read for at all comes back empty.
+
+    A rectangle's y is measured from `base(Y)` of its own row, which `row_bases` reads off the page.
+    Where the model measures it from the label's own line instead — a straight sideways exit, whose
+    text is clamped with that line, and a horizontal second segment, whose text hangs from a point
+    of it — that line's own router offset comes off and the y the page drew the line at goes in its
+    place, since template/js/flow.js clamps such a line into the band of a row of cards and the text
+    goes with it. A rectangle in a banded row read from `base(Y)` is left out for the same reason:
+    there the page may draw the line the model measured the rectangle from anywhere in the band."""
+    pt, ref, _, _, dy, _ = e["la"]
+    own = ref == "p" and (pt in (1, 2) or e["sa"] in ("L", "R"))
+    if own and want is None:
+        return []
+    out = []
+    for rect in cand.rects:
+        if own:
+            base = want[1] - dy - e["path"][1 if pt else 0][3]
+        elif rect.Y in bands or rect.Y not in bases:
+            return []  # a place is read down the page only when every row of it can be read
+        else:
+            base = bases[rect.Y]
+        top = None if rect.y0 == -math.inf else base + rect.y0
+        bottom = None if rect.y1 == math.inf else base + rect.y1
+        if top is not None or bottom is not None:
+            out.append((top, bottom))
+    return out
+
+
 def label_places(mode, layout, names, texts, boxes, polys, lines, cards):
     """One LabelPlace per labelled edge of one page. A labelled edge the page drew no text or no box
     for is a harness error, and so is a place whose anchor is not the one the edge carries: the
     replay above has to be the placement `flow.plan` itself made."""
-    rects, bases, out = chosen_rects(layout, mode), row_bases(layout, lines, cards), []
+    rects, bases = chosen_rects(layout, mode), row_bases(layout, lines, cards)
+    bands, out = row_bands(layout, cards), []
     for i, e in enumerate(layout["edges"]):
         if not e["label"]:
             continue
@@ -938,7 +984,9 @@ def label_places(mode, layout, names, texts, boxes, polys, lines, cards):
         want = anchor_point(e["la"], polys[i], bases) if len(polys[i]) == len(e["path"]) else None
         out.append(LabelPlace(mode, names[i], e["label"], anchor_form(e["la"], e["sa"]), e["la"][5],
                               (rect.x0, rect.x1), (boxes[i][0], boxes[i][0] + boxes[i][2]),
-                              common.label_width(e["label"]), want, texts[i]))
+                              common.label_width(e["label"]), want, texts[i],
+                              place_bands(e, cand, want, bases, bands),
+                              (boxes[i][1], boxes[i][1] + boxes[i][3])))
     return out
 
 
@@ -949,6 +997,18 @@ def outside_rect(place):
     wide = BOX_TOL + BOX_WIDTH_SLACK * place.width
     low, high = ((BOX_TOL, wide) if place.anchor == "start" else (wide, BOX_TOL))
     return place.box[0] < place.rect[0] - low or place.box[1] > place.rect[1] + high
+
+
+def outside_band(place):
+    """Whether the box the page drew lies outside every rectangle of the place down the page, by
+    more than BOX_TOL. Criterion E5 as amended: inside is both ways, and down the page both bounds
+    keep the 2 px — the glyph table's width error is an error across and lands nowhere here. A
+    place reaching into several rows offers a band per row and the text stands in one of them; a
+    place the page shows no band for is not read here at all."""
+    return bool(place.bands) and not any(
+        (top is None or place.boxy[0] >= top - BOX_TOL)
+        and (bottom is None or place.boxy[1] <= bottom + BOX_TOL)
+        for top, bottom in place.bands)
 
 
 def runs_on_row_lines(layout, lines, wanted):
@@ -1388,24 +1448,37 @@ class BrowserLines(unittest.TestCase):
 
     def test_every_label_stands_in_the_place_python_chose(self):
         """Docstring case 21, criterion E5: the page draws every label inside the rectangle
-        diagrams/labels.py measured its text in, across, and at the point the anchor of spec 7.4
-        names. The anchor is recomputed from the drawn line alone, so what is held is the contract
-        between the two sides and not a second copy of the placement rule."""
+        diagrams/labels.py measured its text in — across, and down the page wherever Python's
+        bounds are finite and the page shows the rows the place stands in — and at the point the
+        anchor of spec 7.4 names. The anchor is recomputed from the drawn line alone, so what is
+        held is the contract between the two sides and not a second copy of the placement rule."""
         measured = []
         for name in self.LABEL_PLACE_CASES + tuple(name for name, _ in self.examples):
             measured += self.measure_label_places(name)
         shown = "\n".join(
             f"  {p.mode:6} {p.name:24} {p.text!r:14} {p.form:44} rect {p.rect[0]:7.2f}..{p.rect[1]:7.2f}, "
-            f"box {p.box[0]:7.2f}..{p.box[1]:7.2f}, anchor {p.drawn[2]:5} at "
-            f"({p.drawn[0]:7.2f}, {p.drawn[1]:7.2f}), asked for "
+            f"box {p.box[0]:7.2f}..{p.box[1]:7.2f}, anchor {str(p.drawn[2]):5} at "
+            f"({px(p.drawn[0])}, {px(p.drawn[1])}), asked for "
             + ("none" if p.want is None else f"({p.want[0]:7.2f}, {p.want[1]:7.2f})")
+            + f"; down the page box {p.boxy[0]:7.2f}..{p.boxy[1]:7.2f} in "
+            + (" | ".join(f"{px(top)}..{px(bottom)}" for top, bottom in p.bands) or "no band")
             for p in measured)
         widest = max(abs(p.box[1] - p.box[0] - p.width) / p.width for p in measured)
-        print(f"\nlabel places measured: {len(measured)}; the page draws a label at most "
+        read = [p for p in measured if p.bands]
+        print(f"\nlabel places measured: {len(measured)}, of them {len(read)} down the page as "
+              f"well; the page draws a label at most "
               f"{100 * widest:.2f} % from the width the glyph table computes")
         outside = [f"{p.mode} {p.name} {p.text!r}" for p in measured if outside_rect(p)]
         self.assertEqual(outside, [], f"a label is drawn outside the rectangle Python chose for it, by more "
                                       f"than {BOX_TOL} px and {BOX_WIDTH_SLACK:.0%} of its width:\n" + shown)
+        below = [f"{p.mode} {p.name} {p.text!r}" for p in measured if outside_band(p)]
+        self.assertEqual(below, [], f"a label is drawn outside that rectangle down the page, by more than "
+                                    f"{BOX_TOL} px:\n" + shown)
+        # the case says nothing down the page for a place whose rows the page does not show, so it
+        # exists only while most of them are shown
+        self.assertGreater(len(read), len(measured) // 2,
+                           f"harness: only {len(read)} of {len(measured)} label places can be read "
+                           f"down the page:\n" + shown)
         adrift = [f"{p.mode} {p.name} {p.text!r}" for p in measured if p.want is not None
                   and (abs(p.drawn[0] - p.want[0]) > AXIS_TOL or abs(p.drawn[1] - p.want[1]) > AXIS_TOL
                        or p.drawn[2] != p.anchor)]

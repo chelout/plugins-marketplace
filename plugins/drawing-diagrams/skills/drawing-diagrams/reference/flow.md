@@ -106,9 +106,11 @@ a full page of thirty; `--no-advice` turns it off.
 
 ### Edges
 
-`"a -> b : label [n] | dashed"`. The label sits at the exit of the line next
-to the source node and is at most three words or 24 characters; longer text
-goes to `footnotes` and is referenced with `[n]` (a circled number appears
+`"a -> b : label [n] | dashed"`. The label sits by its own line: at the exit
+next to the source node, or, where the line turns, on its second segment,
+which can carry the text as far as that segment's far end. It is at most
+three words or 24 characters; longer text goes to `footnotes` and is
+referenced with `[n]` (a circled number appears
 on the line, the list appears under the diagram). `dashed` marks an
 asynchronous or optional transition. The object form `{"from", "to",
 "label", "dashed"}` is accepted.
@@ -155,21 +157,28 @@ line off it or parts it from another label, and keeps it otherwise.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
   it on the segment, at a height that depends on how tall the cards are, which
-  the check cannot know; so the check keeps that place only when the side is
-  clear in every row the middle can fall in (the rows of cards and gutters the
-  segment passes, less the target card it ends on). Otherwise it pins the label
-  to one of those rows, the middle first and the rows where the line turns
-  last, and hands the place to the script as the label's anchor.
-  Clear means: off the cards of the row, off every other line and a word space
-  off every other label — which is what every place is measured against, not
-  this one alone. A gutter row has no cards: a line running down a gutter
+  the check cannot know; so the check keeps that place only when no card and
+  no edge of the diagram takes the room in any row the middle can fall in (the
+  rows of cards and gutters the segment passes, less the target card it ends
+  on). Otherwise it pins the label to one of those rows, the middle first and
+  the rows where the line turns last, and hands the place to the script as the
+  label's anchor. A line or another label in one of those rows does not send
+  the label away: those are priced against the other places above, so the
+  middle can be kept and warned about instead. Only a card or the edge of the
+  diagram drops a place outright, and that holds for every place, not this one
+  alone; a text keeps 2 px off a card and a word space off another label. A
+  gutter row has no cards: a line running down a gutter
   between two occupied cells gets its label in the gutter above or below them,
   since beside the cards themselves only half a gutter less 6 px is left, less
   than one letter. At most a card width less 20 px.
 
 The check refuses a label that fits none of its places, naming the room the
-roomiest of them had and, where one stands in it, the card or the line that
-ends it; it warns once when the place it takes lies on another line or label,
+roomiest of them had and, where something stands in it, what that is: a card,
+a line, another label's text or the edge of the diagram. The two are measured
+differently, so read them apart — the room is what the cards and the edge of
+the diagram leave, while the thing named is the nearest of everything, so a
+line named there can still run through a text cut to that length. The check
+warns once when the place it takes lies on another line or label,
 once per line that runs through a label on a horizontal segment, and once for
 a pair of labels that land in one place — on the later of the two. The fixes
 are a shorter label, a footnote, or moving the target so the line leaves

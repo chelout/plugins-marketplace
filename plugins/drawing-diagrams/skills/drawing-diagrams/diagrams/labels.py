@@ -35,10 +35,11 @@ segment, so a segment drawn away from the base takes its label with it (spec 7.2
 other place keeps the reference it had.
 
 `place` is what `flow.plan` asks; `candidates` is the source of places it has, the table of spec 7.2
-whole, `cost` prices a whole choice of them, and `search` looks for the cheapest — starting from
-`greedy`, which takes the first place with the room for each label in turn. What the module never
-holds is a message: a `Choice` names the place, what stands in the label's way there, and what stood
-nearest when no place had the room, and diagrams/flow.py writes the message about it.
+whole, `terms` prices one place and `cost` a whole choice of them, and `search` looks for the
+cheapest — starting from `greedy`, which takes the first place with the room for each label in turn.
+What the module never holds is a message: a `Choice` names the place, what stands in the label's way
+there, and what stood nearest when no place had the room, and diagrams/flow.py writes the message
+about it.
 
 The cost reads every place against every rectangle of the rows it stands in, whatever family the
 place belongs to (spec 7.3 as amended): a text on a horizontal second segment is measured against
@@ -131,7 +132,7 @@ Clash = collections.namedtuple("Clash", "kind owner")
 # the warnings that place raises, `room` the px the roomiest place offered when the text fits none
 # of them at all — None when it fits one — `blocked`, the nearest thing in the way there as a Clash
 # of its kind and its owner, which the error names beside the room (criterion E3), and `hits` the
-# line owners the text lies on there, which is what `cost` prices it by.
+# line owners the text lies on there, which `terms` prices by the edge each of them belongs to.
 Choice = collections.namedtuple("Choice", "edge cand clashes room blocked hits")
 
 
@@ -411,9 +412,12 @@ def uprights(paths):
 
 def hits(cand, rects):
     """The owners of `rects` the candidate's text lies on, each named once however many rows of the
-    place its rectangles are met in — a line cut into one rectangle per row it passes is one line
-    (spec 7.3). The exemptions of spec 7.1 are what a place is never measured against: its own
-    supporting path, and the card it hangs from with the lines drawn within that card's height.
+    place its rectangles are met in. An owner here is still the (path, segment) a run is named by:
+    what the cost counts is the path, `terms` below taking each of these by its edge, and the
+    segment is what tells a run crossing the text from one along its row.
+
+    The exemptions of spec 7.1 are what a place is never measured against: its own supporting path,
+    and the card it hangs from with the lines drawn within that card's height.
 
     The rows the place stands in are taken first, since the search asks this of every place of
     every label and a plan's rectangles are spread over the whole lattice."""
@@ -443,16 +447,33 @@ def _span(cands):
             min(rect.x0 for rect in rects), max(rect.x1 for rect in rects))
 
 
+def terms(cand, hit, pinned=()):
+    """What one place contributes to the cost of spec 7.3: the pairs it makes with the places that
+    stand still, the line edges its text lies on — an edge once per candidate however many of its
+    rectangles are hit, and a path cut into several runs is one edge — and the place's own
+    preference rank. `hit` is what `hits` answered for this place.
+
+    This is the one place a place is priced. `cost` prices a finished choice with it and the search
+    a half-built one, so what the search minimises is what the cost compares; a pair of two chosen
+    places belongs to neither of them alone and is counted over the choice instead, once."""
+    return (sum(1 for other in pinned if meet(cand, other)),
+            len({owner[0] for owner in hit}),
+            cand.rank)
+
+
 def cost(choices):
     """What a whole choice of places costs, compared lexicographically (spec 7.3): the pairs of
-    chosen labels whose texts overlap, the line owners those texts lie on, and the sum of the
+    chosen labels whose texts overlap, the line edges those texts lie on, and the sum of the
     preference ranks of the places taken.
 
     Every term is a sum of non-negative parts, one per label or per pair of them, which is what lets
     the search price a half-built choice and lets a component be solved apart from the rest."""
     took = sorted(choices, key=lambda c: c.edge)
-    pairs = sum(1 for k, a in enumerate(took) for b in took[k + 1:] if meet(a.cand, b.cand))
-    return pairs, sum(len(c.hits) for c in took), sum(c.cand.rank for c in took)
+    out = [sum(1 for k, a in enumerate(took) for b in took[k + 1:] if meet(a.cand, b.cand)), 0, 0]
+    for c in took:  # nothing stands still in a whole choice: its pairs are the ones counted above
+        for term, part in enumerate(terms(c.cand, c.hits)):
+            out[term] += part
+    return tuple(out)
 
 
 def fits(order, cands, needs, cards):
@@ -690,8 +711,7 @@ def search(order, cands, needs, cards, runs, upright, nodes=NODES):
         # ones left a single place stand still, and no place of another component can meet one of
         # this one, which is what a component is
         pinned = [took[j] for j in still]
-        priced = {i: [(sum(1 for other in pinned if meet(c, other)), len(hits(c, runs)), c.rank)
-                      for c in keep[i]] for i in group}
+        priced = {i: [terms(c, hits(c, runs), pinned) for c in keep[i]] for i in group}
         start = {i: keep[i].index(took[i]) for i in group}
         for i, at in _bound(group, {i: keep[i] for i in group}, priced, start, left).items():
             took[i] = keep[i][at]

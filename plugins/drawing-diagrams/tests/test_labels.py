@@ -19,8 +19,11 @@ The places are the table of spec 7.2 as amended on 2026-09-21, and the choice am
 search of spec 7.3, which this commit filled in: `labels.place` is a bounded branch and bound over
 the components of labels whose places can overlap, started from greedy's choice. `TheSearch` holds
 it to costing no more than that start, to answering greedy when its allowance is one node, to
-solving a component apart from the others and to finding what an exhaustive walk finds; the classes
-around it hold the table of places and the two readings the commit before this one carried.
+spending no more nodes than it was given, to solving a component apart from the others and to
+finding what an exhaustive walk finds; `TheCostTheSearchMinimises` holds the cost itself, over
+places built by hand, since no plan of the corpus ever has to choose between parting a pair of
+labels and taking a line on; and the classes around them hold the table of places, what a label
+answers for, and the two readings the switch carried.
 """
 import copy
 import functools
@@ -219,9 +222,22 @@ def greedily(layout, mode_name):
 
 
 def price(order, took, runs):
-    """What a complete choice of places costs, straight from the places themselves: the tuple
-    `labels.cost` gives a list of Choices, computed without one so an exhaustive walk can price a
-    choice nothing ever wrote a verdict about."""
+    """What a complete choice of places costs, straight from the places themselves: the tuple of
+    spec 7.3, counted here rather than taken from `labels.cost`, so an exhaustive walk can price a
+    choice nothing ever wrote a verdict about. It is that function's independent check as well —
+    the line edges are counted here in this file's own words, and
+    `test_the_cost_of_a_choice_is_what_this_file_prices_it_at` holds the two answers together."""
+    picked = [took[i] for i in sorted(order)]
+    pairs = sum(1 for k, a in enumerate(picked) for b in picked[k + 1:] if labels.meet(a, b))
+    lines = sum(len({owner[0] for owner in labels.hits(c, runs)}) for c in picked)
+    return pairs, lines, sum(c.rank for c in picked)
+
+
+def segment_price(order, took, runs):
+    """What the same choice costs when a line's rectangles are counted one by one instead of its
+    edge — the reading spec 7.3 forbids ("a line edge counts once per candidate however many of its
+    rectangles are hit"), kept here as the premise of the instances it left the search dearer on
+    than the greedy choice it starts from."""
     picked = [took[i] for i in sorted(order)]
     pairs = sum(1 for k, a in enumerate(picked) for b in picked[k + 1:] if labels.meet(a, b))
     return pairs, sum(len(labels.hits(c, runs)) for c in picked), sum(c.rank for c in picked)
@@ -564,6 +580,14 @@ class TheTableOfPlaces(unittest.TestCase):
         self.assertEqual(len({c.limit for c in cs}), 1, "the three no longer share one limit")
         self.assertEqual({labels.room(c, cards) for c in cs}, {cs[0].limit},
                          "the three no longer have one room between them, so `greedy` could choose")
+        # and what that one limit is: the segment's own length, less the bend the text starts past
+        # and a clearance at the far end. Nothing else holds LABEL_BEND to this place — the room a
+        # text has here is the whole of what the table's three places offer
+        geo, paths, offsets, cells, _ = inputs(layout, "widget")
+        p, off, e = paths[i], offsets[i], layout["edges"][i]
+        x1 = geo.clamp(cells[e["a"]][1], geo.x(p[1][0]) + off[1][0])
+        x2 = geo.clamp(cells[e["b"]][1], geo.x(p[2][0]) + off[2][0])
+        self.assertEqual(cs[0].limit, abs(x2 - x1) - labels.LABEL_BEND - labels.LABEL_CLEAR)
 
     def test_the_error_of_a_label_that_fits_nowhere_names_what_is_in_the_way(self):
         """Criterion E3's third case: the room as today, and then the nearest thing standing in it —
@@ -582,6 +606,24 @@ class TheTableOfPlaces(unittest.TestCase):
                 self.assertIn(clause, found[name][0])
                 self.assertLess(found[name][0].index("влезает ~"), found[name][0].index(clause),
                                 "the room comes first, as it did before this commit")
+
+    def test_a_label_that_fits_nowhere_is_answered_for_by_its_error_alone(self):
+        """Spec 7.3 and `design.md` 14: the error of a label that fits nowhere already names the
+        nearest thing in its way, so a warning that the text lies on something would be the same
+        fact twice — and `advice.evaluate` counts both. The label of this model keeps a place that
+        lies on six line edges and says nothing about any of them.
+
+        The record of `LABEL_CASES` holds the count of messages as well, but a regeneration writes
+        whatever the tree answers; this says what the answer has to be."""
+        model = next(m for n, m, mode in label_models()
+                     if n == "two labels in one place widget" and mode == "widget")
+        layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
+        choices = chosen(layout, "widget")
+        short = [c for c in choices if c.room is not None]
+        self.assertEqual(len(short), 1, "premise: another label of the model fits nowhere too")
+        self.assertTrue(short[0].hits, "premise: the place it keeps no longer lies on a line")
+        self.assertEqual(short[0].clashes, ())
+        self.assertEqual(said(warnings).count(LIES), 1, warnings)
 
     def test_what_the_message_calls_each_thing_in_the_way(self):
         """The four kinds a rectangle of the model has, each named the way an author can act on it.
@@ -645,7 +687,16 @@ SEEDED_CROSSED = {
 }
 
 # How many of the seeded instances the search leaves at a strictly lower cost than greedy's choice.
-SEEDED_BETTER = 29
+SEEDED_BETTER = 27
+
+# The three seeded instances on which a cost that counted a line's rectangles instead of its edge
+# left the search dearer than the greedy choice it starts from: on each of them the place the search
+# takes lies on one line edge cut into more segments than the place greedy took.
+SEEDED_PRICED = ("seeded #12", "seeded #47", "seeded #56")
+
+# The seeded instance whose search spends the most nodes, and so the one an allowance can end in the
+# middle of a component of.
+SEEDED_BUDGET = "seeded #86"
 
 # The seeded instance whose labels fall into two pairs and four labels standing alone: no place of
 # any group can meet a place of another, so each is solved on its own and the nodes the search
@@ -670,6 +721,53 @@ class TheSearch(unittest.TestCase):
             if labels.cost(now) < labels.cost(was):
                 better.append(name)
         self.assertEqual(len(better), SEEDED_BETTER, better)
+
+    def test_the_three_instances_a_count_of_segments_left_dearer_than_greedy(self):
+        """Spec 7.3 prices a line by its edge, "once per candidate however many of its rectangles
+        are hit", and the model cuts one line into a rectangle per row it passes and one per run it
+        is made of. On these three a place of greedy's own choice lies on such a line: priced by the
+        rectangle that choice reads dearer than it is, and the search walked off it to a choice that
+        cost more by the edge. Priced by the edge nothing here is cheaper than greedy's choice, so
+        the search keeps it."""
+        for name in SEEDED_PRICED:
+            layout, mode = next((lay, m) for n, m, lay, _ in planned(seeded()) if n == name)
+            order, _, _, _, runs, _ = candidates(layout, mode)
+            was = {c.edge: c.cand for c in greedily(layout, mode)}
+            now = {c.edge: c.cand for c in chosen(layout, mode)}
+            with self.subTest(instance=name):
+                self.assertGreater(segment_price(order, was, runs), price(order, was, runs),
+                                   f"premise: no place greedy takes on {name} lies on a line this "
+                                   f"model cuts into several rectangles")
+                self.assertLessEqual(price(order, now, runs), price(order, was, runs))
+                self.assertEqual(now, was)
+
+    def test_the_cost_of_a_choice_is_what_this_file_prices_it_at(self):
+        """One cost, two roads to it: `labels.cost` reads the Choices a plan wrote, `price` above
+        reads the places themselves and counts the line edges in this file's own words. Over the
+        whole corpus the two agree, which is what lets the exhaustive walk below price a choice no
+        plan ever wrote a verdict about."""
+        for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
+            order, _, _, _, runs, _ = candidates(layout, mode)
+            choices = chosen(layout, mode)
+            with self.subTest(instance=name):
+                self.assertEqual(price(order, {c.edge: c.cand for c in choices}, runs),
+                                 labels.cost(choices))
+
+    def test_the_nodes_spent_never_exceed_the_allowance(self):
+        """Spec 7.3: the components are given the allowance in the model's order and the walk stops
+        wherever it is, so a plan never spends a node it was not given. Every allowance from one
+        node up to what the whole instance spends is tried, and the ones that run out mid-component
+        — which is most of them here — spend exactly what they were handed and no more."""
+        layout, mode = next((lay, m) for n, m, lay, _ in planned(seeded()) if n == SEEDED_BUDGET)
+        order, cands, needs, cards, runs, upright = candidates(layout, mode)
+        whole = labels.search(order, cands, needs, cards, runs, upright)[1]
+        self.assertGreater(whole, 50, f"harness: the search over {SEEDED_BUDGET} spends {whole} "
+                                      f"nodes, too few for an allowance to end inside a component")
+        spent = [labels.search(order, cands, needs, cards, runs, upright, nodes=n)[1]
+                 for n in range(1, whole + 1)]
+        self.assertEqual([(n, used) for n, used in enumerate(spent, 1) if used > n], [])
+        self.assertTrue([n for n, used in enumerate(spent, 1) if used == n and n < whole],
+                        "harness: no allowance here ends inside a component")
 
     def test_one_node_is_greedys_own_choice(self):
         """Criterion E4's second half: one node buys the root of the first component's walk and no
@@ -769,6 +867,160 @@ class TheSearch(unittest.TestCase):
         self.assertNotEqual(now[late].cand.key, now[early].cand.key)
         self.assertEqual([x for c in now.values() for x in c.clashes
                           if x.kind == labels.SAME_PLACE], [])
+
+
+# A stage for the cost of spec 7.3, built by hand. No plan of the corpus ever has to choose between
+# parting a pair of labels and taking a line on, or between a line and a place the label prefers:
+# the choice `place` returns never keeps an overlapping pair, so the order of the terms is a
+# trade-off nothing a plan reaches ever makes, and nothing a plan reaches can hold it. These places
+# make it. One lattice row, a text as wide as it is asked for, and a run wherever a text is to lie
+# on a line — the search reads nothing else of a place.
+STAGE_ROW = 1
+STAGE_WIDE = 40.0
+
+
+def stage_text(i, rank, x, need=STAGE_WIDE, where=labels.DOWN):
+    """One place of label `i` on the stage: its text `need` px wide from `x` rightwards, in the one
+    row. `where` is the family the place belongs to, which decides whether `greedy` measures it
+    against the lines at all; the limit is wide enough that `fits` keeps every place, the stage
+    drawing no card unless a case puts one there."""
+    return labels.Candidate(where, rank,
+                            (labels.Rect(STAGE_ROW, -1.0, 1.0, x, x + need, labels.LABEL, i),),
+                            x, "R", 1000.0, (i, x), frozenset(), (0, "p", 0, 0, 0, "start"))
+
+
+def stage_run(owner, x):
+    """A vertical run of the stage at `x`, named by (path, segment) as `occupancy` names one: the
+    text it passes through lies on it."""
+    return labels.Rect(STAGE_ROW, -labels.INF, labels.INF, x - 1, x + 1, labels.LINE, owner)
+
+
+def staged(cands, runs, cards=()):
+    """(what the search chooses on the stage, what greedy chooses): `cands` is {label: its places,
+    preferred first}, `runs` the lines under them and `cards` whatever ends the room. Each label's
+    text is as wide as its first place draws it."""
+    order = sorted(cands)
+    needs = {i: cands[i][0].rects[0].x1 - cands[i][0].rects[0].x0 for i in order}
+    args = (order, cands, needs, list(cards), list(runs), frozenset())
+    return labels.search(*args)[0], labels.greedy(*args)
+
+
+class TheCostTheSearchMinimises(unittest.TestCase):
+    """Spec 7.3, gate finding G1 and the qa review's Q1: the cost is (pairs of chosen labels that
+    overlap, line owners overlapped, sum of preference ranks), compared lexicographically, and "a
+    line edge counts once per candidate however many of its rectangles are hit". One function
+    prices a place for both roads — `labels.cost`, which prices a finished choice, and the search,
+    which prices a half-built one — so what the search minimises is what the cost compares."""
+
+    def test_a_line_counts_once_however_many_of_its_segments_a_text_meets(self):
+        """The preferred place lies on two segments of one edge, the place after it on one segment
+        of another: one line edge each, so the label keeps the place it prefers. A cost that counted
+        the rectangles would read the first as two lines and move the label off it — which is what
+        it did on three of the seeded hundred (`SEEDED_PRICED`)."""
+        cands = {0: [stage_text(0, 0, 100.0), stage_text(0, 1, 300.0)]}
+        runs = [stage_run((9, 0), 110.0), stage_run((9, 1), 130.0), stage_run((4, 2), 320.0)]
+        now, was = staged(cands, runs)
+        self.assertEqual(now[0].hits, frozenset({(9, 0), (9, 1)}),
+                         "premise: the preferred place no longer meets two segments of one edge")
+        self.assertEqual(now[0].cand.rank, 0)
+        self.assertEqual(labels.cost(now), (0, 1, 0))
+        self.assertEqual(now, was, "greedy already stands there: neither place has the room for "
+                                   "its text, so it keeps the first")
+
+    def test_a_pair_is_parted_though_the_place_that_parts_it_lies_on_a_line(self):
+        """The first term before the second: one label can stand clear of every line in the very
+        place another label took, or alone on a line. A pair costs more than any number of lines,
+        so it moves."""
+        cands = {0: [stage_text(0, 0, 100.0), stage_text(0, 1, 300.0)],
+                 1: [stage_text(1, 0, 120.0)]}
+        now, was = staged(cands, [stage_run((9, 0), 320.0)])
+        self.assertEqual([c.cand.rank for c in was], [0, 0],
+                         "premise: greedy no longer takes the first place of each")
+        self.assertEqual(labels.cost(was), (1, 0, 0))
+        self.assertEqual([c.cand.rank for c in now], [1, 0])
+        self.assertEqual(labels.cost(now), (0, 1, 1))
+        self.assertLess(labels.cost(now), labels.cost(was))
+
+    def test_a_line_is_given_up_for_a_place_the_label_prefers_less(self):
+        """The second term before the third: the place the label prefers lies on a line and the one
+        after it on none. Greedy takes the first of the three places of a horizontal second segment
+        whatever runs through it — they have one room between them — and the search prices the
+        lines, which is the whole of why the table's new places are ever reached."""
+        cands = {0: [stage_text(0, 0, 100.0, where=labels.OVER),
+                     stage_text(0, 1, 300.0, where=labels.BENEATH)]}
+        now, was = staged(cands, [stage_run((9, 0), 120.0)])
+        self.assertEqual(was[0].cand.rank, 0,
+                         "premise: greedy no longer takes the first place of the segment")
+        self.assertEqual(labels.cost(was), (0, 1, 0))
+        self.assertEqual(now[0].cand.rank, 1)
+        self.assertEqual(labels.cost(now), (0, 0, 1))
+        self.assertLess(labels.cost(now), labels.cost(was))
+
+    def test_a_choice_of_equal_cost_leaves_greedys_standing(self):
+        """The search answers greedy wherever nothing is strictly cheaper (spec 7.3: never worse
+        than greedy, and the same input always gives the same choice). Two places of one label that
+        cost the same — one line each and the same rank — are such a nothing, and the incumbent is
+        the one greedy left."""
+        cands = {0: [stage_text(0, 0, 100.0, where=labels.OVER),
+                     stage_text(0, 0, 300.0, where=labels.OVER)]}
+        now, was = staged(cands, [stage_run((9, 0), 120.0), stage_run((4, 1), 320.0)])
+        self.assertEqual(labels.cost(now), labels.cost(was),
+                         "premise: the two places no longer cost the same")
+        self.assertEqual(now[0].cand.start, 100.0)
+        self.assertEqual(now, was)
+
+
+# A model whose two labelled edges leave one card, turn at one bend and run the same way along one
+# row: the same place of the table of spec 7.2, but for the offset each segment is drawn at. It is
+# instance 4 of the seeded stream, whose labels are the two that make the shape — no model of the
+# corpus reaches it, since a labelled edge there is every third one.
+ONE_BEND = cases.exit_model(["n00 .   n01", ".   n02 n03", "n04 .   ."],
+                            ["n01 -> n00", "n01 -> n02 : да", "n01 -> n04 : нет", "n03 -> n01",
+                             "n03 -> n04", "n04 -> n00", "n04 -> n02"])
+
+
+class WhatALabelAnswersFor(unittest.TestCase):
+    """Spec 7.3: a pair of labels whose texts overlap is told about once, on the later of the two in
+    the model's order — as the same place where the two took the very same place, and inside that
+    label's one "ляжет" where they merely meet. So a label answers for the labels before it and
+    never for the ones after, and what "the very same place" means is the place's own key."""
+
+    def test_two_labels_at_one_bend_and_two_offsets_are_not_one_place(self):
+        """Both labels stand over a horizontal second segment starting at one bend and running one
+        way, and their texts meet; what tells the two places apart is the offset each segment is
+        drawn at, which is where the text hangs from since spec 7.2 as amended. So the later of the
+        two says once that it lies on the other, and not that the two took one place — which would
+        be two warnings where the drawing has one thing wrong with it, and `advice.evaluate` (spec
+        6) counts them.
+
+        Greedy is what holds it: the search parts the two, which is the whole of its first term."""
+        layout, _ = flow.plan(copy.deepcopy(ONE_BEND), "widget", draft=True)
+        order, cands, needs, cards, runs, upright = candidates(layout, "widget")
+        first, second = labels.greedy(order, cands, needs, cards, runs, upright)
+        paths, edges = layout["paths"], layout["edges"]
+        self.assertEqual({c.cand.where for c in (first, second)}, {labels.OVER},
+                         "premise: the two labels no longer stand over their second segments")
+        self.assertEqual(paths[first.edge][1], paths[second.edge][1],
+                         "premise: the two segments no longer start at one bend")
+        self.assertNotEqual(edges[first.edge]["path"][1][3], edges[second.edge]["path"][1][3],
+                            "premise: the two segments are no longer drawn at different offsets")
+        self.assertTrue(labels.meet(first.cand, second.cand),
+                        "premise: the two texts no longer meet")
+        self.assertNotEqual(first.cand.key, second.cand.key)
+        self.assertEqual(second.clashes, (labels.Clash(labels.ON_LINE, first.edge),))
+
+    def test_the_error_of_a_label_names_nothing_placed_after_it(self):
+        """Which label a fit error may name: the nearest thing of all is the text of the label
+        placed next, and the error names the card that ends the room instead."""
+        cands = {0: [stage_text(0, 0, 100.0)], 1: [stage_text(1, 0, 105.0, need=10.0)]}
+        cards = [labels.Rect(STAGE_ROW, -labels.INF, labels.INF, 120.0, 260.0, labels.CARD, "t")]
+        now, _ = staged(cands, [], cards)
+        self.assertIsNone(now[1].room, "premise: the label placed next fits nowhere either")
+        self.assertEqual(now[0].room, 120.0 - 100.0 - labels.LABEL_CLEAR)
+        self.assertEqual(labels.met(now[0].cand, cards + list(now[1].cand.rects)),
+                         labels.Clash(labels.LABEL, 1),
+                         "premise: the label placed next no longer stands nearer than the card")
+        self.assertEqual(now[0].blocked, labels.Clash(labels.CARD, "t"))
 
 
 class TheSegmentALabelHangsFrom(unittest.TestCase):
