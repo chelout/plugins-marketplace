@@ -88,6 +88,12 @@ Test cases (written from the declaration of the change, before the implementatio
     put both on the very same y — `router.drawn_overlaps` counts on the lattice, where the two lines
     differ, so nothing but the page showed it. A mode whose band does not hold the gate's seven lines
     refuses the plan and draws nothing at all, which the test asks for instead.
+20. "resolver-rules", both modes: every label of the example is drawn with a box — `getBBox()` of
+    its text, in the same frame as the anchor `x`, `y` the probe already records — the box stands
+    at that anchor, and its width is within LABEL_WIDTH_TOL of what diagrams/common.py's glyph
+    table computes for the same text. The table is an advance-width sum calibrated in a browser;
+    this is the measurement of how far it stands from the browser that draws it, and the box is
+    what the rectangle Python chooses for a label is held against.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -108,7 +114,7 @@ from unittest import mock
 
 import support
 import render
-from diagrams import flow, router
+from diagrams import common, flow, router
 from diagrams.flow import LABEL_DROP, TRACK_LEAD
 
 KINDS = ("flow", "swimlane", "state", "blocks")
@@ -127,6 +133,13 @@ CLAMP_IN = 10
 # pixels: template/js/flow.js stands the baseline of a label over a horizontal second segment this far
 # above the base of the lattice line that segment runs along
 LABEL_OVER = 9
+# share of the width diagrams/common.py computes for a label that the width the page draws it may
+# differ by: the glyph table is a sum of advance widths measured once in a browser, and the browser
+# that draws the page lays the same string out with its own fallbacks, kerning and rounding
+LABEL_WIDTH_TOL = 0.15
+# the example the label boxes are measured on (docstring case 20): ten labels, nine of them one
+# short Cyrillic word and one carrying a circled footnote number out of a fallback font
+LABEL_BOX_EXAMPLE = "resolver-rules"
 BROWSER_TIMEOUT = 60  # seconds per page; a launch takes about 3 s
 
 # The reported case: `write -> both` leaves the step card `write` straight sideways into the
@@ -373,17 +386,22 @@ GATE_SEVEN = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
 # the renderer handed to the page; `texts`, in the same order, the [x, y] of the group's label text
-# or null; `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
+# or null; `labels`, in the same order again, getBBox() of that text as [x, y, width, height] or
+# null — the frame is the svg's own, which draw() of template/js/draw.js gives the grid box's size,
+# so a box is px from the grid box's top-left corner, as `texts` and `lines` are;
+# `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
 # mapped into the svg's own coordinates, the ones `d` is written in; `boxes`, the same for the grid
 # box (`grid`), the section that clips what leaves it (`sec`), every swimlane header (`heads`), the
 # footnote list (`foot`, absent when the model has none) and the legend (`legend`, with `legendpad`,
 # its computed padding-top in those same units, the gap between its box top and its first text).
 # Whatever bounds a line drawn along an outer margin stands among them.
-PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],cards:{},boxes:{heads:[]}},"
+PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],labels:[],cards:{},boxes:{heads:[]}},"
          "s=document.querySelector('.dg-svg');"
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
-         "t=g.querySelector('text');o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
-         "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y')]:null)});"
+         "t=g.querySelector('text'),k=t?t.getBBox():null;"
+         "o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
+         "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y')]:null);"
+         "o.labels.push(k?[k.x,k.y,k.width,k.height]:null)});"
          "if(s){var m=s.getScreenCTM().inverse(),q=s.createSVGPoint();"
          "var u=function(x,y){q.x=x;q.y=y;var w=q.matrixTransform(m);return[w.x,w.y]};"
          "var b=function(el){var r=el.getBoundingClientRect();return u(r.left,r.top).concat(u(r.right,r.bottom))};"
@@ -463,7 +481,8 @@ def render_page(model, mode, path, paths=None):
 
 def run_chrome(chrome, page):
     """The probe output of `page` after it has drawn, as {"lines": [(data-e, d), ...], "texts":
-    [[x, y] or None, ...], "cards": {id: [left, top, right, bottom]}}. No --user-data-dir:
+    [[x, y] or None, ...], "labels": [[x, y, width, height] or None, ...], "cards":
+    {id: [left, top, right, bottom]}}. No --user-data-dir:
     on macOS a fresh profile directory keeps headless Chrome from exiting after --dump-dom."""
     cmd = [chrome, "--headless=new", "--disable-gpu", "--window-size=1300,1200",
            "--virtual-time-budget=3000", "--dump-dom", page.as_uri()]
@@ -659,6 +678,23 @@ def second_run_label_misses(layout, names, lines, texts, cards):
             misses.append(f"{names[i]}: label over its second segment on row line {Y} has its baseline at y "
                           f"{texts[i][1]:.2f}; the row line's base, from that segment, is {base:.2f}")
     return misses, checked
+
+
+def label_boxes(layout, names, texts, boxes):
+    """[(edge name, text, anchor [x, y], box [x, y, w, h], the width common.label_width gives it)]
+    of every labelled edge. The box is `getBBox()` of the label's text, in the svg's own
+    coordinates — the frame the anchor and every line are already in, px from the top-left corner
+    of the grid box, since draw() of template/js/draw.js gives the svg the grid box's own size as
+    its viewBox. A labelled edge the page drew no text or no box for is a harness error."""
+    out = []
+    for i, e in enumerate(layout["edges"]):
+        if not e["label"]:
+            continue
+        if texts[i] is None or boxes[i] is None:
+            raise HarnessError(f"{names[i]} carries the label {e['label']!r} and the page drew no "
+                               f"{'text' if texts[i] is None else 'box'} for it")
+        out.append((names[i], e["label"], texts[i], boxes[i], common.label_width(e["label"])))
+    return out
 
 
 def runs_on_row_lines(layout, lines, wanted):
@@ -1007,6 +1043,49 @@ class BrowserLines(unittest.TestCase):
                 self.assertEqual(misses, [], f"label-over-row-line {mode}: a label over a second segment off its base")
                 # the case exists only if a -> b runs its second segment along the row line of b and c
                 self.assertEqual(checked, 1, f"harness: {mode}: no label over a second segment on a row line was checked")
+
+    def measure_label_boxes(self, name):
+        """One record per (mode, label) of one page: the box the page drew the label's text in, the
+        anchor the probe records beside it, and the width diagrams/common.py's glyph table computes
+        for the same string."""
+        out = []
+        for mode in MODES:
+            layout, names, _ = self.measured(name, mode)
+            got = self.results[name, mode]
+            if "labels" not in got:
+                self.fail(f"harness: {name} {mode}: the probe records no label boxes")
+            self.assertEqual(len(got["labels"]), len(layout["edges"]),
+                             f"harness: {name} {mode}: the probe records a box for {len(got['labels'])} "
+                             f"of {len(layout['edges'])} edges")
+            try:
+                out += [(mode, *record) for record in label_boxes(layout, names, got["texts"], got["labels"])]
+            except HarnessError as exc:
+                self.fail(f"harness: {name} {mode}: {exc}")
+        return out
+
+    def test_label_boxes_follow_the_glyph_table(self):
+        """Docstring case 20, criterion E1: every label of the example has a box, the box stands at
+        the anchor the probe already records, and its width is within LABEL_WIDTH_TOL of the one
+        diagrams/common.py computes. The box is what a chosen rectangle is held against; the widths
+        are how far the glyph table stands from the browser that draws the page."""
+        self.assertIn(LABEL_BOX_EXAMPLE, dict(self.examples),
+                      f"harness: no example named {LABEL_BOX_EXAMPLE} was drawn")
+        measured = self.measure_label_boxes(LABEL_BOX_EXAMPLE)
+        # the case exists only while the example carries labels to measure
+        self.assertTrue(measured, f"harness: {LABEL_BOX_EXAMPLE} drew no label")
+        shown = "\n".join(f"  {mode:6} {name:20} {text!r:10} box ({box[0]:7.2f}, {box[1]:7.2f}) "
+                          f"{box[2]:6.2f} x {box[3]:5.2f}, the table says {want:6.2f}, ratio "
+                          f"{box[2] / want:5.3f}"
+                          for mode, name, text, _, box, want in measured)
+        adrift = [f"{mode} {name} {text!r}" for mode, name, text, anchor, box, _ in measured
+                  if min(abs(box[0] - anchor[0]), abs(box[0] + box[2] - anchor[0])) > AXIS_TOL
+                  or not box[1] - AXIS_TOL <= anchor[1] <= box[1] + box[3] + AXIS_TOL]
+        self.assertEqual(adrift, [], "a label box does not stand at the anchor the probe records, so the "
+                                     "two are not in one frame:\n" + shown)
+        off = [f"{mode} {name} {text!r}" for mode, name, text, _, box, want in measured
+               if abs(box[2] - want) > LABEL_WIDTH_TOL * want]
+        self.assertEqual(off, [], f"a label is drawn more than {LABEL_WIDTH_TOL:.0%} from the width the "
+                                  f"glyph table computes:\n" + shown)
 
     def test_planned_crossing(self):
         for mode in MODES:
