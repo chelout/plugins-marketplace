@@ -32,6 +32,25 @@ LABEL_MAX_CHARS, LABEL_MAX_WORDS = 24, 3
 FOOT_RE = re.compile(r"\s*\[(\d+)\]\s*$")
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
 
+# What a layout error a draft keeps going past is prefixed with in the warnings. The advice reads it
+# back off them to tell the messages a move introduced from the ones the author's own grid already
+# had, so the two sides of the prefix are one constant.
+DRAFT = "черновик: "
+
+# What the crossings warning starts with. The advice counts the warnings of a plan to drop a move
+# that brings one the author's grid did not have, and this is the one it does not count: lowering
+# that very number is what the moves are for.
+CROSSINGS = "пересечений линий: "
+
+# A measurement switch, and nothing else. It is the calls of `route` the search inside `route_all`
+# may spend (router.BUDGET), named here rather than written at the call so that the stage D
+# measurement of tools/bench_routing.py can price a verifying plan that stops at the better start
+# (`budget=0`, spec 6 as amended) without a public argument on `plan` that a renderer could reach
+# for. No renderer path may set it: the tool moves it for the length of its own measurement and puts
+# it back, and a production value other than router.BUDGET would mean the page is drawn by a routing
+# nothing was measured against.
+_ROUTE_BUDGET = router.BUDGET
+
 # Where drawFlow in template/js/flow.js puts a label, in px; keep the two in step
 # (tests/test_label_lines.py reads the script's numbers).
 LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
@@ -732,7 +751,8 @@ def plan(model, mode_name, overrides=None, draft=False):
     paths, routed, kept = [], [], []
     # the room goes to the search as it goes to the offsets below: a routing is priced against the
     # room its groups are drawn in, or the term that counts a full gutter is zero wherever it matters
-    for i, (e, p) in enumerate(zip(edges, router.route_all(lat, ends, labelled, room=geo.room))):
+    for i, (e, p) in enumerate(zip(edges, router.route_all(lat, ends, labelled, room=geo.room,
+                                                           budget=_ROUTE_BUDGET))):
         if p is None:
             layout_errors.append(f"связь {e['a']} -> {e['b']}: нет маршрута, не проходящего сквозь узлы; "
                                  f"освободите ячейку между ними или переставьте узлы")
@@ -743,7 +763,7 @@ def plan(model, mode_name, overrides=None, draft=False):
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
-        warnings = ["черновик: " + x for x in layout_errors] + warnings
+        warnings = [DRAFT + x for x in layout_errors] + warnings
 
     on_cards = frozenset(lat.blocked)
     # the offsets and the check go through `place`, which draws the paths in the order the search
@@ -751,6 +771,11 @@ def plan(model, mode_name, overrides=None, draft=False):
     # routing placed in another one is drawn in slots the search never paid for
     offsets, groups = router.place([ends[i] for i in kept], [labelled[i] for i in kept], paths,
                                    on_cards, geo.room)
+    # what Φ pays for a full gutter, in the unit it pays it in (router.overflow, spec 5.2): the
+    # slots these groups take past what their lines hold. The advice of spec 6 ranks a grid by it
+    # first of all, and a plan that is not a draft always answers zero — a group past its capacity
+    # is a layout error, and without `draft` the plan below raises instead of returning
+    overflow = sum(width - cap for _, _, width, _, cap in groups)
     # the price above makes a full gutter rare and promises nothing: it reads the load of one unit
     # edge, and what a group costs its line is the slots it is drawn in over the whole of its
     # reach. What does not fit at the smallest pitch is refused here, one error per group, so the
@@ -817,13 +842,13 @@ def plan(model, mode_name, overrides=None, draft=False):
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
     if layout_errors:
-        warnings = ["черновик: " + x for x in layout_errors if x not in " ".join(warnings)] + warnings
+        warnings = [DRAFT + x for x in layout_errors if x not in " ".join(warnings)] + warnings
 
     # what the reader sees, not what the lattice paths would cross: with the offsets assigned the
     # two are the same number, and where they are not the author is told about the drawing
     n_cross = router.drawn_crossings(paths, offsets, frozenset(lat.blocked))
     if n_cross >= 3:
-        warnings.append(f"пересечений линий: {n_cross}; переставьте узлы, чтобы их стало меньше")
+        warnings.append(f"{CROSSINGS}{n_cross}; переставьте узлы, чтобы их стало меньше")
     out_edges = []
     for e, p, off in zip(routed, paths, offsets):
         out = {
@@ -844,7 +869,8 @@ def plan(model, mode_name, overrides=None, draft=False):
     layout = {"kind": kind, "edges": out_edges, "card_w": card_w, "grid_cols": grid_cols, "grid_rows": drawn_rows,
               "empty_rows": drawn_empty,
               "cells": cells, "mode": mode, "nodes": by_id, "lanes": lanes, "lattice": lat, "paths": paths,
-              "crossings": n_cross, "draft": bool(layout_errors), "routes": routes, "footnotes": footnotes}
+              "crossings": n_cross, "draft": bool(layout_errors), "routes": routes, "footnotes": footnotes,
+              "overflow": overflow, "overfull": groups}
     return layout, warnings
 
 

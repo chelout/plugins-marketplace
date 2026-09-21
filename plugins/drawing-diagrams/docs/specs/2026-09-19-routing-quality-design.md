@@ -393,7 +393,45 @@ capacity, or three or more crossings; never from inside `flow.plan` and never fr
 `render.failure_map`, which plans again. `flow.plan(…, draft=True)` exposes what the search needs in
 `layout`: `unroutable` (a count — today a draft plan drops such edges and reports the crossings of
 the rest) and `overfull` (the groups of §4.4). The score of a grid is the tuple (unroutable,
-overflow, crossings, total length), compared lexicographically.
+overflow, crossings, total length), compared lexicographically (amended below: no `unroutable`).
+
+Amended 2026-09-20, after stages A to C landed, which this section was written before:
+
+- **No `unroutable`.** A grid of cards cannot wall an edge in: cards sit on odd lattice points and
+  the gutters between them are never blocked, so `route` always finds a way (found in stage A; the
+  "нет маршрута" branch of `flow.plan` is kept as a guard and cannot be reached from a model). The
+  trigger is a group over capacity or three or more crossings, and the score is the tuple
+  (overflow, crossings, total length). `overflow` is what Φ counts: the slots over capacity of the
+  groups `router.overfull` names (§4.1a, §5.2). `flow.plan(…, draft=True)` puts that number and the
+  groups into `layout`; nothing else of `layout` changes.
+- **What a verifying plan costs.** A plan now routes with the search of §5.3: a few ms on the
+  shipped examples, about 200 ms on the dense scenario, so 40 verifying plans there are about 8 s
+  against the 3 s this design asked the advice to be reported against. The stage measures it on
+  the dense scenario and on models of the size authors write; if the measurement says so, the
+  first lever is a verifying plan that stops at the better start (`route_all(budget=0)`), with the
+  advised grid planned in full once at the end, and the owner rules on the number.
+- **The capacity error gets its move.** The advice answers the error of §4.4 as well as the
+  crossings warning: "переставьте узлы" is then a verified move, not a wish.
+- **What the author is asked to do** (amended 2026-09-21, after the stage's gate and qa review). The
+  search climbs on the whole score, length included, because a move that only shortens the lines
+  can open the way to one that removes a crossing. The author is not asked for the cosmetic ones,
+  though: the advised sequence ends with the last move that lowers overflow or crossings, and the
+  moves after it are dropped (on 9 of the 12 seeded models of D2 a sequence ended in up to three
+  moves reading "0 → 0"). Every step of the block names the term of the score it moved, so a step
+  inside the sequence that only shortens the lines says so instead of printing a count that stands
+  still.
+- **No new warning either.** A move is dropped if its plan carries a layout error the start did not
+  have — the first text — or more warnings than the start, the crossings warning aside: `SKILL.md`
+  tells the author to treat a warning as an error, and on 2 of the 12 seeded models the advice
+  handed over a grid with an empty-row warning the author's own grid did not have.
+- **A lane order is printed with its lanes.** A `lanes` move changes `lanes` and `grid` together, so
+  the block prints both; pasting the grid alone would hand cards to other lanes.
+- **The downward rule is the one above, not a stricter one.** A move may lay the two cards of a
+  downward edge in one row; what it may not do is put the target above the source, and judging
+  every produced grid against the original's downward edges is what keeps a later move from
+  turning that row upward. (Task 14 first read it strictly, target below source; the branch gate
+  showed what that costs: on the first seeded model (0, 1, 102) where the spec's rule reaches
+  (0, 0, 90).)
 
 - **Moves:** swap two nodes, or move a node into an empty cell, inside the existing grid size; every
   move is applied to a deep copy of the original model (`flow.plan` writes `_note` and `_text` into
@@ -586,7 +624,11 @@ Stage D
   run, stdout and exit codes unchanged: CLI tests.
 - D4. Headless benchmark with and without advice on the four tasks of the token cost experiment and
   two tasks that raise the crossings warning: report with renders per diagram and output tokens;
-  the owner's recorded decision.
+  the owner's recorded decision. Amended 2026-09-21, as run: the owner cut it to the edit task of
+  the token cost experiment and the two new tasks, three pairs each, and the first pair of each
+  showed that the edit task and the new flow never reach the trigger, so neither can tell the
+  variants apart; they ran once, and a constructed edit of a model that already crosses 15 times
+  took their place. Sixteen sessions; the report is `design.md` §14.
 
 Stage E
 - E1. The browser probe records label boxes: `tests/test_browser_lines.py`.
@@ -619,7 +661,7 @@ names the criterion that proves the guarantee.
 | The objective is not the router's cost | `own` is `route`'s cost by replay; `pair` is declared different; fast `Traffic` keeps boolean semantics | §5.1, §5.2 | C1, C2 |
 | Canonical order is narrower than the output | the promise is routes per (source, target, labelled) only | §2 non-goal, §5.4 | C3 |
 | Advice can break the model | deep copies; rules against the original grid; lanes move columns; no new error | §6 | D1, D2 |
-| Advice is coupled to the planner's failure path | the draft plan exposes `unroutable` and `overfull`; `render.main` alone calls the search, once | §6 | D3 |
+| Advice is coupled to the planner's failure path | the draft plan exposes `overflow` and `overfull`; `render.main` alone calls the search, once | §6 | D3 |
 | The anchor contract is incomplete | tagged `ref`, "drawn" defined, every place covered, box measured | §7.4 | E1, E5 |
 | The label optimiser's bound is undefined | lexicographic cost, owner counting, greedy incumbent over the same candidates, best complete on exhaustion | §7.3 | E4 |
 | Work exceeds the stated envelope | starts complete, descent budget shared, advice bounded in plans, label search per plan, generator published | §5.3, §6, §7.3, slots | C3, D2, E4, task 0 |
@@ -636,6 +678,10 @@ The owner took the default of each on 2026-09-19.
   before layout, which would retire the band rules of `design.md` §14 at the price of changing how
   such models look.
 - **Q2.** Advice: on whenever it is triggered, with `--no-advice` (default), or opt-in `--advise`?
+  Settled by the owner on 2026-09-21 on the report of the D4 experiment (`design.md` §14): on
+  whenever it is triggered, with `--no-advice`. The rule that a move which leaves the author with
+  more warnings is not offered (§6) stays as built, with its measured price known: two of the three
+  runs of the swimlane task with advice were offered nothing at three crossings.
 - **Q3.** Order and cut of the stream: A, C fast `Traffic`, B, C, D, E, each a pull request of its
   own (default); or stop after C and decide on D and E from its results?
 - **Q4.** "Just after the bend" moves the label of every horizontal second segment in existing

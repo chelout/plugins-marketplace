@@ -84,6 +84,26 @@ spread 8 px apart, 6 or 5 px where the gutter is too narrow for that, and the
 router sends a line round a gutter that is already full. `--check` prints the map with the routed lines and the
 number of line crossings; three or more crossings are a warning.
 
+Where a gutter holds more lines than fit or three lines cross, stderr also
+carries an advice: the moves that lower that count, numbered, and the grid
+they leave behind, ready to paste back into the model. The headline
+names what the whole sequence buys — extra lines, crossings or the length of
+the lines — and every step names the one it moved itself, so a step that only
+shortened the lines says so instead of printing a count that stands still.
+The last move always lowers the extra lines or the crossings: a sequence is
+never padded with moves that only tidy the drawing. For a swimlane the block
+prints `lanes:` under the grid as well, and the two are pasted back together —
+the columns travel with the lanes, so the grid on its own would move cards
+into other lanes. Every move is verified — the renderer routes the grid it
+would produce and reports what it measured, not a guess — and no move is
+offered that brings an error the model did not already have or leaves it with
+more warnings than it had (the crossings warning aside): a warning may change
+its kind, their number never grows. The advice never changes the model: apply it by editing
+the grid, or leave it and say why. Nothing is printed when no move improves
+the drawing. The search runs only when one of those two problems was
+reported, and costs about half a second on a dozen cards, several seconds on
+a full page of thirty; `--no-advice` turns it off.
+
 ### Edges
 
 `"a -> b : label [n] | dashed"`. The label sits at the exit of the line next

@@ -462,3 +462,167 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   16 of `own` against the 14 of the two steps up, both descents draw the exit straight, and
   `ExitLabelCase.straight_exit` asserts that premise under its own name rather than leaving it to
   the first assertion that trips over it.
+- Rearrangement advice, stage D: where the renderer has already told the author something about the
+  drawing, it also says what to do about it, and every word of that is measured. `render.main` asks
+  `advice.search` once per model — after `produce`, or after the `ModelError` — and never anywhere
+  else: not from `flow.plan`, and not from `render.failure_map`, which plans again for the map. The
+  trigger is a group drawn past the capacity of its lattice line or the crossings the warning counts
+  (`render.triggered`, `render.MANY_CROSSINGS` = 3, `layout["overflow"]` of a draft plan), and the
+  score a grid is ranked by is the tuple (overflow, crossings, total length) compared
+  lexicographically (`advice.evaluate`). Spec §6 wrote that tuple with `unroutable` first and it was
+  dropped on 2026-09-20: a grid of cards cannot wall an edge in — cards sit on odd lattice points
+  and the gutters between them are never blocked — so `route` always finds a way and the
+  "нет маршрута" branch of `flow.plan` is a guard no model reaches.
+- The gate is the trigger and not what the search finds. A model that crosses twice is offered a
+  move and told nothing, one crossing under the count the warning is printed at
+  (`test_a_model_one_crossing_under_the_threshold_is_not_advised` of `tests/test_render_cli.py`,
+  which holds the search's own answer as its premise rather than an absence). Both halves of the
+  trigger are read, and the capacity half alone is held on a model with a group over its line and
+  the crossings under the threshold
+  (`test_a_group_over_its_capacity_is_advised_with_the_crossings_under_the_threshold`); the model
+  is `tests/models/overfull-gutter.json` without the two edges that make it cross three times, so
+  a trigger that had quietly become "count the crossings" would say nothing about it. The kinds
+  `flow.py` plans are the only ones searched — a schema and a timeline have no advice — and a model
+  refused for the length of a text alone gets none either: it has no layout to read a trigger off,
+  it gets no map for the same reason, and what it needs is a shorter text and not a rearrangement.
+- The moves, and the rules that keep the author's reading. `advice.moves(original, current,
+  mode_name)` offers three kinds (`advice.Swap`, `advice.Shift`, `advice.Lanes`) in the order of how
+  little they disturb the reading — inside one row, then to the row beside it, then the rest
+  (`advice._reach`) — with ties to the earlier node in the model, so two calls give one answer. A
+  swimlane moves no card of its own, since a column is a lane and a row is a moment: its only move
+  is a lane order that takes the grid columns with it. Every move produces a deep copy with a new
+  `grid` and nothing else touched, because `flow.plan` writes `_note` and `_text` into the nodes it
+  plans, and `advice.write_grid` writes the map back at the author's own column offsets, keeping a
+  row nothing moved in byte for byte, once at the end of the sequence and never per move — written
+  per move, a card carried into a column too narrow for it would push the rows a later move
+  rewrites out of the author's own alignment
+  (`test_the_advised_grid_after_several_moves_keeps_the_authors_offsets` of
+  `tests/test_render_cli.py`). `advice._Rules` judges the grid a move **produces** against the grid
+  the author **wrote**, which is what closes the rules over a whole sequence instead of one step at
+  a time: an edge that runs downward in the author's grid never has its target above its source,
+  and a node the author gave no incoming edge stays in the first row if that is where it stood.
+  Level is allowed, which is spec §6's own reading and not a stricter one: the two cards of a
+  downward edge may come to stand in one row, and it is the original grid — not the grid in hand,
+  which by then has nothing to say — that refuses the later move reversing them
+  (`TheOriginalGrid` of `tests/test_advice.py`). Task 14 first read it strictly, target below
+  source, and the branch gate measured what that costs: on the first seeded model the search
+  stopped at (0, 1, 102) where the spec's rule reaches (0, 0, 102) in three moves instead of four,
+  and on `CROSSED` of `tests/test_render_cli.py` one swap now clears all three crossings where two
+  were needed. A lane order is a permutation, so a model of twelve lanes has 479 001 600
+  of them: `advice.MAX_LANES` = 7, the widest `max_lanes` any mode declares
+  (`flow.MODES["swimlane"]["page"]`), is the cap, and a model over a limit of its mode is advised
+  nothing and plans nothing at all (the plan gate's finding G3, `LaneOrders` and `NothingToAdvise`
+  of the same file). The cap is held under `lane_orders()`, a `permutations` that refuses to build
+  the orders of more lanes than the cap allows, so a cap that stopped holding is a failed assertion
+  and not a suite that never finishes.
+- What ranks a move before anything is routed is `advice.proxy`: ten per crossing of the straight
+  lines between the cell centres of two edges, six per card standing on such a line where it runs
+  along one row or one column, three per edge that goes up, plus the Manhattan length of every edge.
+  It counts the lines an author would draw with a ruler where the router draws around the cards and
+  through the gutters, so it is a ranking and never a prediction — which is the whole of its job:
+  `advice.search` prices every move of the grid in hand with it and pays a routing only for the few
+  it then verifies (`TheProxy` of `tests/test_advice.py`).
+- The search is hill climbing with a verified step. One step: rank the moves by the proxy, plan the
+  best `advice.TOP` = 8 of them with `advice.evaluate` — a draft plan of a deep copy, at the
+  overrides `render.main` forwards, so a move is never verified against a geometry the render will
+  not use (the plan gate's finding G2, `TheRendersOwnWidth`) — and take the best whose score is
+  strictly lower than the grid's own, whose plan carries no message the author's grid did not
+  already have, and which brings no more warnings than that grid did. Then step again from the grid
+  that move produced. It stops when nothing improves, after `advice.MAX_MOVES` = 8 moves, or when
+  `advice.MAX_PLANS` = 40 plans are spent, the one that prices the author's own grid included
+  (`HillClimbing` and `ThePlanAllowance`). Two of the three numbers are spec §6's and are pinned as
+  such; `MAX_PLANS` is the owner's, measured and ruled on, so only its mechanism is held
+  (`TheNumbersOfTheSpec`).
+- A warning counts as a problem, since `SKILL.md` tells the author to treat one as an error. The
+  third value of `advice.evaluate` is how many warnings the draft plan carried, the crossings
+  warning left out (`flow.CROSSINGS`) because lowering that count is what the moves are for, and a
+  candidate carrying more of them than the start is dropped however well it scores. It bites: on
+  seeded #15 the best move by score at the very first step opens an empty row and the search takes
+  a worse-scoring one instead, and on #6 the same happens three steps in
+  (`NoNewWarning` of `tests/test_advice.py`, and the population assertion of `HillClimbing`). Both
+  models were handing the author a grid with an empty-row warning their own grid did not have.
+- The author is not asked for the cosmetic moves. The climb reads the whole score, the length of
+  the lines included, because a move that only shortens them can open the way to one that removes a
+  crossing; the sequence `advice.search` hands back ends with the last move that lowered overflow
+  or crossings, and the moves after it are dropped inside `search`, so every caller gets the same
+  trimmed sequence and the same claim. Over the twelve seeded models that is 41 moves asked for
+  where the untrimmed climb made 55, and on the shipped examples it is the difference between an
+  advice and none: every one of the eight example-and-mode pairs the benchmark runs is now offered
+  nothing, because a shorter routing was all any of them had.
+- Every verifying plan routes in full, and the lever spec §6 held in reserve was measured and
+  refused. `tools/bench_routing.py --advice` runs both readings over three populations: the shipped
+  examples in both modes; the twelve seeded models `bench_routing.seeded_models` builds for the
+  tests, each an instance of `tools/instances.py` on the naive reading-order grid an author writes
+  before thinking about the lines, kept when its plan crosses three times or more — seven to sixteen
+  cards, which is the size of a model somebody writes by hand; and the dense scenario, a page of 30
+  cards and 40 edges. Full verification is 44.2 ms median on the examples (max 138.5), 587.0 ms on
+  the seeded models (max 1 995.4) and 6 380.9 ms on the dense scenario (max 7 686.0), against the
+  3 s spec §6 asked to be reported against — one run's numbers, which drift a percent or two
+  between runs on one machine. The lever — verifying plans that stop at the better of
+  the two starts, which `bench_routing._route_budget` prices by setting `flow._ROUTE_BUDGET` to
+  zero, with the advised grid planned in full once at the end — is three times faster and advises a
+  different grid on every model of the two populations where that matters (the same moves 0 of 5
+  and 0 of 12; 8 of 8 on the examples, where there is nothing to advise either way): on seeds 2, 4
+  and 5 of the dense scenario it finds no move at all, and on seed 2 that leaves the author's own
+  (2, 102, 392) where the full search reaches (0, 33, 270) — two slots over capacity left standing,
+  and overflow is the first term of the score. So there is no fast mode: what bounds the cost is
+  the trigger and the 40 plans. `flow._ROUTE_BUDGET` stays as the measurement switch it is: the
+  tool moves it for the length of its own run and puts it back, and no renderer path sets it.
+- The output is stderr and nothing else, printed after the warning or the error it answers
+  (`render.advice_block`): a headline, the moves numbered from one with what each buys, the advised
+  grid under `grid:` with each row quoted as the author would paste it back into the model, and —
+  where a move changed it — the lane order under `lanes:`. A `lanes` move changes `lanes` and `grid`
+  together, because the columns travel with the lanes; the grid pasted on its own would hand the
+  cards of one lane to the lane beside it, and on `overfull-gutter.json` it does so silently, since
+  there a lane is what colours a card and no node names a group of its own
+  (`test_a_lane_order_is_printed_with_its_lanes`).
+  The headline counts the term of the score the whole sequence moved — the first of the three whose
+  two ends differ, which is the one that made the sequence an improvement, since the three are
+  compared in that order — and `render.SCORE_TERMS` names it to the author: "лишних линий" for a
+  slot over capacity, in the word the capacity error itself uses for a line that does not fit,
+  "пересечений" for a crossing, "длина линий" for the length. So a trigger answered is a trigger
+  counted: a group over its capacity gets a headline that speaks of it. Every step names the term
+  it moved itself (`render.moved_term`): the climb reads the whole score, so a move inside the
+  sequence may have bought nothing but a shorter line, and a step naming the headline's term would
+  then print a count standing still. No step of any block over the seeded population does
+  (`test_no_step_of_the_seeded_populations_blocks_stands_still`). "за N ходов" declines through
+  `common.plural`, which is what lets the count stand where spec §6 wrote it instead of moving the
+  noun in front of it as the other messages do. With several models the headline carries the path
+  of its own model and not of the first of the batch, exactly as the summary lines do. Nothing is
+  printed when no move improves the score, and `--no-advice` suppresses the search itself, in a
+  batch as much as in a single render.
+- What the advice does not touch: stdout, the exit codes, `--check`, `--format mermaid|ascii` and
+  the all-or-nothing of `--out-dir` are what they were, and an error run prints the advice once,
+  after the errors and the map, and still exits 1 (`tests/test_render_cli.py`, criterion D3). All 14
+  shipped renders stay byte-identical, on stdout and on stderr alike: not one of them has a trigger,
+  so not one of them gains a block.
+- Measured before it is kept (spec §6, criterion D4 as amended), 2026-09-21: sixteen headless
+  sessions of `claude-opus-5` at effort `xhigh` by the method of the token cost experiment, over two
+  plugins that draw alike — this branch, and `main` at `1fcb07e`, which has neither the block nor
+  the passage about it. Where a block was printed the author applied it whole, rendered once more
+  and stopped. T7, a constructed task (two trivial edits of a model that crosses 15 times as given),
+  three runs of three: 2 renderer calls, 4.2K output tokens, 0.87 USD and 56 s a run, against 5.3
+  calls, 22.7K tokens, 1.73 USD and 514 s without the block, where the author writes a grid search
+  of its own over `render.py --check`. T6, a new swimlane of four lanes that reached the trigger by
+  itself in all six of its sessions (3 to 5 crossings on the author's first grid), the one run of
+  three that was offered a block: 75 s and 0.94 USD, where the three runs without advice averaged
+  253 s and 1.61 USD.
+  What the block costs is the last crossing. On T7 it ends at 1 and the author stops there, the
+  warning being gone; the authors without it, free to relay the whole grid, ended at 0, 1 and 0, at
+  ten times the wall time. On T6 every run of both variants ends at 2.
+  Two of T6's three runs with advice were offered nothing at 3 crossings. With one card a row the
+  only moves are the 23 other lane orders; the two that reach 2 crossings bring a label warning, and
+  a move that leaves the author with more warnings is dropped. Those authors reached 2 by giving a
+  card to another lane, which no move may do. A trigger without a block costs what no advice costs.
+  The trigger is rarer than the tasks were written for: on T4, the edit task of the token cost
+  experiment, and on T5, a new flow of 9 nodes and 16 edges whose reading-order grid crosses six
+  times, the author's first grid crosses 0 and 1 times, no block is ever printed and the variants
+  differ in nothing, so each ran one pair. T5's two sessions are the dearest of the sixteen, 3.78
+  and 6.50 USD and 13 and 35 minutes, and spend all of it on label warnings — stage E's subject.
+  28.33 USD in all. Three runs a cell make the means an indication; the finding is the pattern.
+  The harness and its rows stay outside the repository (`.experiments/d4`).
+- The owner's decision on that report, 2026-09-21 (task 17, spec §12 Q2): the advice stays on
+  whenever it is triggered, with `--no-advice` to switch the search off; it is neither made opt-in
+  nor removed. The rule that drops a move which leaves the author with more warnings stays as built:
+  the two runs it left without a block are its known price, and what would lower that price is fewer
+  label warnings, which is stage E's work, not a block that trades one warning for another.

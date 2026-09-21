@@ -1,5 +1,7 @@
+import copy
 import io
 import json
+import re
 import statistics
 import tempfile
 import unittest
@@ -9,7 +11,9 @@ from unittest import mock
 
 import support
 import render
-from diagrams import assets
+from bench_routing import ADVICE_MODE, seeded_models
+from diagrams import advice, assets, flow
+from diagrams.grid import parse_grid
 
 REF = "c" * 40
 GROUPS = {"g": {"label": "g", "ramp": "teal"}}
@@ -43,6 +47,115 @@ MODELS = Path(__file__).resolve().parent / "models"
 # A swimlane whose first two lanes have four lines in the gutter between them and room for three.
 OVERFULL = MODELS / "overfull-gutter.json"
 OVERFULL_MESSAGE = r"между столбцами \d+ и \d+ линий \d+, помещается \d+: "
+
+# --- the advice of spec 6, printed on stderr by `render.main`
+#
+# A flow whose grid crosses three lines — the count `flow.plan` warns at, which is what asks for
+# the advice. Its ids are the ones spec 6's own example moves. One swap clears all three: the two
+# cards it exchanges end up in one row, which spec 6's downward rule allows.
+CROSSED_TITLES = {"start": "Заявка", "check": "Проверка", "wait": "Ожидание", "retry": "Повтор",
+                  "declined": "Отказ", "done": "Архив"}
+CROSSED = {"kind": "flow", "id": "crossed", "groups": GROUPS,
+           "nodes": [{"id": nid, "group": "g", "title": title,
+                      "kind": "terminal" if nid in ("start", "done") else "step"}
+                     for nid, title in CROSSED_TITLES.items()],
+           "grid": ["start  .         .",
+                    "check  wait      retry",
+                    "done   declined  ."],
+           "edges": ["start -> check", "start -> wait", "start -> declined",
+                     "check -> retry", "check -> declined", "wait -> declined",
+                     "retry -> done", "declined -> done"]}
+CROSSED_CROSSINGS = 3
+# One column, every card joined downward to cards below it: a swap would turn one of those edges
+# upward, which the rules of the advice forbid, and there is no empty cell to carry a card into. So
+# the model crosses three times, the warning is printed — and the search has nothing to offer.
+NO_MOVE = {"kind": "flow", "id": "no_move", "groups": GROUPS,
+           "nodes": [{"id": nid, "group": "g", "title": nid.upper(),
+                      "kind": "terminal" if nid == "f" else "step"} for nid in "abcdef"],
+           "grid": list("abcdef"),
+           "edges": ["a -> b", "b -> c", "c -> d", "d -> e", "e -> f",
+                     "a -> c", "a -> d", "b -> d", "b -> f", "c -> f"]}
+# A shipped example the renderer must say nothing about: its plan crosses nothing, so nothing was
+# asked of it.
+QUIET = support.SKILL / "examples" / "kyc-trace.json"
+# A flow that crosses exactly twice — one under the threshold — and that the search does improve.
+# It is the lower edge of the trigger: nothing is printed although there is something to say.
+TWICE_NODES = (("zapros", "Запрос", "step"), ("proverka", "Проверка", "step"),
+               ("kesh", "Кэш", "step"), ("reshenie", "Решение", "step"),
+               ("povtor", "Повтор", "step"), ("otvet", "Ответ", "step"),
+               ("log", "Журнал", "terminal"), ("arhiv", "Архив", "terminal"))
+TWICE = {"kind": "flow", "id": "twice", "groups": GROUPS,
+         "nodes": [{"id": nid, "title": title, "kind": kind, "group": "g"}
+                   for nid, title, kind in TWICE_NODES],
+         "grid": ["zapros  proverka  .    kesh",
+                  ".       reshenie  .    .",
+                  "povtor  otvet     log  .",
+                  ".       arhiv     .    ."],
+         "edges": ["reshenie -> otvet", "zapros -> proverka", "povtor -> arhiv",
+                   "kesh -> povtor", "proverka -> otvet", "otvet -> log",
+                   "reshenie -> povtor", "zapros -> arhiv", "kesh -> reshenie"]}
+TWICE_CROSSINGS = 2
+# The model the byte form of an advised grid is read on: it crosses three times, two moves clear
+# them, and the two moves change different rows. Its columns are wider than their longest token, and
+# the first move carries `zayavka` into a column too narrow for it — so a map written per move would
+# push the second move's row one column to the right, and a map written once at the end does not.
+OFFSETS_TITLES = {"zayavka": "Заявка", "bot": "Бот", "dub": "Дубль", "otvet": "Ответ",
+                  "otkaz": "Отказ", "log": "Журнал", "arhiv": "Архив"}
+OFFSETS_TERMINALS = ("otvet", "otkaz", "arhiv")
+OFFSETS = {"kind": "flow", "id": "offsets", "groups": GROUPS,
+           "nodes": [{"id": nid, "group": "g", "title": title,
+                      "kind": "terminal" if nid in OFFSETS_TERMINALS else "step"}
+                     for nid, title in OFFSETS_TITLES.items()],
+           "grid": ["zayavka  bot  .",
+                    ".        dub  otvet",
+                    "otkaz    log  arhiv"],
+           "edges": ["zayavka -> dub", "bot -> otkaz", "bot -> otvet", "dub -> otkaz",
+                     "log -> arhiv", "dub -> arhiv", "bot -> log", "dub -> otvet"]}
+# The model the render's own overrides are read on (the plan gate's finding G2). It crosses three
+# times, and a width moves neither that count nor the capacity of a line: both are read off the
+# lattice, which the grid alone builds. What a width does move is the room a label has, and here the
+# two widths part company over one. At the default 680 one swap clears all three crossings; at
+# NARROW_WIDTH the cards are narrow enough that the very same swap leaves 'нет данных' nowhere to
+# stand beside the line it labels — a message the author's own grid does not carry — so the search
+# refuses it there and reaches zero by two other swaps.
+NARROW_WIDTH = 440
+NARROW_TITLES = {"arhiv": "Архив", "zayavka": "Заявка", "zvonok": "Звонок", "otkaz": "Отказ",
+                 "otvet": "Ответ", "oplata": "Оплата", "anketa": "Анкета",
+                 "proverka": "Проверка", "reshenie": "Решение"}
+NARROW_STEPS = ("zayavka", "zvonok", "anketa", "proverka", "reshenie")
+NARROW = {"kind": "flow", "id": "narrow", "groups": GROUPS,
+          "nodes": [{"id": nid, "group": "g", "title": title,
+                     "kind": "step" if nid in NARROW_STEPS else "terminal"}
+                    for nid, title in NARROW_TITLES.items()],
+          "grid": ["arhiv   zayavka   zvonok",
+                   "otkaz   otvet     oplata",
+                   "anketa  proverka  reshenie"],
+          "edges": ["zayavka -> oplata", "zayavka -> anketa : нет данных", "zvonok -> otvet",
+                    "anketa -> proverka", "proverka -> arhiv", "proverka -> reshenie",
+                    "reshenie -> arhiv", "reshenie -> otkaz"]}
+HEADLINE = re.compile(r"^совет: (?P<prefix>.*?)(?P<term>пересечений|лишних линий|длина линий) "
+                      r"(?P<before>\d+) → (?P<after>\d+) за (?P<moves>\d+) ход(?:а|ов)? "
+                      r"\(проверено трассировкой\)$")
+# every step names the term of the score it moved, so no step of a block ever prints a count that
+# stands still (spec 6 as amended)
+STEP = re.compile(r"^  (?P<n>\d+)\. (?P<what>.+): (?P<term>пересечений|лишних линий|длина линий) "
+                  r"(?P<before>\d+) → (?P<after>\d+)$")
+
+
+def advice_blocks(err):
+    """Every advice block in a stderr, each as its list of lines: the headline, the numbered moves,
+    `grid:` and the rows under it, and `lanes:` with the lane order where a move changed it. The
+    first line that is neither indented nor one of those two headings ends one."""
+    blocks, block = [], None
+    for line in err.splitlines():
+        if line.startswith("совет:"):
+            block = [line]
+            blocks.append(block)
+        elif block is not None and (line in ("grid:", "lanes:") or line.startswith("  ")):
+            block.append(line)
+        else:
+            block = None
+    return blocks
 
 
 class RenderCli(unittest.TestCase):
@@ -105,6 +218,9 @@ class RenderCli(unittest.TestCase):
         self.assertEqual((code, out), (1, ""))
         self.assertIn("заголовок", err)
         self.assertNotIn("пересечений линий", err)
+        # nor an advice: such a model is never planned again, so nothing says what its gutters and
+        # its crossings would be — and what it needs is a shorter text, not a rearrangement
+        self.assertEqual(advice_blocks(err), [])
 
     def test_layout_failure_prints_the_map(self):
         code, out, err = self.run_cli(self.model(WIDE))
@@ -323,6 +439,296 @@ class RenderCli(unittest.TestCase):
         code, out, err = self.run_cli(model_path, "--out-dir", str(out_dir))
         self.assertEqual(code, 0, err)
         self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["stem_name.html"])
+
+    # --- spec 6, criterion D3: the rearrangement advice on stderr, `--no-advice`, and what the
+    # trigger is. The renderer asks for advice where it has already told the author something — a
+    # group over capacity or three crossings — and never otherwise: the last term of the score is
+    # the length of the lines, so a search finds a shorter routing on almost any model, and an
+    # advice nobody asked for is noise in every render.
+    def read_block(self, err, prefix=""):
+        """The one advice block of a stderr, checked against the form of spec 6 and returned as
+        (the headline's match, the numbered moves' matches, the rows of the advised grid, the lane
+        order under `lanes:` or None)."""
+        blocks = advice_blocks(err)
+        self.assertEqual(len(blocks), 1, err)
+        head = HEADLINE.match(blocks[0][0])
+        self.assertIsNotNone(head, blocks[0][0])
+        self.assertEqual(head["prefix"], prefix, blocks[0][0])
+        self.assertIn("grid:", blocks[0], blocks[0])
+        cut = blocks[0].index("grid:")
+        steps = [STEP.match(line) for line in blocks[0][1:cut]]
+        self.assertTrue(all(steps), blocks[0][1:cut])
+        self.assertEqual([step["n"] for step in steps],
+                         [str(i) for i in range(1, len(steps) + 1)], blocks[0])
+        self.assertEqual(head["moves"], str(len(steps)), blocks[0])
+        # every step names the term it moved and the two numbers of that term differ: a step that
+        # stood still is a step the author is asked for nothing by
+        for step in steps:
+            self.assertNotEqual(step["before"], step["after"], step.group(0))
+        # the steps that carry the headline's own term are one chain, from its first number to its
+        # last; a step that moved another term names that one and stands outside the chain
+        chain = [step for step in steps if step["term"] == head["term"]]
+        self.assertTrue(chain, blocks[0])
+        self.assertEqual([head["before"]] + [step["after"] for step in chain],
+                         [step["before"] for step in chain] + [head["after"]], blocks[0])
+        tail = blocks[0][cut + 1:]
+        lanes = None
+        if "lanes:" in tail:
+            at = tail.index("lanes:")
+            lanes = json.loads(tail[at + 1].strip())
+            tail = tail[:at]
+        rows = [json.loads(line.strip()) for line in tail]
+        self.assertTrue(rows, blocks[0])
+        return head, steps, rows, lanes
+
+    def test_three_crossings_get_the_advice_after_the_warning(self):
+        self.publish()
+        path = self.model(CROSSED)
+        code, out, err = self.run_cli(path)
+        self.assertEqual(code, 0, err)
+        # stdout is the fragment and nothing else: the advice is stderr's
+        self.assertEqual(out, self.run_cli(path, "--no-advice")[1])
+        self.assertNotIn("совет", out)
+        warning = f"предупреждение: пересечений линий: {CROSSED_CROSSINGS}"
+        self.assertIn(warning, err)
+        head, steps, rows, lanes = self.read_block(err)
+        self.assertEqual((head["term"], head["before"]), ("пересечений", str(CROSSED_CROSSINGS)), err)
+        self.assertLess(int(head["after"]), CROSSED_CROSSINGS, err)
+        self.assertEqual(len(steps), 1, err)
+        self.assertIsNone(lanes, "a flow has no lanes to print")
+        # the block comes after the warning it answers and after the map printed with it
+        self.assertLess(err.index(warning), err.index(head.group(0)), err)
+        self.assertLess(err.index("[start]"), err.index(head.group(0)), err)
+        # and the grid it prints is the advice itself: planned as it stands, it crosses what the
+        # headline promises
+        advised = dict(copy.deepcopy(CROSSED), grid=rows)
+        layout, _ = flow.plan(advised, "widget", {}, draft=True)
+        self.assertEqual(layout["crossings"], int(head["after"]), rows)
+
+    def test_no_advice_prints_none(self):
+        self.publish()
+        code, out, err = self.run_cli(self.model(CROSSED), "--no-advice")
+        self.assertEqual(code, 0, err)
+        self.assertIn(f"предупреждение: пересечений линий: {CROSSED_CROSSINGS}", err)
+        self.assertEqual(advice_blocks(err), [])
+
+    def test_a_model_no_move_improves_prints_none(self):
+        self.publish()
+        code, out, err = self.run_cli(self.model(NO_MOVE))
+        self.assertEqual(code, 0, err)
+        self.assertIn("предупреждение: пересечений линий: 3", err)
+        self.assertEqual(advice.search(copy.deepcopy(NO_MOVE), "widget", {}), [])
+        self.assertEqual(advice_blocks(err), [])
+
+    def test_a_model_without_the_trigger_is_not_advised(self):
+        self.publish()
+        code, out, err = self.run_cli(str(QUIET))
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("пересечений линий", err)
+        self.assertEqual(advice_blocks(err), [])
+
+    # The lower edge of the crossings threshold, with a live premise under it: this model is offered
+    # a move and is still said nothing about, because two crossings are one under the count the
+    # warning is printed at. A threshold of two would advise it.
+    def test_a_model_one_crossing_under_the_threshold_is_not_advised(self):
+        self.publish()
+        path = self.model(TWICE)
+        layout, warnings = flow.plan(copy.deepcopy(TWICE), "widget", {}, draft=True)
+        self.assertEqual((0, TWICE_CROSSINGS), (layout["overflow"], layout["crossings"]))
+        self.assertEqual(TWICE_CROSSINGS, render.MANY_CROSSINGS - 1)
+        found = advice.search(copy.deepcopy(TWICE), "widget", {})
+        self.assertTrue(found, "harness: the search no longer improves this model")
+        self.assertLess(found[-1][2][1], TWICE_CROSSINGS)
+        code, out, err = self.run_cli(path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(advice_blocks(err), [])
+
+    # The other half of the trigger, alone: a group drawn past the capacity of its line, with the
+    # crossings under the threshold. `overfull-gutter.json` answers both at once, so it cannot tell
+    # a trigger that reads the capacity from one that only counts crossings; the same model without
+    # the two edges that make it cross three times can.
+    def quiet_overfull(self):
+        model = json.loads(OVERFULL.read_text())
+        model["id"] = "overfull_quiet"
+        model["edges"] = [e for e in model["edges"]
+                          if e not in ("zayavka -> robot", "utochnenie -> peredano")]
+        return model
+
+    def test_a_group_over_its_capacity_is_advised_with_the_crossings_under_the_threshold(self):
+        model = self.quiet_overfull()
+        layout, _ = flow.plan(copy.deepcopy(model), "widget", {}, draft=True)
+        self.assertGreater(layout["overflow"], 0)
+        self.assertLess(layout["crossings"], render.MANY_CROSSINGS)
+        code, out, err = self.run_cli(self.model(model))
+        self.assertEqual((code, out), (1, ""), err)
+        head, steps, rows, lanes = self.read_block(err)
+        self.assertEqual((head["term"], head["after"]), ("лишних линий", "0"), err)
+
+    # P2: a `lanes` move changes `lanes` and `grid` together, so the block prints both. Pasted
+    # without the lane order, the grid alone hands the cards of one lane to the lane beside it —
+    # and nothing says so, because here a lane is what colours a card and no node names a group of
+    # its own.
+    def lanes_of(self, grid, lanes):
+        """The lane each card stands in: its column's, which is the whole of what a lane order
+        changes."""
+        cells = parse_grid(grid, [])[0]
+        return {nid: lanes[c] for nid, (_, c) in cells.items()}
+
+    def test_a_lane_order_is_printed_with_its_lanes(self):
+        model = self.quiet_overfull()
+        code, out, err = self.run_cli(self.model(model))
+        self.assertEqual((code, out), (1, ""), err)
+        head, steps, rows, lanes = self.read_block(err)
+        self.assertEqual(len(model["lanes"]), len(lanes))
+        self.assertNotEqual(model["lanes"], lanes, "harness: no move changed the lane order")
+        pasted = dict(copy.deepcopy(model), grid=rows, lanes=lanes)
+        layout, warnings = flow.plan(pasted, "widget", {}, draft=True)
+        self.assertEqual(layout["overflow"], int(head["after"]), rows)
+        self.assertEqual([], [w for w in warnings if "дорожк" in w or "группа" in w], warnings)
+        # every card keeps the lane the author gave it, which is what the two printed together mean
+        was = self.lanes_of(model["grid"], model["lanes"])
+        self.assertEqual(was, self.lanes_of(rows, lanes))
+        # and the premise: the grid pasted without them moves cards to other lanes, silently
+        self.assertNotEqual(was, self.lanes_of(rows, model["lanes"]))
+
+    def test_the_advice_names_its_model_in_a_batch(self):
+        self.publish()
+        out_dir = self.tmp / "out"
+        crossed, good = self.model(CROSSED), self.model(GOOD)
+        code, out, err = self.run_cli(crossed, good, "--out-dir", str(out_dir))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["crossed.html", "good.html"])
+        self.read_block(err, prefix=f"{crossed}: ")
+
+    # the model the block names is the one the block is about, and not whichever model the batch
+    # was given first
+    def test_the_advice_names_its_own_model_when_it_is_not_the_first(self):
+        self.publish()
+        out_dir = self.tmp / "out"
+        good, crossed = self.model(GOOD), self.model(CROSSED)
+        code, out, err = self.run_cli(good, crossed, "--out-dir", str(out_dir))
+        self.assertEqual(code, 0, err)
+        self.read_block(err, prefix=f"{crossed}: ")
+        self.assertNotIn(f"совет: {good}", err)
+
+    def test_no_advice_holds_across_a_batch(self):
+        self.publish()
+        out_dir = self.tmp / "out"
+        crossed, good = self.model(CROSSED), self.model(GOOD)
+        code, out, err = self.run_cli(crossed, good, "--out-dir", str(out_dir), "--no-advice")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sorted(p.name for p in out_dir.iterdir()), ["crossed.html", "good.html"])
+        self.assertIn(f"предупреждение: пересечений линий: {CROSSED_CROSSINGS}", err)
+        self.assertEqual(advice_blocks(err), [])
+
+    # The advised grid is written once, from the placement the moves leave behind, at the column
+    # offsets the author's own map used — not once per move from the map the move before it wrote.
+    # On this model the two differ: the first move carries a card into a column too narrow for it,
+    # and a per-move map would carry that column's new offset into the row the second move rewrites.
+    def test_the_advised_grid_after_several_moves_keeps_the_authors_offsets(self):
+        self.publish()
+        code, out, err = self.run_cli(self.model(OFFSETS))
+        self.assertEqual(code, 0, err)
+        head, steps, rows, lanes = self.read_block(err)
+        self.assertEqual(len(steps), 2, err)
+        self.assertEqual(['bot      zayavka .',
+                          '.        otvet dub',
+                          'otkaz    log  arhiv'], rows)
+        # and the same placement written per move, which is what the rows above must not be
+        stepped = copy.deepcopy(OFFSETS)
+        for move, _, _ in advice.search(copy.deepcopy(OFFSETS), "widget", {}):
+            stepped = move.apply(stepped)
+        self.assertNotEqual(stepped["grid"], rows,
+                            "harness: on this model the two ways of writing the map agree")
+
+    # The plan gate's finding G2: every verifying plan of the search is made in the geometry of the
+    # render, so the overrides `render.main` was given — `--width` here — travel with it. A label
+    # that fits at 680 px need not fit at 440, and a search that checked another geometry would
+    # offer a move whose picture this render will not draw.
+    def advice_lines(self, model, found):
+        """The block `advise` prints for a search result, built the way it builds it."""
+        return render.advice_block(found, render.advised_grid(model, found),
+                                   render.advised_lanes(found), "")
+
+    def test_the_advice_is_searched_at_the_width_the_render_was_given(self):
+        self.publish()
+        overrides = {"total": NARROW_WIDTH}
+        wide = advice.search(copy.deepcopy(NARROW), "widget", {})
+        thin = advice.search(copy.deepcopy(NARROW), "widget", overrides)
+        self.assertTrue(wide and thin, "harness: the search no longer improves this model")
+        path = self.model(NARROW)
+        code, out, err = self.run_cli(path)
+        self.assertEqual(code, 0, err)
+        code, out, narrow = self.run_cli(path, "--width", str(NARROW_WIDTH))
+        self.assertEqual(code, 0, narrow)
+        # the trigger is the same at both widths: the crossings are read off the lattice, which a
+        # width does not move, so what parts the two blocks is the geometry the moves were verified
+        # in and nothing else
+        for stderr in (err, narrow):
+            self.assertIn(f"предупреждение: пересечений линий: {render.MANY_CROSSINGS}", stderr)
+        head, steps, _, _ = self.read_block(err)
+        self.assertEqual((head["term"], head["after"]), ("пересечений", "0"), err)
+        self.assertEqual(len(steps), 1, err)
+        move = steps[0]["what"]
+        # the one move the author is offered at the default width is not offered at the narrow one
+        head, steps, _, _ = self.read_block(narrow)
+        self.assertEqual((head["term"], head["after"]), ("пересечений", "0"), narrow)
+        self.assertNotIn(move, [step["what"] for step in steps], narrow)
+        # and each block is the one the search finds under that render's own overrides
+        self.assertEqual(advice_blocks(err)[0], self.advice_lines(NARROW, wide), err)
+        self.assertEqual(advice_blocks(narrow)[0], self.advice_lines(NARROW, thin), narrow)
+        # the premise, read off the geometry rather than off the two blocks: at the narrow width
+        # that move brings a label message the author's own grid does not carry, which is what the
+        # search refuses it for, and at the default width it brings none
+        for ov, refused in ((overrides, True), ({}, False)):
+            brought = (advice.evaluate(wide[0][0].apply(NARROW), "widget", ov)[1]
+                       - advice.evaluate(copy.deepcopy(NARROW), "widget", ov)[1])
+            self.assertEqual(bool([m for m in brought if "подпись" in m]), refused, brought)
+
+    # Spec 6 as amended, over the population the search is measured on: every step of a block names
+    # the term of the score it moved, and a sequence never ends in a move that only shortened the
+    # lines.
+    def test_no_step_of_the_seeded_populations_blocks_stands_still(self):
+        for k, model in seeded_models():
+            found = advice.search(model, ADVICE_MODE)
+            with self.subTest(instance=k):
+                self.assertTrue(found)
+                lines = render.advice_block(found, render.advised_grid(model, found),
+                                            render.advised_lanes(found), "")
+                cut = lines.index("grid:")
+                steps = [STEP.match(line) for line in lines[1:cut]]
+                self.assertTrue(all(steps), lines[1:cut])
+                for step in steps:
+                    self.assertNotEqual(step["before"], step["after"], step.group(0))
+                self.assertLess(found[-1][2][:2], found[-1][1][:2], lines[cut - 1])
+
+    def test_the_advice_keeps_the_all_or_nothing_of_out_dir(self):
+        out_dir = self.tmp / "out"
+        crossed, bad = self.model(CROSSED), self.model(WIDE)
+        code, out, err = self.run_cli(crossed, bad, "--out-dir", str(out_dir))
+        self.assertEqual((code, out), (1, ""), err)
+        self.assertFalse(out_dir.exists())
+        self.read_block(err, prefix=f"{crossed}: ")
+
+    def test_an_error_run_prints_the_advice_once_after_the_map(self):
+        code, out, err = self.run_cli(str(OVERFULL))
+        self.assertEqual((code, out), (1, ""), err)
+        head, steps, rows, lanes = self.read_block(err)
+        # the trigger here is the group over its capacity, and that is what the headline counts
+        self.assertEqual(head["term"], "лишних линий", err)
+        self.assertEqual(head["after"], "0", err)
+        self.assertLess(err.index("ошибка: "), err.index(head.group(0)), err)
+        self.assertLess(err.index("[zayavka]"), err.index(head.group(0)), err)  # the map
+
+    def test_check_and_the_text_formats_keep_their_stdout(self):
+        self.publish()
+        path = self.model(CROSSED)
+        for argv in (("--check",), ("--format", "mermaid"), ("--format", "ascii")):
+            with self.subTest(argv=argv):
+                code, out, err = self.run_cli(path, *argv)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, self.run_cli(path, *argv, "--no-advice")[1])
+                self.read_block(err)
 
     def test_out_dir_rejects_targets_colliding_after_resolution(self):
         # One model names its target via an explicit id, the other via the file-stem fallback;
