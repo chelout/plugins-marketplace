@@ -660,12 +660,15 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   "под вторым отрезком". Every `LABEL_*` number lives in `labels.py`, in one copy.
 - The choice, spec §7.3: `labels.cost` is (pairs of chosen labels that overlap, line owners the
   texts lie on, sum of preference ranks), compared in that order, a line counted once per place
-  however many rows it is met in. Labels whose places can meet form components; each is solved by
+  however many rows or runs of it are met. Labels whose places can meet form components; each is solved by
   branch and bound, most constrained first, from the greedy choice over the same places, within
   20 000 nodes a plan spent in the model's order. Never worse than greedy, the same input the same
-  choice, `nodes=1` greedy: 29 of the hundred cost strictly less than greedy, the 375 components
-  small enough to walk whole equal the exhaustive walk, and on 320 plans of two other seeds with
-  every second edge labelled the search is better on 169, equal on 151 and worse on none. A plan
+  choice, `nodes=1` greedy: 27 of the hundred cost strictly less than greedy, the components small
+  enough to walk whole equal the exhaustive walk, and over 420 plans — the hundred and two other
+  seeds with every second edge labelled — priced by a probe that computes the cost of the spec for
+  itself, the search is better on 187 and worse on none. The first search priced a line by its
+  runs, and under the spec's cost three of the hundred came out dearer than greedy; the branch gate
+  found it, and `labels.terms` is now the one place a place is priced, a line by its edge. A plan
   spends 122 nodes median and 601 at most on the dense instances, 138 at most on the hundred;
   `labels.place` costs 3.65 ms a plan there against a `flow.plan` of about 200 ms. The dense
   scenario of `tools/bench_routing.py` routes unlabelled edges and never called `flow.plan`, so its
@@ -701,7 +704,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   about 2 px above its bottom; widths within 2.3 % of `common.label_width` on the one example
   measured, Cyrillic only), and case 21 holds every box inside the rectangle Python chose and
   recomputes each anchor from the drawn line, for all sixteen anchor forms; the place under a
-  segment fails it when its offset is the over-offset. When the anchor replaced `ls` and `ly` no
+  segment fails it when its offset is the over-offset. Inside is both ways (criterion E5 as
+  amended): across for all 104 places, with 5 % of the width allowed at the far edge for what the
+  glyph table is known to within, and down the page for the 64 whose rows the page lets it read —
+  a rectangle moved 8 px without its anchor fails it. When the anchor replaced `ls` and `ly` no
   label moved: the fragments were equal once the three fields were dropped, and the browser drew
   the 442 labels of the hundred at the x and y it had drawn them at. A fragment with `la` needs
   the script built with it: `template/dist` was rebuilt at `a9d40da` and `REF` names it.
