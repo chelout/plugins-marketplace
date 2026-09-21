@@ -1419,8 +1419,9 @@ class TheFrameATextIsReadIn(unittest.TestCase):
     straight exit across a band of two or three rows, the middle of a vertical second segment, the
     text of a sideways exit reaching the gutter, a text over a segment clamped into its row — in
     that row and in the gutter past its edge — and a text carried out of a row of cards by its
-    segment's offset. The confirmation round of the qa review found one more, held here as well: a
-    vertical run carried out of such a row by the bend it turns at."""
+    segment's offset. The confirmation rounds of the qa review asked for two more, held here as well: a
+    vertical run carried out of such a row by the bend it turns at, and the text under a clamped
+    segment reaching the gutter below its row."""
 
     def test_every_band_line_stands_where_tracks_puts_it(self):
         for mode in MODES:
@@ -1682,6 +1683,33 @@ class TheFrameATextIsReadIn(unittest.TestCase):
                 (self.assertIn if through else self.assertNotIn)((1, 1), labels.hits(over, runs))
                 self.assertEqual([(r.y0, r.y1) for r in over.rects if r.Y == 2],
                                  [(edge - (-top - labels.CARD_LEAST / 2), edge)])
+
+    def test_a_text_under_a_segment_clamped_near_its_rows_edge_reaches_the_gutter_below(self):
+        """And the place under it, a row of cards over a gutter: the segment drawn on the base of its
+        banded row, or 24 px under it, which the clamp holds 10 px inside the bottom edge of a band
+        as short as a card is drawn — 4 px under the base. The text under it spans 6.5 to 19.5 from
+        the base, or 10.5 to 23.5: 5.5 or 9.5 px past that edge into the gutter under the row, -20
+        to -14.5 or -10.5 in the gutter's frame. A line along the gutter 16 px over its base, -17 to
+        -15, runs through the text either way; one on the base stays clear."""
+        for seg, want in ((0.0, (0.0, 19.5)), (24.0, (4.0, 23.5))):
+            for gutter, through in ((-16.0, True), (0.0, False)):
+                paths = [[(3, 1), (3, 3), (5, 3)], [(1, 3), (1, 4), (5, 4), (5, 5)]]
+                offsets = [[(0.0, 0.0), (0.0, seg), (0.0, seg)],
+                           [(0.0, 0.0), (0.0, gutter), (0.0, gutter), (0.0, 0.0)]]
+                geo, _, runs, places = scene("widget", [". s .", "a . c", ". . d"], paths, offsets)
+                drawn = min(seg, labels.CARD_LEAST / 2 - labels.CLAMP)
+                bottom = drawn + labels.LABEL_UNDER - labels.LABEL_DROP + labels.TEXT_HALF
+                edge = geo.frame(4).top
+                under = places(0, "s", "c", 30.0)[1]
+                with self.subTest(segment=seg, gutter=gutter):
+                    self.assertEqual((drawn, bottom), want)
+                    self.assertEqual((under.where, under.rank), (labels.BENEATH, 1))
+                    self.assertEqual([(r.y0, r.y1) for r in runs if r.owner == (1, 1)],
+                                     [(gutter - 1, gutter + 1)])
+                    (self.assertIn if through else self.assertNotIn)((1, 1),
+                                                                     labels.hits(under, runs))
+                    self.assertEqual([(r.y0, r.y1) for r in under.rects if r.Y == 4],
+                                     [(edge, edge + bottom - labels.CARD_LEAST / 2)])
 
     def test_a_text_carried_out_of_a_row_of_cards_is_read_in_the_next_one(self):
         """The answer's example: a segment along a row of cards no line enters sideways, 48 px under

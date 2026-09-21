@@ -157,8 +157,10 @@ line off it or parts it from another label, and keeps it otherwise.
   them. Where a line comes down through the text there, the label goes 17 px
   under the same segment instead, or back to its far end. The three places
   have one room between them, unless a text reaches out of its gutter into the
-  row of cards beside it, as one over or under a segment drawn far off the
-  gutter's middle does: a card in its way there ends that place's room.
+  row of cards beside it, as one over or under a segment does once that segment
+  is drawn more than 0.5 px (widget) or 2.5 px (page) off the gutter's middle
+  towards that row, which two lines spread 8 px apart already are, 4 px each
+  way: a card in its way there ends that place's room.
   Otherwise what chooses is what runs through each.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
