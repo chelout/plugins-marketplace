@@ -146,7 +146,7 @@ keeps 2 px from a card edge.
   clear in every row the middle can fall in (the rows of cards and gutters the
   segment passes, less the target card it ends on). Otherwise it pins the label
   to one of those rows, the middle first and the rows where the line turns
-  last, and hands the row to the script as `ly` (as it hands the side as `ls`).
+  last, and hands the place to the script as the label's anchor.
   Clear means: off the cards of the row, off every other line and a word space
   off every label already placed (labels with a single place go first). A
   gutter row has no cards: a line running down a gutter between two occupied
