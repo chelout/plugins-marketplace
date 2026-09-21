@@ -626,3 +626,85 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   nor removed. The rule that drops a move which leaves the author with more warnings stays as built:
   the two runs it left without a block are its known price, and what would lower that price is fewer
   label warnings, which is stage E's work, not a block that trades one warning for another.
+- Stage E, labels (spec §7, tasks 18–22). One model of what is drawn, `diagrams/labels.py`: every
+  card, run and bound is a rectangle `(Y, y0, y1, x0, x1, kind, owner)` of one lattice row, `y` from
+  the row's `base()` as the script computes it, `x` from `Geometry`. Card heights are unknown in
+  Python and the model keeps that instead of guessing: a card is the whole of its row, a vertical
+  run the whole of every row it passes and half of a row it ends in, a text whose place depends on
+  a height covers every row it can fall in. `room` measures a text from its near edge outwards,
+  `hits` names the owners it lies on, `meet` tests two texts. What `room_beside`, `band_obstacles`,
+  `under_card`, `label_spots` and the pass after the label loop did with `half`, `reach`,
+  `horizontal` and a second pass are values of `y0`, `y1`; all five are gone from `flow.py`. A
+  place that hangs from its own source card is exempt from that card and from the lines drawn
+  within its height, by (row, owner) — plan gate finding G4. The clamp of a banded row sits on the
+  text, not on the line: the script clamps the lines of such a row and a text drawn from a point of
+  it together, so only their order survives.
+- Two readings changed when `flow.plan` moved onto the model, and the browser is why. The model
+  stood beside the old code first, held to its verdicts on the 8 example plans, the 66 plans of the
+  label cases and 100 seeded labelled instances; it differed in one class, a row a vertical second
+  segment ends in, which it reads past the bend drawn there (5 of the 100 move a label, the
+  examples and the label cases none). And it checks a label over a horizontal second segment by
+  the text's own rectangle where the old pass tested the whole segment. Read against the page —
+  the hundred drawn as drafts, the label boxes of the probe against the drawn runs of every other
+  edge — the old pass warned of 133 lines of which 7 ran through the drawn text and missed 35 of
+  the 42 that did; after the switch every one of the 32 warnings is a line through the text.
+- The places, spec §7.2: a straight exit down or up right of its line, then left of it; a sideways
+  exit above its line, then below; a horizontal second segment over it just after the bend (the
+  owner's Q4), under it after the bend, then over its far end; a vertical second segment beside its
+  middle or pinned to a row, as before. Every place on a horizontal second segment is anchored to
+  the segment as drawn. The old script hung such a label 9 px over `base(Y)` whatever the segment's
+  own offset, so a segment drawn 9 px or more above the base ran through its own label: 34 labels
+  of the corpus, 8 of the 171 such labels of the hundred struck in the browser and 15 more with the
+  line on their baseline; none now. A label that fits nowhere names what is in its way: ", мешает
+  карточка X", "линия a -> b", "подпись связи a -> b", "край диаграммы". The one new wording is
+  "под вторым отрезком". Every `LABEL_*` number lives in `labels.py`, in one copy.
+- The choice, spec §7.3: `labels.cost` is (pairs of chosen labels that overlap, line owners the
+  texts lie on, sum of preference ranks), compared in that order, a line counted once per place
+  however many rows it is met in. Labels whose places can meet form components; each is solved by
+  branch and bound, most constrained first, from the greedy choice over the same places, within
+  20 000 nodes a plan spent in the model's order. Never worse than greedy, the same input the same
+  choice, `nodes=1` greedy: 29 of the hundred cost strictly less than greedy, the 375 components
+  small enough to walk whole equal the exhaustive walk, and on 320 plans of two other seeds with
+  every second edge labelled the search is better on 169, equal on 151 and worse on none. A plan
+  spends 122 nodes median and 601 at most on the dense instances, 138 at most on the hundred;
+  `labels.place` costs 3.65 ms a plan there against a `flow.plan` of about 200 ms. The dense
+  scenario of `tools/bench_routing.py` routes unlabelled edges and never called `flow.plan`, so its
+  300 ms never priced a label and does not now (204.25 ms at the end of the stage, 201.01 at its
+  base); `--advice` is within the noise of the stage's base on all three populations.
+- What a label says, and how often, is a contract, because `advice.evaluate` counts it: one "ляжет"
+  where the text lies on a line or on a label, one "пересечёт" per line crossing a text on a
+  horizontal second segment, a pair of overlapping labels told once, on the later of the two, as
+  one place when it is one place; a label that fits nowhere raises its error and no warning beside
+  it. The cost and the verdicts read every place against every rectangle of its rows. The old
+  families looked away — a label on a horizontal second segment was measured against no line along
+  its row and no label — and 8 of the 9 labels of the hundred that a line or a label ran through
+  while the plan said nothing were of that family.
+- Criterion E6, the seeded hundred, 442 labels, `main` at `c2b3f36` against the stage: "пересечёт"
+  133 → 9, "ляжет" 49 → 53, one place 0 → 0, labels that do not fit 24 → 24. Eleven instances
+  grow, all in "ляжет": ten are a line along the row of a label on a horizontal second segment,
+  which `main` never read (#14, #16, #33, #48, #52, #75, #77, #80, #87, #90), the eleventh is #57,
+  the end-row reading. In the browser the labels a line or another label runs through are 91 on
+  `main`, 91 after the switch, 71 after the places, 57 after the search; the ones the plan is
+  silent about 20, 10, 9, 3; the false alarms 66, 19, 18, 26; the lines through a label on a
+  horizontal second segment 42, 42, 25, 12. Over the 174 plans of the corpus the places moved
+  242 of 646 labels and the label messages fell from 152 to 106 before the search. In the shipped
+  examples three labels moved to just after their bend in both modes (`four-blocks` "1 читает
+  approved", `kyc-trace` "ссылка", `resolver-rules` "нет") and the search moved two more of
+  `four-blocks` as a widget; no example gained a warning.
+- The anchor, spec §7.4: a labelled edge carries `la: [pt, ref, Y, dx, dy, anchor]` — a point of
+  the drawn path, a reference down the page ("p" that point, "m" the middle of the second segment,
+  "r" `base(Y)`), two offsets and the text anchor — and no edge carries `ls` or `ly`. The label
+  block of `flow.js` is three lines that apply it, with no rule, no number and no comment; a fresh
+  `dg.js` is 9 973 bytes (10 411 before, budget 10 811) and the median cdn fragment 5 557.5
+  characters (budget 5 691). The browser holds it: the probe records `getBBox()` of every label
+  text in the svg's own frame (a box is 13 px high, the em box of the 11 px text, the baseline
+  about 2 px above its bottom; widths within 2.3 % of `common.label_width` on the one example
+  measured, Cyrillic only), and case 21 holds every box inside the rectangle Python chose and
+  recomputes each anchor from the drawn line, for all sixteen anchor forms; the place under a
+  segment fails it when its offset is the over-offset. When the anchor replaced `ls` and `ly` no
+  label moved: the fragments were equal once the three fields were dropped, and the browser drew
+  the 442 labels of the hundred at the x and y it had drawn them at. A fragment with `la` needs
+  the script built with it: `template/dist` was rebuilt at `a9d40da` and `REF` names it.
+- Found on the way and left alone: a grid column that holds no card is placed by `Geometry` and by
+  `tracks()` differently, about 217 px apart on a two-column grid; the renderer warns about such a
+  grid today and nothing more.
