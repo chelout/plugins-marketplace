@@ -511,6 +511,12 @@ the sentences above left open are settled as the model has them.
   the seeded corpus it warns of 133 lines of which 7 run through the drawn text, and misses 35 of
   the 42 that do; the rectangle warns of 36, of which 32 do. Over all 442 labels today's code
   raises 58 false alarms and misses 20 struck labels; the model 11 and 10.
+- Amended again the same day, after the second round of the branch gate: a vertical run that ends
+  at a bend ends where the bend is drawn — the offset of that point — and not at the base of the
+  row. "Half a row at its ends" read a run turning 12 px above the middle of a gutter as reaching
+  the middle, which invents a line through a text standing there and hides one from a text standing
+  past the base; 634 of the 1 168 such ends of the seeded corpus are drawn off the base. Where the
+  row is banded, or the run ends on a card, the height is unknown and the half row stays.
 
 ### 7.2 Candidates
 
