@@ -560,6 +560,30 @@ pairs, T4 and T5 one: 16 sessions.
 
 ## Stage E — labels (branch `feat/drawing-diagrams-labels`)
 
+Amended 2026-09-21, before the stage, for what stages A to D built and what the plan gate found.
+
+- Order of work (plan gate finding G5): task 18; task 19; task 20 commit 1, the switch; task 21, the
+  anchor, still with today's candidates; task 20 commit 2, the candidates; task 20 commit 3, the
+  search. Each is dispatched as an assignment of its own. No commit offers a place the script of
+  that commit cannot draw.
+- The golden comparison of this stage reads fragments rendered with `--assets none`, since task 21
+  changes the script an inline render carries. At task 20 commit 1 they are identical to the base.
+  At task 21 they are identical once `ls`, `ly` and `la` are dropped from the edge JSON, and the
+  browser probe finds every label of the examples and of the label cases where it stood at the
+  base. At task 20 commits 2 and 3 they differ only where a label moved: the files are listed.
+- From task 21 to the release of task 22 a `cdn` fragment of the branch names the script of the old
+  `REF`, which does not know `la`. Nothing is published from the branch before task 22, and no test
+  draws a `cdn` fragment: the browser tests draw with the inline script, and the tests of `cdn`
+  fragments read their links and their size.
+- Stage D's tests hold fixtures that rest on a label verdict — `NARROW` of
+  `tests/test_render_cli.py` is a swap the advice refuses at 440 px because a label is left nowhere
+  to stand. A new candidate can remove such a premise. Task 20 commit 2 takes
+  `tests/test_render_cli.py` and `tests/test_advice.py` into its perimeter: a fixture whose premise
+  is gone is found again, never deleted, and the report says which.
+- Task 20 commit 3 reports the table of criterion E6. Task 22 measures `tools/bench_routing.py`
+  plain and with `--advice` again: every verifying plan of the advice now places its labels by the
+  search.
+
 ### Task 18: The browser probe records label boxes
 
 Spec: §7.4, criterion E1.
@@ -672,6 +696,6 @@ Check: full suite with browser tests.
 | B3 | 8, 9, 10 | | E2 | 19, 20 |
 | B4 | 9 | | E3, E4 | 20 |
 | C1 | 7 | | E5 | 21 |
-| every stage | 0, 5, 9, 13, 16, 22 | | | |
+| every stage | 0, 5, 9, 13, 16, 22 | | E6 | 20 |
 
 The consistency contract of spec §11 is carried by the same criteria; its last row also by task 0.

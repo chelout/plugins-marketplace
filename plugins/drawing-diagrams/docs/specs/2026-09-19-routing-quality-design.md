@@ -483,6 +483,16 @@ row for overlap with a clearance. `half`, `reach`, `horizontal`, `under_card` an
 a label over a horizontal second segment become values of `y0`, `y1`, not branches of the checking
 code.
 
+Amended 2026-09-21, after stages A to D. The lines of the model are the offsets `router.place`
+answers (§5.4), so they stand at the pitch of their group: 8, 6 or 5 px (§4.2). At the two tighter
+pitches the neighbour of a label's own line lies inside `LINE_REACH` of the middle of the text, and
+the model says so as today's check does since stage B; what takes a label out of such a group is
+the choice of §7.3, not a shorter reach. A row of the grid that holds no card has, inside the drawn
+extent, a band of invented tracks (`design.md` §14, stage B): its rectangles are relative to the
+same `base()`, and the lattice the model covers ends with the last occupied row, as the paths do.
+`BOUND` is what today's code keeps a text inside: the left edge and `Geometry.total` across, and
+the side of a line in an outermost lattice column that faces out of the grid box.
+
 ### 7.2 Candidates
 
 All of today's places stay candidates, in today's order of preference, and new ones are added:
@@ -509,6 +519,13 @@ is today's greedy choice over the same candidates under the same cost, which is 
 search has 20 000 nodes per plan, spent on components in model order, and returns the best complete
 choice found, so the result is never worse than greedy and is deterministic. Warnings keep their
 wording.
+
+Amended 2026-09-21, after stage D: and their number. `advice.evaluate` (§6) counts the warnings of
+a plan and drops a move that leaves the author with more of them, so a label raises what it raises
+today: one warning when it lies on a line or on a label, one per line that crosses a label over a
+horizontal second segment, one per pair of labels in one place. A new place follows the family it
+belongs to — after the bend is over a horizontal second segment, the other new places are beside a
+line. A model that warned once per owner overlapped would change which moves the advice offers.
 
 ### 7.4 Python emits the anchor, the script draws it
 
@@ -643,6 +660,11 @@ Stage E
 - E5. `flow.js` holds no `LABEL_*` number; the browser harness finds every label box inside the
   rectangle Python chose, within 2 px, for every anchor form: `tests/test_browser_lines.py`. Size
   budgets of the slots hold: command output.
+- E6 (added 2026-09-21, after the D4 experiment, whose dearest sessions went to label warnings and
+  to nothing else). Over the seeded labelled instances of E4 the number of label warnings and of
+  labels that do not fit, today's code against the stage's: a table in the stage report and in
+  `design.md` §14. An instance where either number grew is traced to a check today's code does not
+  make — `placed` is consulted only beside a vertical second segment — or is a defect.
 
 Every stage: `python3 -m unittest discover -s tests` green, `claude plugin validate` clean, the
 amendment to `design.md` §14 written, the performance budgets of the slots measured and recorded.
