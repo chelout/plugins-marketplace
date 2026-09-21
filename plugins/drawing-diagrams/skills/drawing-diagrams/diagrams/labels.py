@@ -29,10 +29,15 @@ card, which it lies below by construction, nor against the lines that leave or e
 its height; it is tested against the other cards of the row and the lines drawn at their height
 (spec 7.1). Those exceptions are the candidate's `exempt`, by row and owner.
 
-`place` is what `flow.plan` asks; `today` is the only source of places it has at this commit, and
-`greedy` the only choice — the new candidates of spec 7.2 and the search of spec 7.3 come after it.
-What the module never holds is a message: a `Choice` names the place and what stands in the label's
-way there, and diagrams/flow.py writes the warning about it.
+A place over or under a horizontal second segment is the one whose rectangle is read from its own
+line rather than from the base of the row: the text is anchored to the drawn `y` of a point of that
+segment, so a segment drawn away from the base takes its label with it (spec 7.2 as amended). Every
+other place keeps the reference it had.
+
+`place` is what `flow.plan` asks; `candidates` is the source of places it has, the table of spec 7.2
+whole, and `greedy` the only choice — the search of spec 7.3 comes after it. What the module never
+holds is a message: a `Choice` names the place, what stands in the label's way there, and what stood
+nearest when no place had the room, and diagrams/flow.py writes the message about it.
 """
 import collections
 import math
@@ -45,17 +50,25 @@ INF = math.inf
 # Where a label stands, in px. The numbers live here, beside the model that reads them, in one copy:
 # they go to the script as the `la` anchor of the edge that carries the label, and diagrams/flow.py
 # imports the names it used to define.
-LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
+LABEL_BEND = 6    # from a bend: beside a vertical second segment, either end of a horizontal one
 LABEL_SIDE = 3    # from the card edge at a straight sideways exit
 LABEL_LIFT = 5    # from the line up to the baseline at a straight sideways exit
+LABEL_SINK = 13   # from the line down to the baseline at a straight sideways exit
 LABEL_BESIDE = 5  # from the line at a straight exit down or up
 LABEL_BELOW = 14  # from the card's bottom edge to the baseline at a straight exit down
 LABEL_ABOVE = 6   # from the baseline to the card's top edge at a straight exit up
-LABEL_OVER = 9    # from the row line up to the baseline over a horizontal second segment
+LABEL_OVER = 9    # from a horizontal second segment up to the baseline over it
+LABEL_UNDER = 17  # from a horizontal second segment down to the baseline under it
 LABEL_DROP = 4    # from the middle of the text down to its baseline
 LABEL_CLEAR = 2   # the text box keeps this far from a card edge or a line
 LINE_REACH = 7.5  # a horizontal line nearer than this to the middle of the text runs through it
 LABEL_WORD = 8    # two labels in one row keep this much more apart, or they read as one phrase
+
+# A text under a line stands as far under it as the one over it stands over it: the box is
+# TEXT_HALF either way of its middle and LABEL_DROP over its baseline, so a baseline `lift` px over
+# a line has its box as near that line as a baseline `lift + 2 * LABEL_DROP` px under it. That is
+# LABEL_SINK against LABEL_LIFT and LABEL_UNDER against LABEL_OVER, and it is why a place below a
+# line needs vertical offsets of its own rather than the ones above it.
 
 # Half the height of the text box, in px. A line is drawn 2 px wide, so a line whose centre is
 # nearer than LINE_REACH to the middle of the text is exactly one whose box meets this one.
@@ -64,11 +77,17 @@ TEXT_HALF = LINE_REACH - 1
 CARD, LINE, LABEL, BOUND = "CARD", "LINE", "LABEL", "BOUND"
 
 # The shapes of place, as a message names them. `where` is also what tells the families apart: a
-# label over a horizontal second segment is measured against no line until it stands somewhere, and
-# only one beside a vertical second segment is measured against the labels already placed. A new
-# place of spec 7.2 joins the family it belongs to and takes its `where` with it.
+# label over or under a horizontal second segment is measured against no line until it stands
+# somewhere, and only one beside a vertical second segment is measured against the labels already
+# placed. A place of spec 7.2 joins the family it belongs to and takes its `where` with it — the
+# side of a line a place stands on is not in the wording, except where calling a place below a line
+# "над" would be false.
 DOWN, UP, SIDEWAYS = "у выхода вниз", "у выхода вверх", "у выхода вбок"
-OVER, BESIDE = "над вторым отрезком", "рядом со вторым отрезком"
+OVER, BENEATH = "над вторым отрезком", "под вторым отрезком"
+BESIDE = "рядом со вторым отрезком"
+
+# The family of places on a horizontal second segment: over it and under it (spec 7.3 as amended).
+SECOND_RUN = frozenset({OVER, BENEATH})
 
 # What a text keeps clear of each kind, in px across. A bound is the edge of the drawn area itself,
 # which the text may touch; another label keeps LABEL_WORD more, or the two read as one phrase.
@@ -96,9 +115,10 @@ ON_LINE, CROSSED, SAME_PLACE = "ON_LINE", "CROSSED", "SAME_PLACE"
 Clash = collections.namedtuple("Clash", "kind owner")
 
 # Where one label stands: `edge` the routed edge it belongs to, `cand` the place it took, `clashes`
-# the warnings that place raises, and `room` the px the roomiest place offered when the text fits
-# none of them at all — None when it fits one.
-Choice = collections.namedtuple("Choice", "edge cand clashes room")
+# the warnings that place raises, `room` the px the roomiest place offered when the text fits none
+# of them at all — None when it fits one — and `blocked`, the nearest thing in the way there as a
+# Clash of its kind and its owner, which the error names beside the room (criterion E3).
+Choice = collections.namedtuple("Choice", "edge cand clashes room blocked")
 
 
 def banded_rows(paths):
@@ -223,22 +243,58 @@ def _beside(Y, pin, lo, hi, bend, banded):
     return (-INF, INF) if Y in banded else (-TEXT_HALF, TEXT_HALF)
 
 
-def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
-    """Exactly the places `flow.label_spots` offers the label of routed edge `i` today, in today's
-    order of preference, as candidates of this model. `need` is the width of the text in px.
+def _on_segment(i, p, off, x1, x2, need):
+    """The three places on a horizontal second segment, preferred first (spec 7.2): over it just
+    after the bend, under it just after the bend, over it at its far end. `x1` is the px x of the
+    bend the segment starts at, `x2` of the end it runs to.
 
-    Only a label beside a vertical second segment has a choice — its row and its side; every other
-    shape of route has one place."""
+    "Just after the bend" starts the text LABEL_BEND past the bend and grows away from the source;
+    the far end grows back towards it. Either way the text may reach neither end of the segment, so
+    all three have the segment's own length less that bend and a clearance for their limit.
+
+    Down the row every one of them is read from the segment as it is drawn — `off[1][1]`, the y its
+    own line is spread to — and not from the base of the row (spec 7.2 as amended): the anchor takes
+    the drawn y of the point it hangs from, so the text moves with the line it belongs to, and a
+    segment drawn far from the base no longer runs through its own label."""
+    Y, seg, rt = p[1][1], off[1][1], x2 > x1
+    # the cells under the segment are empty, so the only limit across is the far end of the segment
+    limit = abs(x2 - x1) - LABEL_BEND - LABEL_CLEAR
+    exempt = frozenset((Y, (i, k)) for k in range(len(p) - 1))
+    out = []
+    for rank, (where, pt, x, back) in enumerate(((OVER, 1, x1, False), (BENEATH, 1, x1, False),
+                                                 (OVER, 2, x2, True))):
+        away = rt != back  # whether the text grows rightwards from the end it hangs from
+        start = x + LABEL_BEND if away else x - LABEL_BEND
+        up = where == OVER
+        dy = -LABEL_OVER if up else LABEL_UNDER   # from the segment to the baseline
+        mid = seg + dy - LABEL_DROP               # and on to the middle of the text
+        out.append(Candidate(where, rank,
+                             (_text(Y, mid - TEXT_HALF, mid + TEXT_HALF, start,
+                                    "R" if away else "L", need, i),),
+                             start, "R" if away else "L", limit,
+                             # the place a second label would have to take to land on this text:
+                             # the end it hangs from and the way it grows, and the segment's own
+                             # offset with them, since that is what the text is drawn from now
+                             ("h", Y, seg, p[pt][0], p[2][0] > p[1][0], up), exempt,
+                             (pt, "p", 0, LABEL_BEND if away else -LABEL_BEND, dy,
+                              "start" if away else "end")))
+    return out
+
+
+def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
+    """Where the label of routed edge `i` may stand, preferred first, as the table of spec 7.2 has
+    them. `need` is the width of the text in px.
+
+    A straight exit down or up is offered the right of its line and then the left; a straight
+    sideways exit the room above its line and then the room below; a horizontal second segment the
+    three places of `_on_segment`; a vertical one its middle and then the rows it passes, on either
+    side of the line each time."""
     off = offsets[i]
     r, c = cells[e["a"]]
     tc = cells[e["b"]][1]
     sa = router.side_of(p[0], p[1])
     banded = banded_rows(paths)
     if len(p) >= 3 and p[2][1] == p[1][1]:
-        # over the horizontal second segment, ending LABEL_BEND before its far end: the cells under
-        # the segment are empty, so the only limit across is the line's own bend at p1. The text
-        # stands LABEL_OVER above the row line, clear of its own segment, and a line crossing the
-        # segment there runs through it
         x1 = geo.clamp(c, geo.x(p[1][0]) + off[1][0])
         if len(p) == 3:
             x2 = geo.left(tc) if p[2][0] > p[1][0] else geo.right(tc)
@@ -246,16 +302,7 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
             x2 = geo.x(p[2][0]) + off[2][0]
             if len(p) == 4:
                 x2 = geo.clamp(tc, x2)
-        rt = x2 > x1
-        start, grow = (x2 - LABEL_BEND, "L") if rt else (x2 + LABEL_BEND, "R")
-        Y, mid = p[1][1], -(LABEL_OVER + LABEL_DROP)
-        return [Candidate(OVER, 0,
-                          (_text(Y, mid - TEXT_HALF, mid + TEXT_HALF, start, grow, need, i),),
-                          start, grow, abs(x2 - x1) - LABEL_BEND - LABEL_CLEAR,
-                          ("h", Y, p[2][0], p[2][0] > p[1][0]),
-                          frozenset((Y, (i, k)) for k in range(len(p) - 1)),
-                          (2, "r", Y, -LABEL_BEND if rt else LABEL_BEND, -LABEL_OVER,
-                           "end" if rt else "start"))]
+        return _on_segment(i, p, off, x1, x2, need)
     if len(p) >= 3:
         # beside the vertical second segment. Anchored to the middle of the segment the script draws
         # the text at a pixel row that depends on card heights: that place is kept when the side is
@@ -293,32 +340,45 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         return out
     if sa in ("L", "R"):
         # straight sideways: from the card edge towards the next card in the row, which is the
-        # target, above the label's own line
+        # target, above the label's own line and then below it. The text is clamped with that line,
+        # so above it covers everything over the line's top edge and below it everything under the
+        # bottom edge — the order is all the clamp of a banded row leaves of the two
         Y = p[0][1]
         start = geo.right(c) + LABEL_SIDE if sa == "R" else geo.left(c) - LABEL_SIDE
-        return [Candidate(SIDEWAYS, 0,
-                          (_text(Y, -INF, off[0][1] - 1, start, sa, need, i),),
-                          start, sa, geo.gap + card_w - 20, (e["a"], sa),
-                          frozenset({(Y, (i, 0)), (Y, e["a"])}),
-                          (0, "p", 0, LABEL_SIDE if sa == "R" else -LABEL_SIDE, -LABEL_LIFT,
-                           "start" if sa == "R" else "end"))]
+        exempt = frozenset({(Y, (i, 0)), (Y, e["a"])})
+        dx = LABEL_SIDE if sa == "R" else -LABEL_SIDE
+        anchor = "start" if sa == "R" else "end"
+        return [Candidate(SIDEWAYS, rank,
+                          (_text(Y, *rows, start, sa, need, i),),
+                          start, sa, geo.gap + card_w - 20, (e["a"], sa, up), exempt,
+                          (0, "p", 0, dx, -LABEL_LIFT if up else LABEL_SINK, anchor))
+                for rank, (up, rows) in enumerate(((True, (-INF, off[0][1] - 1)),
+                                                   (False, (off[0][1] + 1, INF))))]
     # straight down or up: the text stands in the gutter under or over the card, between the card
-    # and the middle of the gutter, where lines run. Under a card shorter than its row it stands
-    # higher, never lower, so when the row holds other cards it may stand in the row as well
+    # and the middle of the gutter, where lines run, on the right of its own line and then on the
+    # left. Under a card shorter than its row it stands higher, never lower, so when the row holds
+    # other cards it may stand in the row as well
     Y, up = (p[0][1] + 1, False) if sa == "B" else (p[0][1] - 1, True)
     middle = LABEL_ABOVE + LABEL_DROP if up else LABEL_BELOW - LABEL_DROP  # off the card edge
     mid = geo.row_gap / 2 - middle if up else middle - geo.row_gap / 2     # off the base of the row
-    start = geo.clamp(c, geo.x(p[1][0]) + off[1][0]) + LABEL_BESIDE
+    x = geo.clamp(c, geo.x(p[1][0]) + off[1][0])
     y0, y1 = (mid - TEXT_HALF, INF) if up else (-INF, mid + TEXT_HALF)
-    rects = [_text(Y, y0, y1, start, "R", need, i)]
-    exempt = {(Y, (i, 0))}
-    if not up and any(rr == r and cc != c for rr, cc in occupied):
-        R = p[0][1]
-        rects.append(_text(R, -INF, INF, start, "R", need, i))
-        exempt |= {(R, e["a"])} | {(R, owner) for owner in _at_card(p[0], paths)}
-    return [Candidate(UP if up else DOWN, 0, tuple(rects), start, "R",
-                      card_w, (e["a"], sa), frozenset(exempt),
-                      (0, "p", 0, LABEL_BESIDE, -LABEL_ABOVE if up else LABEL_BELOW, "start"))]
+    in_row = not up and any(rr == r and cc != c for rr, cc in occupied)
+    out = []
+    for rank, side in enumerate(("R", "L")):
+        start = x + LABEL_BESIDE if side == "R" else x - LABEL_BESIDE
+        rects = [_text(Y, y0, y1, start, side, need, i)]
+        exempt = {(Y, (i, 0))}
+        if in_row:
+            R = p[0][1]
+            rects.append(_text(R, -INF, INF, start, side, need, i))
+            exempt |= {(R, e["a"])} | {(R, owner) for owner in _at_card(p[0], paths)}
+        out.append(Candidate(UP if up else DOWN, rank, tuple(rects), start, side,
+                             card_w, (e["a"], sa, side), frozenset(exempt),
+                             (0, "p", 0, LABEL_BESIDE if side == "R" else -LABEL_BESIDE,
+                              -LABEL_ABOVE if up else LABEL_BELOW,
+                              "start" if side == "R" else "end")))
+    return out
 
 
 def uprights(paths):
@@ -330,10 +390,15 @@ def uprights(paths):
 
 
 def met(cand, rects):
-    """The owner of the nearest of `rects` the candidate's text runs into — what a label that does
-    not stand clear lies on — or None when it stands clear of all of them. Nearest is measured from
-    the text's near edge outwards, as `room` measures it and without its limit: the limit is the
-    place's own reach and names nothing."""
+    """The nearest of `rects` the candidate's text runs into, as a Clash of its kind and its owner —
+    what a label that does not stand clear lies on, and what stands in the way of one that fits
+    nowhere — or None when the text stands clear of all of them. Nearest is measured from the text's
+    near edge outwards, as `room` measures it and without its limit: the limit is the place's own
+    reach and names nothing.
+
+    An owner answers once however many rows of the candidate its rectangles meet: what the text runs
+    into is one card, one line edge or one label, and the rows it is drawn in are the rows one
+    rectangle of this model happens to be cut into (spec 7.3)."""
     plain = cand._replace(limit=INF)
     near = None
     for rect in rects:
@@ -343,7 +408,7 @@ def met(cand, rects):
             continue
         at = room(plain, [rect])
         if near is None or at < near[0]:
-            near = (at, rect.owner)
+            near = (at, Clash(rect.kind, rect.owner))
     return None if near is None else near[1]
 
 
@@ -353,56 +418,62 @@ def greedy(order, cands, needs, cards, runs, upright):
 
     Room is measured three ways, as the places of spec 7.2 fall into three families. Every place is
     measured against the cards and the bounds, which a text may never stand on. Every place but one
-    over a horizontal second segment is measured against the lines as well, and a text that has to
-    lie on one is told about; over a horizontal second segment the lines are looked for once the
+    over or under a horizontal second segment is measured against the lines as well, and a text that
+    has to lie on one is told about; on a horizontal second segment the lines are looked for once the
     text stands somewhere, because what counts there is the ones that run through the text itself.
-    Beside a vertical second segment the labels already placed count too — that is the one place
-    with a row to choose, so it is the one that can choose another.
+    Beside a vertical second segment the labels already placed count too — that is the one family
+    whose places differ in the rows they stand in, so it is the one another label can push out of a
+    row.
 
-    Failing all of them the roomiest place is taken with the room it offered, which is the fit
-    error. `cards` and `runs` are the rectangles of `occupancy` split by kind, `needs` the width of
-    each text in px, and `upright` the runs of `uprights`."""
+    Failing all of them the roomiest place is taken with the room it offered and the nearest thing
+    in the way there, which is the fit error. `cards` and `runs` are the rectangles of `occupancy`
+    split by kind, `needs` the width of each text in px, and `upright` the runs of `uprights`."""
     out, keys, placed = [], {}, []
     for i in order:
         cs, need = cands[i], needs[i]
         wide = [room(c, cards) for c in cs]
-        tight = [w if c.where == OVER else
+        tight = [w if c.where in SECOND_RUN else
                  min(w, room(c, runs + (placed if c.where == BESIDE else [])))
                  for c, w in zip(cs, wide)]
-        clashes, short = [], None
+        clashes, short, blocked = [], None, None
         spot = next((c for c, t in zip(cs, tight) if need <= t), None)
         if spot is None:
             spot = next((c for c, w in zip(cs, wide) if need <= w), None)
             if spot is not None:
                 on = met(spot, runs + (placed if spot.where == BESIDE else []))
-                clashes.append(Clash(ON_LINE, on))
+                clashes.append(Clash(ON_LINE, on and on.owner))
         if spot is None:
             at = max(range(len(cs)), key=lambda k: wide[k])
             spot, short = cs[at], max(wide[at], 0)
+            # what the error names beside the room: the nearest of everything drawn, since a text
+            # that fits nowhere is stopped by a card or a bound and may lie on a line nearer still
+            blocked = met(spot, cards + runs + placed)
         placed += list(spot.rects)
         if spot.key in keys:
             clashes.append(Clash(SAME_PLACE, keys[spot.key]))
         keys[spot.key] = i
-        if spot.where == OVER:
-            clashes += [Clash(CROSSED, run.owner[0]) for run in runs
-                        if run.owner in upright and (run.Y, run.owner) not in spot.exempt
-                        and any(overlaps(text, run) for text in spot.rects)]
-        out.append(Choice(i, spot, tuple(clashes), short))
+        if spot.where in SECOND_RUN:
+            crossed = {run.owner[0] for run in runs
+                       if run.owner in upright and (run.Y, run.owner) not in spot.exempt
+                       and any(overlaps(text, run) for text in spot.rects)}
+            clashes += [Clash(CROSSED, j) for j in sorted(crossed)]
+        out.append(Choice(i, spot, tuple(clashes), short, blocked))
     return out
 
 
 def place(edges, texts, paths, offsets, geo, cells, occupied, card_w):
     """Where the label of every routed edge that carries one goes: a Choice per label, in the order
-    they were placed — the labels with a single place first, so that the ones with a row to choose
-    see them all. `texts` is the drawn text of each edge, empty where the edge carries none.
+    they were placed — the labels that never look at another one first, so that the ones beside a
+    vertical second segment, which do, see them all. `texts` is the drawn text of each edge, empty
+    where the edge carries none.
 
-    At this commit the places are `today`'s and the choice is `greedy`'s."""
+    At this commit the places are the table of spec 7.2 and the choice is `greedy`'s."""
     rects = occupancy(cells, paths, offsets, geo, occupied)
     cards = [r for r in rects if r.kind in (CARD, BOUND)]
     runs = [r for r in rects if r.kind == LINE]
     order = sorted((i for i, text in enumerate(texts) if text),
                    key=lambda i: len(paths[i]) >= 3 and paths[i][2][1] != paths[i][1][1])
     needs = {i: label_width(texts[i]) for i in order}
-    cands = {i: today(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells, occupied, card_w)
-             for i in order}
+    cands = {i: candidates(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells, occupied,
+                           card_w) for i in order}
     return greedy(order, cands, needs, cards, runs, uprights(paths))

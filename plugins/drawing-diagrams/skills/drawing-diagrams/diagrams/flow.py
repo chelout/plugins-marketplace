@@ -10,7 +10,8 @@ from .grid import check_placement, empty_lines, parse_grid
 # any more — diagrams/labels.py places every label and emits the anchor that carries them to the
 # script — but the tests that measure a drawn label reach them under this name.
 from .labels import (LABEL_ABOVE, LABEL_BELOW, LABEL_BEND, LABEL_BESIDE, LABEL_CLEAR, LABEL_DROP,
-                     LABEL_LIFT, LABEL_OVER, LABEL_SIDE, LABEL_WORD, LINE_REACH)
+                     LABEL_LIFT, LABEL_OVER, LABEL_SIDE, LABEL_SINK, LABEL_UNDER, LABEL_WORD,
+                     LINE_REACH)
 
 MODES = {
     "state": {
@@ -300,6 +301,26 @@ def overfull_error(group, edges, cols, rows):
     else:
         advice = "линии здесь не проходят, переставьте узлы так, чтобы связи шли между столбцами"
     return f"{line_name(axis, line, cols, rows)} линий {width}, помещается {cap}: {shown}; {advice}"
+
+
+def in_the_way(blocked, routed):
+    """What the error of a label that fits nowhere calls the nearest thing in its way, ready to
+    follow the room it names (criterion E3), or the empty string where nothing stands there.
+
+    `blocked` is the Clash `labels.place` answers with: a card by the id of the node standing on it,
+    a line by the (path, segment) of the run, which names the routed edge it belongs to, another
+    label by the edge it belongs to, and a bound by the side of the drawn area it is."""
+    if blocked is None:
+        return ""
+    if blocked.kind == labels.CARD:
+        return f", мешает карточка {blocked.owner}"
+    if blocked.kind == labels.LINE:
+        other = routed[blocked.owner[0]]
+        return f", мешает линия {other['a']} -> {other['b']}"
+    if blocked.kind == labels.LABEL:
+        other = routed[blocked.owner]
+        return f", мешает подпись связи {other['a']} -> {other['b']}"
+    return ", мешает край диаграммы"
 
 
 def mode_for(kind, mode_name, overrides):
@@ -615,7 +636,8 @@ def plan(model, mode_name, overrides=None, draft=False):
             def label_fits(s, room=choice.room):
                 return label_width(s) <= room
             fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot.where}, "
-                      f"влезает ~{fit_prefix(text, label_fits)}; сократите, вынесите в сноску [n] "
+                      f"влезает ~{fit_prefix(text, label_fits)}{in_the_way(choice.blocked, routed)}; "
+                      f"сократите, вынесите в сноску [n] "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
         e["la"] = spot.la
         for clash in choice.clashes:

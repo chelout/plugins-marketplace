@@ -122,23 +122,27 @@ keeps 2 px from a card edge.
 
 - A straight line down or up keeps the label at the exit, 5 px beside the
   line, in the gutter under or over the card: a card width of room, up to the
-  right edge of the diagram. The text stands between the card and the middle
-  of the gutter, where lines turn: a line leaving or entering the same side of
-  the card beside it runs through it, and so does a line along the gutter
-  moved towards the card (4 px is enough in a widget, 8 px on a page); a line
-  from the far side that turns along the middle stays clear. A card shorter
-  than its row hangs the text inside the row, so when the row holds other
-  cards the next card to the right ends the room, and a line drawn there at
-  another card's height lies on the label.
-- A straight sideways exit starts the label 3 px from the card edge. Into an
-  occupied neighbour the room is the gutter less 5 px: 23 px in a widget flow,
-  state or blocks (gutter 28), 27 px on a page (gutter 32), 13 px in a widget
-  swimlane (gutter 18). "да", "нет", "RED" fit a flow, "нет ①" (32 px) fits
-  none of them. Into an empty neighbour: a gutter and a card width less 20 px.
-- A line that turns carries its label on the second segment. Above a
-  horizontal one the label ends 6 px before the far end and must not reach
-  back past the line's own bend, so a line that goes down and then sideways
-  into its target has half a card and a gutter, not a whole cell.
+  edge of the diagram. Right of the line first, and left of it where the right
+  has no room — at the last column, or where another line turns there. The
+  text stands between the card and the middle of the gutter, where lines turn:
+  a line leaving or entering the same side of the card beside it runs through
+  it, and so does a line along the gutter moved towards the card (4 px is
+  enough in a widget, 8 px on a page); a line from the far side that turns
+  along the middle stays clear. A card shorter than its row hangs the text
+  inside the row, so when the row holds other cards the next card ends the
+  room, and a line drawn there at another card's height lies on the label.
+- A straight sideways exit starts the label 3 px from the card edge, above its
+  own line and, where that room is taken, below it. Into an occupied
+  neighbour the room is the gutter less 5 px: 23 px in a widget flow, state or
+  blocks (gutter 28), 27 px on a page (gutter 32), 13 px in a widget swimlane
+  (gutter 18). "да", "нет", "RED" fit a flow, "нет ①" (32 px) fits none of
+  them. Into an empty neighbour: a gutter and a card width less 20 px.
+- A line that turns carries its label on the second segment. Over a horizontal
+  one the label starts 6 px past the bend and runs on away from the source, so
+  a line that goes down and then sideways into its target has half a card and
+  a gutter, not a whole cell. It is drawn 9 px over that segment as the
+  segment itself is drawn, so parallel lines moving it take their labels with
+  them.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
   it on the segment, at a height that depends on how tall the cards are, which
@@ -148,18 +152,20 @@ keeps 2 px from a card edge.
   to one of those rows, the middle first and the rows where the line turns
   last, and hands the place to the script as the label's anchor.
   Clear means: off the cards of the row, off every other line and a word space
-  off every label already placed (labels with a single place go first). A
-  gutter row has no cards: a line running down a gutter between two occupied
-  cells gets its label in the gutter above or below them, since beside the
-  cards themselves only half a gutter less 6 px is left, less than one
-  letter. At most a card width less 20 px.
+  off every label already placed (this is the one place that looks at them, so
+  every other shape of route is placed first). A gutter row has no cards: a
+  line running down a gutter between two occupied cells gets its label in the
+  gutter above or below them, since beside the cards themselves only half a
+  gutter less 6 px is left, less than one letter. At most a card width less
+  20 px.
 
-The check refuses a label with no place, warns when its only place lies on
-another line, when two labels would land in one place, or when a label above
-a horizontal segment would sit on another line. The fixes are a shorter
-label, a footnote, or moving the target so the line leaves downward. A
-reference to a footnote also works at the end of a node's `text` ("… [2]"),
-for a note that needs one.
+The check refuses a label that fits none of its places, naming the room the
+roomiest of them had and, where one stands in it, the card or the line that
+ends it; it warns when the place it takes lies on another line or label, when
+two labels would land in one place, or when a line runs through a label over
+a horizontal segment. The fixes are a shorter label, a footnote, or moving
+the target so the line leaves downward. A reference to a footnote also works
+at the end of a node's `text` ("… [2]"), for a note that needs one.
 
 ### Routes
 
@@ -198,8 +204,9 @@ route through a pair without an edge, an unroutable line, more lines in one
 gutter, margin or empty row than fit (the message names it, how many go there,
 how many fit and the edges to move), more nodes or
 columns than the mode allows, a title, text, item or label that does not fit (the message names its length and how many
-characters fit), a single word in a text or item wider than its box (the
-message names that word's length instead). Warnings:
+characters fit, and for a label what stands in its way), a single word in a
+text or item wider than its box (the message names that word's length
+instead). Warnings:
 a node with no incoming edge outside the first row, a non-terminal with no
 exit, three or more crossings, empty rows or columns, an unused footnote.
 `--draft` turns the layout errors (routing, limits, width) into warnings,

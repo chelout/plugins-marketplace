@@ -8,18 +8,24 @@ this file used to hold, the model walked beside `flow.room_beside`, `flow.band_o
 gone with the switch.
 
 What replaces it is a record. The whole corpus below — the shipped examples, the models of
-`tests/test_label_lines.py` and a hundred seeded labelled instances, 174 plans — was planned once
-with the tree before the switch and once with this one, and the only differences are the two
-readings the switch carries (spec 7.1 as amended on 2026-09-21): five seeded instances move a
-label, one message follows them, and the check of a label over a horizontal second segment answers
-41 times where it answered 149. Everything frozen here is what a reader can check without running
-that comparison again — every place of every label of the label cases with what was said about it,
-the tally of the seeded corpus, and the five instances that moved — and each of the two readings has
-a test that states the rule it replaced.
+`tests/test_label_lines.py` and a hundred seeded labelled instances, 174 plans — is planned once and
+frozen: every place of every label of the label cases with what was said about it, the tally of the
+seeded corpus, and the five instances the end-row reading of the switch moved. `python3
+tests/test_labels.py --record` prints the whole of it from the tree it runs in, which is how it is
+regenerated when the places move; the differential against the previous tree goes in that commit's
+report, never here.
+
+The places are the table of spec 7.2 as amended on 2026-09-21, which this commit filled in: a
+straight exit down or up may stand left of its line as well as right, a straight sideways one below
+its line as well as above, and a label on a horizontal second segment stands just after the bend
+rather than at the far end, anchored to that segment as it is drawn. The classes below hold each of
+those to a case of its own; `TheTwoReadingsTheSwitchCarries` keeps the two readings the commit
+before this one carried.
 """
 import copy
 import functools
 import re
+import sys
 import unittest
 
 import support
@@ -47,65 +53,64 @@ LABEL_MESSAGE = re.compile(r"^(связь .*: подпись |связи .* и .
 LIES, NO_FIT, CROSSES, SAME = "ляжет", "не помещается", "пересечёт", "одно место"
 
 # What a plan says about the labels of one model: the place of each, as `place` below reads it off
-# the anchor (`R2` is the right side pinned to lattice row 2, `R` the side with no row of its own),
-# and then the messages by their word. One string per model, and one entry per model of
+# the anchor, and then the messages by their word. One string per model, and one entry per model of
 # `tests/test_label_lines.py`; a pair where the two modes answer differently.
 LABEL_CASES = {
     'a card alone in its row': 'a?->b R | a?->q R',
     'a line into the next card under a short card':
         ('a?->b R | a?->p R2 ; ляжет',
          'a?->b R | a?->p R2'),
-    'a lone exit': 'a?->b R | a?->x R',
+    'a lone exit': 'a?->b R | a?->x A',
     'along the gutter over an exit up':
-        ('a?->e R | a?->b R ; ляжет',
-         'a?->e R | a?->b R'),
-    'along the gutter, 4 away': 'a?->f R | a?->d R | a?->g R',
+        ('a?->e O | a?->b R ; ляжет',
+         'a?->e O | a?->b R'),
+    'along the gutter, 4 away': 'a?->f O | a?->d R | a?->g A',
     'along the gutter, 4 towards':
-        ('a?->d R | a?->c R ; ляжет',
-         'a?->d R | a?->c R'),
-    'along the gutter, 8 towards': 'a?->b R | a?->g R ; ляжет',
-    "along the row ['. b d', 'e . f', '. g .']": 'e->f R ; ляжет',
-    "along the row ['d b .', 'f . e', '. g .']": 'e->f R ; ляжет',
-    'an exit up that does not fit': 'a?->d R | a?->c R | b->d R | c->b R | d->b R | d->c R ; ляжет',
+        ('a?->d R | a?->c A ; ляжет',
+         'a?->d R | a?->c A'),
+    'along the gutter, 8 towards': 'a?->b O | a?->g R ; ляжет',
+    "along the row ['. b d', 'e . f', '. g .']": 'e->f B',
+    "along the row ['d b .', 'f . e', '. g .']": 'e->f B',
+    'an exit up that does not fit': 'a?->d A | a?->c O | b->d O | c->b A | d->b O | d->c L ; пересечёт',
     'beside a second segment, a banded row': 'd->b R2 ; ляжет',
-    'beside a second segment, a gutter row': 'a->c R | a->d L2 | e->c R',
-    'exit down': 'a?->b R | a?->c R ; ляжет',
-    'exit up': 'a?->d R | a?->c R | b->d R | c->b R | d->b R | d->c R ; ляжет',
-    "lines at the source card's own height, beside": 'a?->b R | a?->t R',
-    "lines at the source card's own height, into": 'a?->b R | a?->t R ; ляжет',
-    "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c R | b?->d R ; ляжет',
-    "loop ['. a', 'c b?', '. d'] c -> d": 'b?->c R | b?->d R',
-    "loop ['a .', 'b? c', 'd .'] c -> a": 'b?->c R | b?->d R ; ляжет',
-    "loop ['a .', 'b? c', 'd .'] c -> d": 'b?->c R | b?->d R',
-    "loop back ['. a', 'c b?', '. d'] back": 'b?->c R | b?->d R ; ляжет',
-    "loop back ['. a', 'c b?', '. d'] last": 'b?->c R | b?->d R ; ляжет',
-    "loop back ['a .', 'b? c', 'd .'] back": 'b?->c R | b?->d R',
-    "loop back ['a .', 'b? c', 'd .'] last": 'b?->c R | b?->d R',
-    "loop below ['. a', 'c b?', 'e d']": 'b?->c R | b?->d R',
-    "loop below ['a .', 'b? c', 'd e']": 'b?->c R | b?->d R',
+    'beside a second segment, a gutter row': 'a->c A | a->d L2 | e->c O',
+    'exit down': 'a?->b L | a?->c O',
+    'exit up': 'a?->d A | a?->c O | b->d O | c->b A | d->b O | d->c L ; пересечёт',
+    "lines at the source card's own height, beside": 'a?->b R | a?->t A',
+    "lines at the source card's own height, into": 'a?->b R | a?->t B',
+    "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c B | b?->d R',
+    "loop ['. a', 'c b?', '. d'] c -> d": 'b?->c A | b?->d R',
+    "loop ['a .', 'b? c', 'd .'] c -> a": 'b?->c B | b?->d R',
+    "loop ['a .', 'b? c', 'd .'] c -> d": 'b?->c A | b?->d R',
+    "loop back ['. a', 'c b?', '. d'] back": 'b?->c B | b?->d R',
+    "loop back ['. a', 'c b?', '. d'] last": 'b?->c B | b?->d R',
+    "loop back ['a .', 'b? c', 'd .'] back": 'b?->c A | b?->d R',
+    "loop back ['a .', 'b? c', 'd .'] last": 'b?->c A | b?->d R',
+    "loop below ['. a', 'c b?', 'e d']": 'b?->c A | b?->d R',
+    "loop below ['a .', 'b? c', 'd e']": 'b?->c A | b?->d R',
     'past the right edge':
-        ('a?->b R | a?->r R ; не помещается',
-         'a?->b R | a?->r R'),
+        ('a?->b L | a?->r A ; не помещается',
+         'a?->b R | a?->r A'),
     'the next card limits the room':
-        ('a?->b R | a?->t R ; не помещается',
-         'a?->b R | a?->t R'),
-    'through the gutter past the label': 'a?->c R4 | a?->b R ; ляжет',
-    'turning from the far side, down': 'a?->b R | a?->c R',
-    'turning from the far side, up': 'a?->c R | a?->b R',
+        ('a?->b R | a?->t A ; не помещается',
+         'a?->b R | a?->t A'),
+    'through the gutter past the label': 'a?->c R4 | a?->b L',
+    'turning from the far side, down': 'a?->b A | a?->c R',
+    'turning from the far side, up': 'a?->c O | a?->b R',
     'two labels in one place':
-        ('n00->n06 R | n01->n13 R2 | n04->n01 R | n07->n00 R2 | n09->n14 R | n11->n08 R | n14->n03 R4 | '
-         'n15->n06 R ; ляжет, не помещается, одно место, пересечёт, пересечёт, пересечёт, пересечёт',
-         'n00->n06 R | n01->n13 R | n04->n01 R | n07->n00 R | n09->n14 R | n11->n08 R | n14->n03 R4 | '
-         'n15->n06 R ; ляжет, ляжет, одно место, пересечёт, пересечёт, пересечёт, пересечёт, пересечёт'),
-    "under the row's own line": 'c->a R',
+        ('n00->n06 R | n01->n13 R2 | n04->n01 O | n07->n00 R2 | n09->n14 O | n11->n08 O | n14->n03 R4 | '
+         'n15->n06 O ; ляжет, не помещается, одно место',
+         'n00->n06 L | n01->n13 O | n04->n01 O | n07->n00 O | n09->n14 O | n11->n08 O | n14->n03 R4 | '
+         'n15->n06 O ; ляжет, пересечёт, пересечёт, пересечёт, пересечёт, пересечёт'),
+    "under the row's own line": 'c->a A',
 }
 
 # The 442 labels of the hundred seeded instances, by the place they take and by what is said about
 # them. Two labels never fall in one place across the hundred, which is why the label cases above
 # carry a model that does (the first instance of the same stream past the hundred).
-SEEDED_PLACES = {"над вторым отрезком": 171, "рядом со вторым отрезком": 161, "у выхода вбок": 62,
-                 "у выхода вниз": 34, "у выхода вверх": 14}
-SEEDED_SAID = {LIES: 50, NO_FIT: 24, CROSSES: 32}
+SEEDED_PLACES = {'над вторым отрезком': 171, 'рядом со вторым отрезком': 161, 'у выхода вбок': 62,
+                 'у выхода вниз': 34, 'у выхода вверх': 14}
+SEEDED_SAID = {LIES: 43, NO_FIT: 24, CROSSES: 17}
 
 # The five seeded instances the end-row reading moves, and what each moves: the label, where it
 # stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
@@ -140,11 +145,25 @@ def beside(e):
 
 
 def place(e):
-    """The place of a labelled edge as the record below has always named it. Only a place beside a
-    vertical second segment hangs from point 1 of the path and has a side and a row to name; every
-    other shape of route offers one place, which this record has always called `R`."""
-    if e["la"][0] != 1:
-        return "R"
+    """The place of a labelled edge as the record below names it, read off the anchor it carries —
+    one letter per place of the table of spec 7.2:
+
+    `R`, `L`   right or left of the line of a straight exit down or up
+    `A`, `B`   above or below the line of a straight sideways exit
+    `O`, `U`   over or under a horizontal second segment, just after the bend
+    `F`        over a horizontal second segment at its far end
+    `R2`, `L`  beside a vertical second segment: the side, with the row it is pinned to when it has
+               one, and the side alone where the anchor takes the middle of the segment instead
+    """
+    pt, ref, _, dx, dy, _ = e["la"]
+    if pt == 2:
+        return "F"
+    if pt == 1 and ref == "p":
+        return "O" if dy < 0 else "U"
+    if pt == 0:
+        if e["sa"] in ("L", "R"):
+            return "A" if dy < 0 else "B"
+        return "R" if dx > 0 else "L"
     side, row = beside(e)
     return side + ("" if row is None else str(row))
 
@@ -168,16 +187,16 @@ def inputs(layout, mode_name):
 
 
 def candidates(layout, mode_name):
-    """Today's places of every label of a layout, per edge, with what `greedy` measures them
-    against: the cards and the bounds, the lines, the widths and the vertical runs."""
+    """The places of every label of a layout, per edge, with what `greedy` measures them against:
+    the cards and the bounds, the lines, the widths and the vertical runs."""
     geo, paths, offsets, cells, occupied = inputs(layout, mode_name)
     edges, card_w = layout["edges"], layout["card_w"]
     rects = labels.occupancy(cells, paths, offsets, geo, occupied)
     order = sorted((i for i, e in enumerate(edges) if e["label"]),
                    key=lambda i: len(paths[i]) >= 3 and paths[i][2][1] != paths[i][1][1])
     needs = {i: label_width(edges[i]["label"]) for i in order}
-    cands = {i: labels.today(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells, occupied,
-                             card_w) for i in order}
+    cands = {i: labels.candidates(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells,
+                                  occupied, card_w) for i in order}
     return (order, cands, needs,
             [r for r in rects if r.kind in (labels.CARD, labels.BOUND)],
             [r for r in rects if r.kind == labels.LINE],
@@ -378,23 +397,34 @@ class WhatThePlansSay(unittest.TestCase):
         self.assertEqual(found, {name: now for name, (_, _, now) in SEEDED_MOVED.items()})
 
     def test_the_corpus_exercises_every_place(self):
-        """What the record above has to hold to read anything: every shape of route a label can hang
-        from is taken somewhere in the corpus, a place that reaches into more than one row is taken
-        too, and every kind of message is heard at least once."""
+        """What the record above has to hold to read anything: every place of the table of spec 7.2
+        a greedy choice can reach is taken somewhere in the corpus, a place that reaches into more
+        than one row is taken too, and every kind of message is heard at least once. A place is
+        named here as `greedy` sees it, by its family and its rank in it, so the two of the table
+        that nothing reaches are named by their absence.
+
+        Those two are missing for one reason. Over and under a horizontal second segment are
+        measured against the cards and the bounds alone, and differ only down the row, so their
+        room is the same number and the first of them always answers first; the far end of that
+        segment has the same limit again. What will choose between them is the search of spec 7.3,
+        by the lines each one meets — `TheTableOfPlaces` below holds all three to being offered, in
+        order, whoever ends up taking them."""
         taken, rows, words = set(), set(), set()
         for name, mode, layout, warnings in planned(examples() + label_models() + seeded()):
             for choice in chosen(layout, mode):
-                taken.add(choice.cand.where)
+                taken.add((choice.cand.where, choice.cand.rank if choice.cand.where != labels.BESIDE
+                           else None))
                 rows.add(len(choice.cand.rects) > 1)
             words |= set(said(warnings))
-        self.assertEqual(taken, {labels.DOWN, labels.UP, labels.SIDEWAYS, labels.OVER,
-                                 labels.BESIDE})
+        self.assertEqual(taken, {(labels.DOWN, 0), (labels.DOWN, 1), (labels.UP, 0), (labels.UP, 1),
+                                 (labels.SIDEWAYS, 0), (labels.SIDEWAYS, 1), (labels.OVER, 0),
+                                 (labels.BESIDE, None)})
         self.assertEqual(rows, {True, False})
         self.assertEqual(words, {LIES, NO_FIT, CROSSES, SAME})
 
-    def test_place_is_greedy_over_todays_candidates(self):
-        """The interface of this commit: `labels.place` is `labels.greedy` over `labels.today` and
-        nothing else, so the road the tests above take is the one `flow.plan` takes."""
+    def test_place_is_greedy_over_the_candidates(self):
+        """The interface of this commit: `labels.place` is `labels.greedy` over `labels.candidates`
+        and nothing else, so the road the tests above take is the one `flow.plan` takes."""
         for name, mode, layout, _ in planned(label_models()):
             geo, paths, offsets, cells, occupied = inputs(layout, mode)
             texts = [e["label"] for e in layout["edges"]]
@@ -419,6 +449,249 @@ class WhatThePlansSay(unittest.TestCase):
                 self.assertEqual({choice.edge: choice.cand.la for choice in choices},
                                  {i: e["la"] for i, e in enumerate(layout["edges"]) if e["label"]})
                 self.assertEqual([e for e in layout["edges"] if "la" in e and not e["label"]], [])
+
+
+# The model of a straight exit down in the last column of its grid: the room right of the line ends
+# at the edge of the drawn area, and left of it the row is empty as far as the text reaches.
+LAST_COLUMN = cases.exit_model(["p q . a?", "s t u b"],
+                               ["a? -> b : ручная сверка данных", "a? -> q : нет"])
+
+# The model of a branch label over a horizontal second segment: a -> f leaves a downwards, turns
+# along the gutter row under the cards and turns again into f. Every other edge is there to fill the
+# row, so the segment is drawn off the base of it and the two are told apart.
+BRANCH = cases.exit_model(["a b c", "d e f", "g h i"],
+                          ["a -> f : да", "b -> d", "c -> e", "d -> h", "e -> g", "f -> i"])
+
+# The seeded instances where one line edge is met in several rows of one place, with the edge whose
+# label meets it and how many rows of that place it is met in: a label beside the middle of a long
+# vertical second segment, and a line running down beside the whole of it.
+MET_IN_ROWS = {"seeded #47": ("n00 -> n08", 4), "seeded #56": ("n00 -> n04", 4)}
+
+# The model of a label that has to give way to one already placed: `e -> d` leaves sideways along
+# the bottom row and its text stands there, and `d -> c`, which comes later, would take the middle
+# of its own vertical second segment — a place reaching into that same row, where the text it finds
+# leaves it too little. The shape is the shipped example `four-blocks`, whose labels are this long
+# and whose cards leave this much room beside them.
+GIVE_WAY = cases.exit_model(["a . b", ". c .", "d . e"],
+                            ["c -> d : 1 читает approved", "c -> a : 2 сверяет снимки",
+                             "c -> e : 3-4 попытки, fire", "c -> b : 4a блокировка?",
+                             "e -> d : 5 approved | dashed", "d -> c : 6 resume: covered"])
+
+
+class TheTableOfPlaces(unittest.TestCase):
+    """Spec 7.2 as amended on 2026-09-21, criterion E3: the places of the table, preferred first,
+    with the ones this commit adds. A label that had nowhere to stand beside its line now has the
+    other side of it, and a label on a horizontal second segment stands just after the bend."""
+
+    def test_a_straight_exit_down_in_the_last_column_stands_left_of_its_line(self):
+        """Criterion E3's first case. Right of the line the text runs out of the drawn area, which
+        is a fit error and all today had to offer; left of it the row is empty as far as it reaches.
+        On a page the same cards are wide enough that the preferred place still has the room, so the
+        label stays where it was: the second place is taken because the first has no room, never
+        because it is there."""
+        for mode, dx, anchor in (("widget", -labels.LABEL_BESIDE, "end"),
+                                 ("page", labels.LABEL_BESIDE, "start")):
+            layout, warnings = flow.plan(copy.deepcopy(LAST_COLUMN), mode, draft=True)
+            with self.subTest(mode=mode):
+                e = next(x for x in layout["edges"] if (x["a"], x["b"]) == ("a?", "b"))
+                self.assertEqual(len(e["path"]), 2, f"premise: {e['a']} -> {e['b']} no longer "
+                                                    f"leaves straight down: {e['path']}")
+                self.assertEqual(e["la"], (0, "p", 0, dx, labels.LABEL_BELOW, anchor))
+                self.assertEqual(said(warnings), [], warnings)
+        # the premise of the widget case, read off the rooms rather than off the outcome: the
+        # preferred place has less room than the text needs and the one left of the line has more
+        layout, _ = flow.plan(copy.deepcopy(LAST_COLUMN), "widget", draft=True)
+        order, cands, needs, cards, runs, _ = candidates(layout, "widget")
+        i = next(k for k in order if layout["edges"][k]["b"] == "b")
+        right, left = cands[i][0], cands[i][1]
+        self.assertEqual((right.grow, left.grow), ("R", "L"))
+        self.assertLess(labels.room(right, cards), needs[i])
+        self.assertGreaterEqual(min(labels.room(left, cards), labels.room(left, runs)), needs[i])
+
+    def test_a_branch_label_over_a_horizontal_second_segment_sits_after_the_bend(self):
+        """Criterion E3's second case, and the owner's ruling Q4: the text starts LABEL_BEND past
+        the bend and grows away from the source, where it used to end LABEL_BEND before the far end
+        and grow back towards it."""
+        for mode in MODES:
+            layout, warnings = flow.plan(copy.deepcopy(BRANCH), mode, draft=True)
+            with self.subTest(mode=mode):
+                i, e = next((k, x) for k, x in enumerate(layout["edges"])
+                            if (x["a"], x["b"]) == ("a", "f"))
+                p = layout["paths"][i]
+                self.assertEqual((len(p), p[1][1] == p[2][1], p[2][0] > p[1][0]), (4, True, True),
+                                 f"premise: {p} is no longer a turn into a horizontal second "
+                                 f"segment running rightwards")
+                self.assertEqual(e["la"], (1, "p", 0, labels.LABEL_BEND, -labels.LABEL_OVER,
+                                           "start"))
+                geo, paths, offsets, cells, occupied = inputs(layout, mode)
+                bend = geo.clamp(cells["a"][1], geo.x(p[1][0]) + offsets[i][1][0])
+                spot = next(c for c in chosen(layout, mode) if c.edge == i).cand
+                self.assertEqual(spot.rects[0].x0, bend + labels.LABEL_BEND)
+                self.assertEqual(said(warnings), [], warnings)
+
+    def test_the_three_places_of_a_horizontal_second_segment_are_offered_in_order(self):
+        """The whole row of the table, which no plan shows because `greedy` stops at the first
+        place with the room and all three have one room between them: over the segment just after
+        the bend, under it just after the bend, over it at its far end. Each is anchored to the end
+        of the segment it hangs from and to that segment's own drawn y."""
+        layout, _ = flow.plan(copy.deepcopy(BRANCH), "widget", draft=True)
+        order, cands, needs, cards, runs, _ = candidates(layout, "widget")
+        i = next(k for k in order if (layout["edges"][k]["a"], layout["edges"][k]["b"]) == ("a", "f"))
+        cs = cands[i]
+        self.assertEqual([(c.where, c.rank, c.grow, c.la) for c in cs],
+                         [(labels.OVER, 0, "R",
+                           (1, "p", 0, labels.LABEL_BEND, -labels.LABEL_OVER, "start")),
+                          (labels.BENEATH, 1, "R",
+                           (1, "p", 0, labels.LABEL_BEND, labels.LABEL_UNDER, "start")),
+                          (labels.OVER, 2, "L",
+                           (2, "p", 0, -labels.LABEL_BEND, -labels.LABEL_OVER, "end"))])
+        self.assertEqual(len({c.limit for c in cs}), 1, "the three no longer share one limit")
+        self.assertEqual({labels.room(c, cards) for c in cs}, {cs[0].limit},
+                         "the three no longer have one room between them, so `greedy` could choose")
+
+    def test_the_error_of_a_label_that_fits_nowhere_names_what_is_in_the_way(self):
+        """Criterion E3's third case: the room as today, and then the nearest thing standing in it —
+        a card by the id of the node on it, a line by the edge it belongs to."""
+        want = {"the next card limits the room widget": ", мешает карточка t",
+                "two labels in one place widget": ", мешает линия n10 -> n00"}
+        found = {}
+        for name, mode, layout, warnings in planned(label_models()):
+            for w in warnings:
+                text = w[len(flow.DRAFT):] if w.startswith(flow.DRAFT) else w
+                if name in want and NO_FIT in text:
+                    found.setdefault(name, []).append(text)
+        for name, clause in want.items():
+            with self.subTest(case=name):
+                self.assertEqual(len(found.get(name, [])), 1, found.get(name))
+                self.assertIn(clause, found[name][0])
+                self.assertLess(found[name][0].index("влезает ~"), found[name][0].index(clause),
+                                "the room comes first, as it did before this commit")
+
+    def test_what_the_message_calls_each_thing_in_the_way(self):
+        """The four kinds a rectangle of the model has, each named the way an author can act on it.
+        Two of them a plan of the corpus reaches, and the case above holds those two; the bound and
+        another label are the kinds the corpus never stands nearest to."""
+        routed = [{"a": "x", "b": "y", "label": "да"}, {"a": "p", "b": "q", "label": "нет"}]
+        self.assertEqual(flow.in_the_way(labels.Clash(labels.CARD, "t"), routed),
+                         ", мешает карточка t")
+        self.assertEqual(flow.in_the_way(labels.Clash(labels.LINE, (1, 0)), routed),
+                         ", мешает линия p -> q")
+        self.assertEqual(flow.in_the_way(labels.Clash(labels.LABEL, 0), routed),
+                         ", мешает подпись связи x -> y")
+        self.assertEqual(flow.in_the_way(labels.Clash(labels.BOUND, "right"), routed),
+                         ", мешает край диаграммы")
+        # and nothing at all where the place itself is too short for the text, which is the one case
+        # in which no rectangle stands in its way
+        self.assertEqual(flow.in_the_way(None, routed), "")
+
+    def test_a_line_met_in_several_rows_of_one_place_is_one_warning(self):
+        """Spec 7.3: one warning where a label lies on a line, however many rectangles this model
+        cuts that line into. A place beside the middle of a vertical second segment reaches every
+        row the middle can fall in, and a line drawn down beside the whole of it is met in four of
+        them; `met` answers with the nearest owner, once, and `flow.plan` writes one message."""
+        models = {name: (model, mode) for name, model, mode in seeded()}
+        for name, (edge, rows) in MET_IN_ROWS.items():
+            model, mode = models[name]
+            layout, warnings = flow.plan(copy.deepcopy(model), mode, draft=True)
+            with self.subTest(instance=name):
+                i = next(k for k, e in enumerate(layout["edges"])
+                         if f"{e['a']} -> {e['b']}" == edge)
+                choice = next(c for c in chosen(layout, mode) if c.edge == i)
+                on = [c for c in choice.clashes if c.kind == labels.ON_LINE]
+                self.assertEqual(len(on), 1, choice.clashes)
+                geo, paths, offsets, cells, occupied = inputs(layout, mode)
+                runs = [r for r in labels.occupancy(cells, paths, offsets, geo, occupied)
+                        if r.kind == labels.LINE and r.owner == on[0].owner]
+                met = [r.Y for r in runs
+                       if any(labels.overlaps(t, r, labels.CLEARANCE[r.kind], 0)
+                              for t in choice.cand.rects)]
+                self.assertEqual(len(met), rows, f"premise: that line is met in rows {met}")
+                self.assertEqual([w for w in warnings if w.startswith(f"связь {edge}:")
+                                  and LIES in w],
+                                 [f"связь {edge}: подпись {layout['edges'][i]['label']!r} "
+                                  f"{choice.cand.where} ляжет на другую линию или подпись; "
+                                  f"переставьте узлы или уберите подпись в сноску"], warnings)
+
+
+class TheSegmentALabelHangsFrom(unittest.TestCase):
+    """Spec 7.2 as amended on 2026-09-21: a place over or under a horizontal second segment is read
+    from that segment as it is drawn, not from the base of its row. The script hung such a text
+    LABEL_OVER over `base(Y)` whatever the segment's own offset, so a segment spread far enough off
+    the base ran through its own label."""
+
+    def far_off_the_base(self, corpus):
+        """[(model, mode, edge, the px the labelled segment is drawn off the base of its row, the
+        text's box relative to that base)] for every label on a horizontal second segment whose own
+        line is drawn at least LABEL_OVER px off the base — far enough that a text measured from
+        the base would meet it."""
+        out = []
+        for name, mode, layout, _ in planned(corpus):
+            for choice in chosen(layout, mode):
+                p = layout["paths"][choice.edge]
+                if len(p) < 3 or p[2][1] != p[1][1]:
+                    continue
+                e = layout["edges"][choice.edge]
+                text, seg = choice.cand.rects[0], e["path"][1][3]
+                if abs(seg) >= labels.LABEL_OVER:
+                    out.append((name, mode, f"{e['a']} -> {e['b']}", seg, (text.y0, text.y1)))
+        return out
+
+    def test_a_segment_drawn_above_the_base_of_its_row_takes_its_label_with_it(self):
+        """The named case: the widest-spread labelled segment of the corpus, drawn 17.5 px above the
+        base of its row, with its text over it and clear of it — where a text measured from the base
+        would have had that line through it."""
+        found = {(name, edge): (seg, box) for name, mode, edge, seg, box
+                 in self.far_off_the_base(label_models()) if mode == "page"}
+        seg, box = found[("two labels in one place page", "n04 -> n01")]
+        self.assertEqual(seg, -17.5, "premise: that segment is no longer the widest spread one")
+        self.assertEqual(box, (seg - labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF,
+                               seg - labels.LABEL_OVER - labels.LABEL_DROP + labels.TEXT_HALF))
+        self.assertLess(box[1], seg - 1, "the text stands over the segment, clear of it")
+        # and the rule it replaced: from the base of the row, that line runs through the text
+        was = (-labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF,
+               -labels.LABEL_OVER - labels.LABEL_DROP + labels.TEXT_HALF)
+        self.assertTrue(was[0] < seg + 1 and seg - 1 < was[1], (was, seg))
+
+    def test_no_label_of_the_corpus_lies_on_its_own_second_segment(self):
+        """And over the whole corpus: no label on a horizontal second segment has its own line
+        through its box, where before this commit 34 of them did — every one whose segment is drawn
+        more than TEXT_HALF - LABEL_DROP px off the base of its row."""
+        struck, far = [], self.far_off_the_base(examples() + label_models() + seeded())
+        for name, mode, edge, seg, box in far:
+            if box[0] < seg + 1 and seg - 1 < box[1]:
+                struck.append(f"{name} {mode} {edge}")
+        self.assertEqual(struck, [])
+        self.assertGreater(len(far), 20, f"harness: only {len(far)} segments are spread far enough "
+                                         f"off the base for this to say anything")
+
+
+class TheLabelsAlreadyPlacedAreConsulted(unittest.TestCase):
+    """The hole the switch left, found by the controller's mutation probe: `greedy` measures a place
+    beside a vertical second segment against the labels already placed, and no test failed when that
+    measurement was dropped. This is the case that does."""
+
+    def test_a_label_gives_way_to_the_one_placed_before_it(self):
+        layout, warnings = flow.plan(copy.deepcopy(GIVE_WAY), "widget", draft=True)
+        order, cands, needs, cards, runs, upright = candidates(layout, "widget")
+        choices = labels.greedy(order, cands, needs, cards, runs, upright)
+        took = {f"{layout['edges'][c.edge]['a']} -> {layout['edges'][c.edge]['b']}": c
+                for c in choices}
+        first, second = took["e -> d"], took["d -> c"]
+        self.assertLess(choices.index(first), choices.index(second),
+                        "premise: e -> d is no longer placed before d -> c")
+        self.assertEqual(first.cand.where, labels.SIDEWAYS,
+                         "premise: e -> d no longer leaves its card sideways")
+        # the place d -> c would take with nothing else in the way: the middle of its own segment,
+        # which reaches into the row e -> d's text stands in and has the room until that text counts
+        middle = cands[second.edge][0]
+        self.assertEqual((middle.where, middle.rank, middle.grow), (labels.BESIDE, 0, "R"))
+        self.assertGreaterEqual(min(labels.room(middle, cards), labels.room(middle, runs)),
+                                needs[second.edge])
+        self.assertLess(labels.room(middle, list(first.cand.rects)), needs[second.edge])
+        # so it pins its text to a row of that segment instead, and says nothing about it
+        self.assertEqual((second.cand.where, second.cand.la[1]), (labels.BESIDE, "r"))
+        self.assertEqual(second.clashes, ())
+        self.assertEqual(said(warnings), [], warnings)
 
 
 class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
@@ -501,12 +774,14 @@ class TheCardALabelHangsFromIsExempt(unittest.TestCase):
     def test_the_lines_at_the_source_cards_own_height_are_what_it_leaves_out(self):
         """A line leaving the card sideways and one coming down the gutter into its side are drawn
         within the card's height, above the text hanging under it: with the exemption the label
-        stands, without it the very same place offers no room at all."""
+        stands, without it the very same place offers no room at all. The plan says nothing about
+        either label of the model — the one under the card because of the exemption, the sideways
+        one because it now has the room under its own line (spec 7.2)."""
         model = cases.exit_model(["p q . .", "a? . t .", "b . . ."],
                                  ["a? -> b : ручная проверка", "a? -> t : нет", "p -> a?",
                                   "q -> a?"], nodes=cases.TALL)
         layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
-        self.assertEqual(said(warnings), [LIES], warnings)
+        self.assertEqual(said(warnings), [], warnings)
         under = next(c for c in chosen(layout, "widget") if c.cand.where == labels.DOWN)
         self.assertIsNone(under.room, "the label under a? no longer stands where this case reads it")
         bare = next(c for c in chosen(layout, "widget", exempt=False) if c.cand.where == labels.DOWN)
@@ -555,16 +830,28 @@ class TheNumbersComeFromThisModule(unittest.TestCase):
                     seen |= {("dx", abs(e["la"][3])), ("dy", e["la"][4])}
         self.assertEqual(seen, {("dx", labels.LABEL_SIDE), ("dx", labels.LABEL_BESIDE),
                                 ("dx", labels.LABEL_BEND), ("dy", -labels.LABEL_LIFT),
-                                ("dy", labels.LABEL_BELOW), ("dy", -labels.LABEL_ABOVE),
-                                ("dy", -labels.LABEL_OVER), ("dy", labels.LABEL_DROP)})
+                                ("dy", labels.LABEL_SINK), ("dy", labels.LABEL_BELOW),
+                                ("dy", -labels.LABEL_ABOVE), ("dy", -labels.LABEL_OVER),
+                                ("dy", labels.LABEL_DROP)})
+
+    def test_the_one_offset_no_plan_emits_is_the_place_no_plan_takes(self):
+        """LABEL_UNDER is the exception to the test above, and the same exception the corpus makes:
+        `greedy` never reaches the place under a horizontal second segment, so no plan emits the
+        number it is drawn with. `TheTableOfPlaces` holds the anchor that carries it, so the script
+        will draw it the day the search of spec 7.3 chooses it."""
+        offered = set()
+        for _, mode, layout, _ in planned(label_models()):
+            for cs in candidates(layout, mode)[1].values():
+                offered |= {("dy", c.la[4]) for c in cs}
+        self.assertIn(("dy", labels.LABEL_UNDER), offered)
 
     def test_there_is_one_copy_of_each_and_it_is_this_module_s(self):
         """diagrams/flow.py carries the names the tests that measure a drawn label reach for, and
         carries them by import: a second definition there could drift from the model that measures
         with it. LINE_CLEAR and the rest of the capacity numbers are flow.py's own and stay there."""
-        for name in ("LABEL_BEND", "LABEL_SIDE", "LABEL_LIFT", "LABEL_BESIDE", "LABEL_BELOW",
-                     "LABEL_ABOVE", "LABEL_OVER", "LABEL_DROP", "LABEL_CLEAR", "LINE_REACH",
-                     "LABEL_WORD"):
+        for name in ("LABEL_BEND", "LABEL_SIDE", "LABEL_LIFT", "LABEL_SINK", "LABEL_BESIDE",
+                     "LABEL_BELOW", "LABEL_ABOVE", "LABEL_OVER", "LABEL_UNDER", "LABEL_DROP",
+                     "LABEL_CLEAR", "LINE_REACH", "LABEL_WORD"):
             with self.subTest(constant=name):
                 self.assertEqual(getattr(flow, name), getattr(labels, name))
                 self.assertIsNone(re.search(rf"^{name} = ", self.SOURCE, re.M),
@@ -572,5 +859,63 @@ class TheNumbersComeFromThisModule(unittest.TestCase):
         self.assertIsNotNone(re.search(r"^LINE_CLEAR = ", self.SOURCE, re.M))
 
 
+def print_record():
+    """The four frozen values above, printed from this tree as Python source: run
+
+        cd PLUGIN && python3 -B tests/test_labels.py --record
+
+    and paste what it prints over `LABEL_CASES`, `SEEDED_PLACES`, `SEEDED_SAID` and `SEEDED_MOVED`.
+    The generator lives beside the record it writes, so a commit that moves a label regenerates it
+    here rather than by hand; what the places were before that commit belongs in its report."""
+    def wrapped(text, indent):
+        """One digest as source: a single string while it fits the file's width, else cut at the
+        `|` between two labels and continued on the next line."""
+        out, line = [], ""
+        for part in re.split(r"(?<= \| )", text):
+            if line and len(indent) + len(line) + len(part) + 2 > 110:
+                out.append(line)
+                line = ""
+            line += part
+        out.append(line)
+        return f"\n{indent}".join(repr(x) for x in out)
+
+    cases_now = {}
+    for name, mode, layout, warnings in planned(label_models()):
+        cases_now.setdefault(name.rsplit(" ", 1)[0], {})[mode] = digest(layout, warnings)
+    print("LABEL_CASES = {")
+    for case in sorted(cases_now):
+        per, key = cases_now[case], f"    {case!r}: "
+        if per["widget"] == per["page"]:
+            one = f"{key}{per['widget']!r},"
+            print(one if len(one) <= 110 else
+                  f"    {case!r}:\n        {wrapped(per['widget'], ' ' * 8)},")
+        else:
+            print(f"    {case!r}:\n        ({wrapped(per['widget'], ' ' * 9)},\n"
+                  f"         {wrapped(per['page'], ' ' * 9)}),")
+    print("}")
+    places, words, beside_now = {}, [], {}
+    for name, mode, layout, warnings in planned(seeded()):
+        for choice in chosen(layout, mode):
+            places[choice.cand.where] = places.get(choice.cand.where, 0) + 1
+        words += said(warnings)
+        if name in SEEDED_MOVED:
+            edge = SEEDED_MOVED[name][0]
+            e = next(x for x in layout["edges"] if f"{x['a']} -> {x['b']}" == edge)
+            beside_now[name] = beside(e)
+    ranked = [f"{k!r}: {places[k]}" for k in sorted(places, key=places.get, reverse=True)]
+    print("SEEDED_PLACES = {" + ", ".join(ranked[:3]) + ",\n"
+          + " " * 17 + ", ".join(ranked[3:]) + "}")
+    named = {LIES: "LIES", NO_FIT: "NO_FIT", CROSSES: "CROSSES", SAME: "SAME"}
+    print("SEEDED_SAID = {"
+          + ", ".join(f"{named[w]}: {words.count(w)}" for w in sorted(set(words))) + "}")
+    print("# SEEDED_MOVED keeps the place each one took before the switch as well, which this tree")
+    print("# cannot know. The place each of them takes in it:")
+    for name, (side, row) in sorted(beside_now.items()):
+        print(f"#     {name}: {side}{'' if row is None else row}")
+
+
 if __name__ == "__main__":
-    unittest.main()
+    if "--record" in sys.argv:
+        print_record()
+    else:
+        unittest.main()

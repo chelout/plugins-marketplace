@@ -35,8 +35,9 @@ Test cases (written from the declaration of the change, before the implementatio
 10. "planned-crossing", both modes: two straight lines cross in an empty cell, one crossing on the
     lattice, and the page draws exactly that one.
 11. "label-over-row-line", both modes: the label over a horizontal second segment that runs along a
-    row line of a pill and a taller step card has its baseline LABEL_OVER above that row line's base
-    as drawn, not above the row's middle.
+    row line of a pill and a taller step card has its baseline LABEL_OVER above that segment as
+    drawn — not above the row's middle, and since spec 7.2 as amended not above the row line's base
+    either, so a segment spread off that base takes its label with it.
 12. "gutter-swap", both modes: a -> d and c -> b go corner to opposite corner up one gutter and swap
     sides along it, one crossing on the lattice, and the page draws exactly that one;
     "gutter-no-swap": a -> d and d -> a share a gutter in one order from end to end, no crossing
@@ -95,14 +96,16 @@ Test cases (written from the declaration of the change, before the implementatio
     this is the measurement of how far it stands from the browser that draws it, and the box is
     what the rectangle Python chooses for a label is held against.
 21. The examples and the models of ANCHOR_CASES, which between them take every form the anchor of
-    spec 7.4 has — the four straight exits, a horizontal second segment either way, a vertical one
-    on either side at its middle and anchored to the base of a row — in both modes: every label box
-    lies inside the rectangle diagrams/labels.py chose for it across, within BOX_TOL and the glyph
-    table's own width error at the far edge, and the text stands where the anchor says. Where the
-    anchor asks is recomputed from the line the page drew and from `la` alone — the x of the point
-    it hangs from, and the drawn y of that point, the middle of the second segment or `base(Y)` —
-    and the page's x, y and text-anchor are held to it. Down the page the rectangle is mostly
-    unbounded, because card heights are unknown in Python; the anchor is what answers for it there.
+    spec 7.4 has and a plan emits — the four straight exits on either side of their own line, a
+    sideways one above and below it, a horizontal second segment just after its bend either way, a
+    vertical one on either side at its middle and anchored to the base of a row — in both modes:
+    every label box lies inside the rectangle diagrams/labels.py chose for it across, within BOX_TOL
+    and the glyph table's own width error at the far edge, and the text stands where the anchor
+    says. Where the anchor asks is recomputed from the line the page drew and from `la` alone — the
+    x of the point it hangs from, and the drawn y of that point, the middle of the second segment or
+    `base(Y)` — and the page's x, y and text-anchor are held to it. Down the page the rectangle is
+    mostly unbounded, because card heights are unknown in Python; the anchor is what answers for it
+    there.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -270,6 +273,36 @@ ANCHOR_CASES = {
                                      {"id": "a", "title": "A"}],
                            "edges": ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c",
                                      "d -> b"]},
+    # a? -> b is the straight exit down left of its line: a? stands in the last column, where the
+    # room right of the line runs out of the drawn area, and a? -> q is a sideways exit above its
+    # own line (spec 7.2)
+    "anchor-exit-left": {"kind": "flow", "grid": ["p q . a?", "s t u b"],
+                         "nodes": [{"id": i, "title": i.upper()}
+                                   for i in ("p", "q", "a?", "s", "t", "u", "b")],
+                         "edges": ["a? -> b : ручная сверка данных", "a? -> q : нет"]},
+    # a? -> b is the straight exit up right of its line, and a? -> c a label over a horizontal
+    # second segment: b -> g down the margin beside a? and g -> a? back up it are what leave the two
+    # steps straight up cheaper than either way round
+    "anchor-exit-up-right": {"kind": "flow", "grid": ["b e c", "a? f d", "g h i"],
+                             "nodes": [{"id": i, "title": i.upper()}
+                                       for i in ("b", "e", "c", "a?", "f", "d", "g", "h", "i")],
+                             "edges": ["b -> c", "a? -> c : да", "a? -> b : да", "b -> g",
+                                       "g -> a?"]},
+    # b? -> c is the straight sideways exit below its own line, once each way round the grid:
+    # c -> a runs up the gutter past the label's row and ends there, so it covers that row above
+    # the base and the text goes under the line instead (spec 7.2)
+    "anchor-sideways-below-right": {"kind": "flow", "grid": ["a .", "b? c", "d ."],
+                                    "nodes": [{"id": "a", "title": "A"}, {"id": "b?", "title": "B?"},
+                                              {"id": "c", "title": "C"},
+                                              {"id": "d", "kind": "terminal", "title": "D"}],
+                                    "edges": ["a -> b?", "b? -> c : да", "b? -> d : нет",
+                                              "c -> a"]},
+    "anchor-sideways-below-left": {"kind": "flow", "grid": [". a", "c b?", ". d"],
+                                   "nodes": [{"id": "a", "title": "A"}, {"id": "b?", "title": "B?"},
+                                             {"id": "c", "title": "C"},
+                                             {"id": "d", "kind": "terminal", "title": "D"}],
+                                   "edges": ["a -> b?", "b? -> c : да", "b? -> d : нет",
+                                             "c -> a"]},
 }
 # The one form left: the middle of a vertical second segment on its left. a -> d goes out to the
 # right margin and down it, where the right side lies outside the grid box and is never offered, and
@@ -283,9 +316,19 @@ ANCHOR_HAND = {"anchor-beside-left": (
      "nodes": [{"id": i, "title": i.upper()} for i in ("a", "b", "c", "d", "e")]},
     [[(1, 1), (6, 1), (6, 3), (3, 3)], [(3, 3), (3, 4), (5, 4), (5, 5)]])}
 
-# Every form of anchor, named as `anchor_form` names it; docstring case 21 asks for all ten.
-ANCHOR_FORMS = frozenset({"exit down", "exit up", "exit sideways right", "exit sideways left",
-                          "over a second segment, leftwards", "over a second segment, rightwards",
+# Every form of anchor a plan emits, named as `anchor_form` names it; docstring case 21 asks for all
+# fourteen. Two places of the table of spec 7.2 are missing, and are missing everywhere: under a
+# horizontal second segment and over it at its far end both have the same room as the place before
+# them, so `greedy` never reaches either, and nothing draws an anchor no plan emits. The search of
+# spec 7.3 is what will choose them, and this list grows with it.
+ANCHOR_FORMS = frozenset({"exit down, right of its line", "exit down, left of its line",
+                          "exit up, right of its line", "exit up, left of its line",
+                          "exit sideways right, above its line",
+                          "exit sideways right, below its line",
+                          "exit sideways left, above its line",
+                          "exit sideways left, below its line",
+                          "over a second segment after the bend, leftwards",
+                          "over a second segment after the bend, rightwards",
                           "beside a second segment, right at its middle",
                           "beside a second segment, left at its middle",
                           "beside a second segment, right on a row",
@@ -723,9 +766,12 @@ def pinned_label_misses(layout, names, lines, texts, cards):
 
 
 def second_run_label_misses(layout, names, lines, texts, cards):
-    """(misses, checked): labels over a horizontal second segment on a lattice row line (odd Y) whose
-    baseline does not stand LABEL_OVER above that row line's base as drawn: the y, less its offset,
-    of that second segment, away from the band's limits."""
+    """(misses, checked): labels over a horizontal second segment on a lattice row line (odd Y)
+    whose baseline does not stand LABEL_OVER above that segment as the page drew it, away from the
+    band's limits.
+
+    Spec 7.2 as amended: the text hangs from a point of the segment, not from `base(Y)`, so what it
+    is held to here is the drawn y of the run itself and not that y less its router offset."""
     bands = row_bands(layout, cards)
     misses, checked = [], 0
     for i, e in enumerate(layout["edges"]):
@@ -740,10 +786,9 @@ def second_run_label_misses(layout, names, lines, texts, cards):
         if texts[i] is None:
             raise HarnessError(f"{names[i]} has a label over its second segment and no text in the page")
         checked += 1
-        base = y - path[1][3]
-        if abs(texts[i][1] + LABEL_OVER - base) > AXIS_TOL:
+        if abs(texts[i][1] + LABEL_OVER - y) > AXIS_TOL:
             misses.append(f"{names[i]}: label over its second segment on row line {Y} has its baseline at y "
-                          f"{texts[i][1]:.2f}; the row line's base, from that segment, is {base:.2f}")
+                          f"{texts[i][1]:.2f}; that segment is drawn at {y:.2f}")
     return misses, checked
 
 
@@ -823,14 +868,25 @@ def anchor_point(la, pts, bases):
 
 
 def anchor_form(la, sa):
-    """Which of the ten forms the anchor takes, as docstring case 21 enumerates them. The point it
-    hangs from tells the shape of the route apart: 0 is a straight exit, whose side is the side the
-    line leaves by, 2 a horizontal second segment and 1 a vertical one."""
-    pt, ref, _, dx, _, _ = la
+    """Which of the forms the anchor takes, as docstring case 21 enumerates them. The point it hangs
+    from and the reference tell the shape of the route apart: 0 is a straight exit, whose side is
+    the side the line leaves by, 1 with the `p` reference a horizontal second segment just after its
+    bend, 2 that same segment at its far end, and 1 with `m` or `r` a vertical second segment. Which
+    place of the table of spec 7.2 it is then follows from the signs: `dx` says which side of the
+    line of a straight exit down or up the text took, `dy` whether it stands over its line or
+    under it."""
+    pt, ref, _, dx, dy, _ = la
     if pt == 0:
-        return "exit " + {"B": "down", "T": "up", "R": "sideways right", "L": "sideways left"}[sa]
+        if sa in ("L", "R"):
+            return (f"exit sideways {'right' if sa == 'R' else 'left'}, "
+                    + ("above its line" if dy < 0 else "below its line"))
+        return (f"exit {'down' if sa == 'B' else 'up'}, "
+                + ("right of its line" if dx > 0 else "left of its line"))
     if pt == 2:
-        return "over a second segment, " + ("rightwards" if dx > 0 else "leftwards")
+        return "over a second segment at its far end, " + ("rightwards" if dx > 0 else "leftwards")
+    if ref == "p":
+        return (("over" if dy < 0 else "under") + " a second segment after the bend, "
+                + ("rightwards" if dx > 0 else "leftwards"))
     return ("beside a second segment, " + ("right " if dx > 0 else "left ")
             + ("at its middle" if ref == "m" else "on a row"))
 
