@@ -526,6 +526,19 @@ the sentences above left open are settled as the model has them.
   with; the row over a gutter ends with its tallest card, whose height is unknown, so a text
   reaching into it is read as lying on whatever card it shares px with as well. 58 of the 164
   places taken on a horizontal second segment over the seeded hundred reach out of their gutter.
+- Amended a fourth time that day, after the class ask the fourth round of the gate opened (the rows
+  a text reaches, found member by member in rounds 3 and 4). The model reads every object in one
+  frame wherever the page's geometry is known to Python: an interior gutter, an outer margin, and
+  every line of an empty-row band — its gutters and the odd line of each empty row — whose bases
+  `tracks()` and `by()` place at distances from the cards around them that `Geometry` states from
+  the same construction `_band` prices the band with. A text on one line of such a frame is
+  compared with the lines, the labels and the cards of every line it reaches, and a card row it
+  reaches drops the place. Where the page's y depends on a card height — a row of cards, a banded
+  row, a line clamped into a card, the drawn middle of a vertical second segment — the
+  representation contains every position the object can be drawn at. Unknown never means reaches
+  nothing. No place other than one on a horizontal second segment is exempt from this: a pinned
+  place beside a vertical second segment, a straight exit into a band and the text of a sideways
+  exit reaching out of its clamped row are read the same way.
 
 ### 7.2 Candidates
 
