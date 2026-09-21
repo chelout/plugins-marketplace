@@ -698,7 +698,12 @@ Stage E
   node allowance is one: tests.
 - E5. `flow.js` holds no `LABEL_*` number; the browser harness finds every label box inside the
   rectangle Python chose, within 2 px, for every anchor form: `tests/test_browser_lines.py`. Size
-  budgets of the slots hold: command output.
+  budgets of the slots hold: command output. Amended 2026-09-21, after the branch gate: "inside"
+  is both ways — across, and down the page wherever Python's bounds are finite, in the browser's
+  own frame — and the far edge of the text is allowed 5 % of its width on top of the 2 px. Python's
+  width is the glyph table's estimate (E1 measures it 2.3 % off on the one example it reads), so
+  2 px cannot hold at the far end of a long text; the near edge and both bounds down the page keep
+  the 2 px.
 - E6 (added 2026-09-21, after the D4 experiment, whose dearest sessions went to label warnings and
   to nothing else). Over the seeded labelled instances of E4 the number of label warnings and of
   labels that do not fit, today's code against the stage's: a table in the stage report and in
