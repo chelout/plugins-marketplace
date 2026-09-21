@@ -156,11 +156,14 @@ line off it or parts it from another label, and keeps it otherwise.
   segment itself is drawn, so parallel lines moving it take their labels with
   them. Where a line comes down through the text there, the label goes 17 px
   under the same segment instead, or back to its far end. The three places
-  have one room between them, unless a text reaches out of its gutter into the
-  row of cards beside it, as one over or under a segment does once that segment
-  is drawn more than 0.5 px (widget) or 2.5 px (page) off the gutter's middle
-  towards that row, which two lines spread 8 px apart already are, 4 px each
-  way: a card in its way there ends that place's room.
+  have one room between them, unless a text reaches the row of cards beside
+  its line: it spans 19.5 px from the segment, and a card in its way there
+  ends that place's room. Between two rows of cards the gutter is 20 px each
+  way (widget) or 22 (page), so a text reaches a row only once its segment is
+  drawn more than 0.5 or 2.5 px off the middle towards it, which two lines
+  spread 8 px apart already are; on the top and bottom margins (12 or 18 px
+  from the cards) and in the gutter next to a card under two or more empty
+  rows, the text on the cards' side reaches them at any offset.
   Otherwise what chooses is what runs through each.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
