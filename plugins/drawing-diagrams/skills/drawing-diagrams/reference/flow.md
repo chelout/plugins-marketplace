@@ -161,9 +161,10 @@ line off it or parts it from another label, and keeps it otherwise.
   ends that place's room. Between two rows of cards the gutter is 20 px each
   way (widget) or 22 (page), so a text reaches a row only once its segment is
   drawn more than 0.5 or 2.5 px off the middle towards it, which two lines
-  spread 8 px apart already are; on the top and bottom margins (12 or 18 px
+  spread 8 px apart already are. On the top and bottom margins (12 or 18 px
   from the cards) and in the gutter next to a card under two or more empty
-  rows, the text on the cards' side reaches them at any offset.
+  rows the cards stand nearer than 19.5 px, so the text on their side reaches
+  them unless its segment is drawn away from them by the difference.
   Otherwise what chooses is what runs through each.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
