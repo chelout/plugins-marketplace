@@ -686,7 +686,7 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   its row and no label — and 8 of the 9 labels of the hundred that a line or a label ran through
   while the plan said nothing were of that family.
 - Criterion E6, the seeded hundred, 442 labels, `main` at `c2b3f36` against the stage: "пересечёт"
-  133 → 23, "ляжет" 49 → 88, one place 0 → 0, labels that do not fit 24 → 24. "Ляжет" grows, and
+  133 → 24, "ляжет" 49 → 89, one place 0 → 0, labels that do not fit 24 → 24. "Ляжет" grows, and
   every rise is a check `main` does not make, in three classes: a line along the row of a label on
   a horizontal second segment, which `main` never read (#14, #16, #48, #52, #75, #77, #80, #87,
   #90 when the search landed); the end-row reading (#57); and — the large one, 22 instances when
@@ -694,10 +694,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   #74, #75, #77, #80, #85, #87, #92, #96) — a label that cannot stand over or under its segment
   without reaching a card and so stands on the other side, where the next line of the gutter runs.
   `main` hung such a label over the base of the row, where its own line ran through it, and said
-  nothing. What the numbers are worth is read off the browser, a text taken as struck when a line,
+  nothing. The class-wide fix of the frame (below) adds one of each, on seeded #11, where a text
+  over a segment along a banded row is now read as far into the gutter above as the clamp can put
+  it. What the numbers are worth is read off the browser, a text taken as struck when a line,
   another label or a card shares px with its ink: 99 labels struck on `main`, 20 of them with
-  nothing said and 58 warned of with nothing through them; 87 at the end of the stage, 2 with
-  nothing said, 28 false alarms. Of the 88 "ляжет" 62 are texts the page does draw something
+  nothing said and 58 warned of with nothing through them; 87 at the end of the stage, 1 with
+  nothing said, 28 false alarms. Of the 89 "ляжет" 63 are texts the page does draw something
   through. Over the 174 plans of the corpus the places moved 242 of 646 labels before the search.
   In the shipped examples three labels moved to just after their bend in both modes
   (`four-blocks` "1 читает approved", `kyc-trace` "ссылка", `resolver-rules` "нет") and the search
@@ -718,6 +720,27 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   string, not its height. With a place on a card dropped before the search starts, greedy's own
   choice is the cheaper one more often: 15 of the hundred are strictly cheaper than greedy, none
   dearer.
+- A label is read in the frame the page draws it in (spec §7.1 as amended a fourth time). The
+  third and fourth rounds of the branch gate each found one more place the model tested in a row
+  other than the one the page drew it in; put to the gate as a question, the class had eight
+  members — the places on a segment on every line of an empty-row band, comparisons across nearby
+  lines of one band, a straight exit across a band of two or three rows, a pinned place on a band
+  line 2.5 px from a card, the drawn middle of a vertical segment, a sideways text clamped out of
+  its row, a text over a segment along a banded row, and one carried out of a row of cards by its
+  offset — and the fix found a ninth, a vertical run ending at a bend a clamp moves. One mechanism
+  closes them: `Geometry.frame` states where every row line Python knows the px of — a gutter, an
+  outer margin, every line of a band — stands against the cards around it, built from `_tracks`,
+  the construction `_band` prices stage B's room from (room answers as before, held by a test);
+  `labels.py` writes every rectangle of a frame in the px of its lowest line, so what stands on one
+  line meets what stands on the others and a card row a text reaches drops the place. Where the y
+  depends on a card height the rectangle holds every y the page can draw, bounded by `CARD_LEAST`
+  (28 px, the least card the browser draws, held by a browser test over every drawn card) and
+  `CLAMP` (the 10 px `clampY` keeps a line inside its card). Each member has a test that fails when
+  its part of the mechanism is undone. Over the corpus it moved three labels, one each by the
+  middle, the sideways text and the banded segment; the band models of one to three empty rows,
+  leading and interior, in both modes, join the pages the ink-off-every-card case reads (147 inks
+  over 46 pages, none on a card). One of them, a leading band of two in a widget, is now refused
+  with a fit error where it drew its label on a card: every place of that label lies on one.
 - The anchor, spec §7.4: a labelled edge carries `la: [pt, ref, Y, dx, dy, anchor]` — a point of
   the drawn path, a reference down the page ("p" that point, "m" the middle of the second segment,
   "r" `base(Y)`), two offsets and the text anchor — and no edge carries `ls` or `ly`. The label
