@@ -517,6 +517,15 @@ the sentences above left open are settled as the model has them.
   the middle, which invents a line through a text standing there and hides one from a text standing
   past the base; 634 of the 1 168 such ends of the seeded corpus are drawn off the base. Where the
   row is banded, or the run ends on a card, the height is unknown and the half row stays.
+- Amended a third time that day, after the third round of the gate: a text stands in every row it
+  reaches, not only in the row of the line it hangs from. A gutter is `row_gap` high about its
+  base; a place over or under a horizontal second segment that is drawn off that base can leave
+  the gutter — under a segment 4 px below the middle of a 40 px gutter the text spans 10.5 to 23.5
+  and its baseline stands inside the card below. Cards align to the top of their row, so the row
+  under a gutter begins with its cards and a text reaching into it lies on the card it shares px
+  with; the row over a gutter ends with its tallest card, whose height is unknown, so a text
+  reaching into it is read as lying on whatever card it shares px with as well. 58 of the 164
+  places taken on a horizontal second segment over the seeded hundred reach out of their gutter.
 
 ### 7.2 Candidates
 
