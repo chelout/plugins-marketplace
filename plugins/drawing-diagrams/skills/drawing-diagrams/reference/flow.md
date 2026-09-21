@@ -120,6 +120,13 @@ router, the text width from glyph widths measured in a browser (macOS system
 font; a footnote marker such as ① is 10 px, wider than any digit). The text
 keeps 2 px from a card edge.
 
+The places below are listed in the order a label prefers them, and the check
+does not simply take the first that fits: it chooses the places of all the
+labels together, the arrangement with the fewest pairs of labels that overlap
+first, then the fewest lines running through a text, then the most preferred
+places. So a label gives up its first place for a later one when that takes a
+line off it or parts it from another label, and keeps it otherwise.
+
 - A straight line down or up keeps the label at the exit, 5 px beside the
   line, in the gutter under or over the card: a card width of room, up to the
   edge of the diagram. Right of the line first, and left of it where the right
@@ -142,7 +149,9 @@ keeps 2 px from a card edge.
   a line that goes down and then sideways into its target has half a card and
   a gutter, not a whole cell. It is drawn 9 px over that segment as the
   segment itself is drawn, so parallel lines moving it take their labels with
-  them.
+  them. Where a line comes down through the text there, the label goes 17 px
+  under the same segment instead, or back to its far end — the three places
+  have one room between them, so what chooses is what runs through each.
 - Beside a vertical one the label stands 6 px off the line, moved with it when
   parallel lines spread, right side before left. By default the script centres
   it on the segment, at a height that depends on how tall the cards are, which
@@ -152,20 +161,20 @@ keeps 2 px from a card edge.
   to one of those rows, the middle first and the rows where the line turns
   last, and hands the place to the script as the label's anchor.
   Clear means: off the cards of the row, off every other line and a word space
-  off every label already placed (this is the one place that looks at them, so
-  every other shape of route is placed first). A gutter row has no cards: a
-  line running down a gutter between two occupied cells gets its label in the
-  gutter above or below them, since beside the cards themselves only half a
-  gutter less 6 px is left, less than one letter. At most a card width less
-  20 px.
+  off every other label — which is what every place is measured against, not
+  this one alone. A gutter row has no cards: a line running down a gutter
+  between two occupied cells gets its label in the gutter above or below them,
+  since beside the cards themselves only half a gutter less 6 px is left, less
+  than one letter. At most a card width less 20 px.
 
 The check refuses a label that fits none of its places, naming the room the
 roomiest of them had and, where one stands in it, the card or the line that
-ends it; it warns when the place it takes lies on another line or label, when
-two labels would land in one place, or when a line runs through a label over
-a horizontal segment. The fixes are a shorter label, a footnote, or moving
-the target so the line leaves downward. A reference to a footnote also works
-at the end of a node's `text` ("… [2]"), for a note that needs one.
+ends it; it warns once when the place it takes lies on another line or label,
+once per line that runs through a label on a horizontal segment, and once for
+a pair of labels that land in one place — on the later of the two. The fixes
+are a shorter label, a footnote, or moving the target so the line leaves
+downward. A reference to a footnote also works at the end of a node's `text`
+("… [2]"), for a note that needs one.
 
 ### Routes
 

@@ -35,9 +35,15 @@ segment, so a segment drawn away from the base takes its label with it (spec 7.2
 other place keeps the reference it had.
 
 `place` is what `flow.plan` asks; `candidates` is the source of places it has, the table of spec 7.2
-whole, and `greedy` the only choice — the search of spec 7.3 comes after it. What the module never
+whole, `cost` prices a whole choice of them, and `search` looks for the cheapest — starting from
+`greedy`, which takes the first place with the room for each label in turn. What the module never
 holds is a message: a `Choice` names the place, what stands in the label's way there, and what stood
 nearest when no place had the room, and diagrams/flow.py writes the message about it.
+
+The cost reads every place against every rectangle of the rows it stands in, whatever family the
+place belongs to (spec 7.3 as amended): a text on a horizontal second segment is measured against
+the lines along its row and against the other labels exactly as one beside a vertical segment is.
+The families differ in how a message is worded, never in what is looked at.
 """
 import collections
 import math
@@ -76,12 +82,14 @@ TEXT_HALF = LINE_REACH - 1
 
 CARD, LINE, LABEL, BOUND = "CARD", "LINE", "LABEL", "BOUND"
 
-# The shapes of place, as a message names them. `where` is also what tells the families apart: a
-# label over or under a horizontal second segment is measured against no line until it stands
-# somewhere, and only one beside a vertical second segment is measured against the labels already
-# placed. A place of spec 7.2 joins the family it belongs to and takes its `where` with it — the
-# side of a line a place stands on is not in the wording, except where calling a place below a line
-# "над" would be false.
+# How many nodes of the search one plan may spend (spec 7.3).
+NODES = 20000
+
+# The shapes of place, as a message names them. `where` is what the message calls the place, and
+# what tells the one family whose warning has a wording of its own: a line that crosses a text on a
+# horizontal second segment is a "пересечёт" there and a "ляжет" anywhere else. A place of spec 7.2
+# joins the family it belongs to and takes its `where` with it — the side of a line a place stands
+# on is not in the wording, except where calling a place below a line "над" would be false.
 DOWN, UP, SIDEWAYS = "у выхода вниз", "у выхода вверх", "у выхода вбок"
 OVER, BENEATH = "над вторым отрезком", "под вторым отрезком"
 BESIDE = "рядом со вторым отрезком"
@@ -105,20 +113,26 @@ Rect = collections.namedtuple("Rect", "Y y0 y1 x0 x1 kind owner")
 Candidate = collections.namedtuple("Candidate", "where rank rects start grow limit key exempt la")
 
 # What a plan has to say about one label, and who raised it: ON_LINE that the text lies on a line or
-# on another label, CROSSED that a line runs through a text standing over a horizontal second
-# segment, SAME_PLACE that another label took this very place first. `owner` names it — the
-# rectangle's owner, the path the line belongs to, the edge that came first. A label raises one
-# ON_LINE, one CROSSED per line and one SAME_PLACE, which is what it raises today: the advice of
-# spec 6 counts the warnings of a plan, so their number is part of the contract (spec 7.3).
+# on another label, CROSSED that a line runs through a text standing on a horizontal second
+# segment, SAME_PLACE that another label stands in this very place. `owner` names it — the
+# rectangle's owner, the path the line belongs to, the other edge.
+#
+# How many of each a choice raises is part of the contract, since `advice.evaluate` (spec 6) counts
+# the warnings of a plan and drops a move that leaves the author with more of them (spec 7.3 as
+# amended): one ON_LINE per label whose text lies on a line along its rows or on another label, one
+# CROSSED per line crossing a text on a horizontal second segment, and one per pair of overlapping
+# labels — told on the later of the two in the model's order, as SAME_PLACE when the two took the
+# same place and inside the one ON_LINE of that label when they merely meet.
 ON_LINE, CROSSED, SAME_PLACE = "ON_LINE", "CROSSED", "SAME_PLACE"
 
 Clash = collections.namedtuple("Clash", "kind owner")
 
 # Where one label stands: `edge` the routed edge it belongs to, `cand` the place it took, `clashes`
 # the warnings that place raises, `room` the px the roomiest place offered when the text fits none
-# of them at all — None when it fits one — and `blocked`, the nearest thing in the way there as a
-# Clash of its kind and its owner, which the error names beside the room (criterion E3).
-Choice = collections.namedtuple("Choice", "edge cand clashes room blocked")
+# of them at all — None when it fits one — `blocked`, the nearest thing in the way there as a Clash
+# of its kind and its owner, which the error names beside the room (criterion E3), and `hits` the
+# line owners the text lies on there, which is what `cost` prices it by.
+Choice = collections.namedtuple("Choice", "edge cand clashes room blocked hits")
 
 
 def banded_rows(paths):
@@ -370,9 +384,15 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         rects = [_text(Y, y0, y1, start, side, need, i)]
         exempt = {(Y, (i, 0))}
         if in_row:
+            # the rectangle of that row is the height of the card the text hangs from, which this
+            # side does not know, and it is there for the cards of the row and for the lines drawn
+            # at their height. Another label of the row hangs from a card of that row and is drawn
+            # within its height, rising and falling with it exactly as this text does with its own,
+            # so what it would answer for there is that unknown and not a place two texts share
             R = p[0][1]
             rects.append(_text(R, -INF, INF, start, side, need, i))
-            exempt |= {(R, e["a"])} | {(R, owner) for owner in _at_card(p[0], paths)}
+            exempt |= ({(R, e["a"])} | {(R, owner) for owner in _at_card(p[0], paths)}
+                       | {(R, j) for j in range(len(paths))})
         out.append(Candidate(UP if up else DOWN, rank, tuple(rects), start, side,
                              card_w, (e["a"], sa, side), frozenset(exempt),
                              (0, "p", 0, LABEL_BESIDE if side == "R" else -LABEL_BESIDE,
@@ -387,6 +407,100 @@ def uprights(paths):
     one in the same band, and neither is what the check of spec 7.1 looks for."""
     return frozenset((j, k) for j, q in enumerate(paths) for k in range(len(q) - 1)
                      if q[k][0] == q[k + 1][0])
+
+
+def hits(cand, rects):
+    """The owners of `rects` the candidate's text lies on, each named once however many rows of the
+    place its rectangles are met in — a line cut into one rectangle per row it passes is one line
+    (spec 7.3). The exemptions of spec 7.1 are what a place is never measured against: its own
+    supporting path, and the card it hangs from with the lines drawn within that card's height.
+
+    The rows the place stands in are taken first, since the search asks this of every place of
+    every label and a plan's rectangles are spread over the whole lattice."""
+    mine = frozenset(text.Y for text in cand.rects)
+    return frozenset(rect.owner for rect in rects
+                     if rect.Y in mine and (rect.Y, rect.owner) not in cand.exempt
+                     and any(overlaps(text, rect, CLEARANCE[rect.kind], 0) for text in cand.rects))
+
+
+def meet(a, b):
+    """Whether the texts of two places overlap: two labels in one row keep LABEL_WORD more than a
+    text keeps off a line, or the two read as one phrase. Either place's exemptions hold here as
+    they hold against a card or a line — a rectangle a place is not measured in is not one it can
+    meet another text in."""
+    mine, yours = a.rects[0].owner, b.rects[0].owner
+    return any(overlaps(x, y, CLEARANCE[LABEL], 0)
+               for x in a.rects if (x.Y, yours) not in a.exempt
+               for y in b.rects if (y.Y, mine) not in b.exempt)
+
+
+def _span(cands):
+    """The rows a label's places can fall in and the px they run between, over all of them: two
+    labels whose spans do not meet have no pair of places that can, which is what keeps the pairing
+    below off the labels standing nowhere near each other."""
+    rects = [rect for c in cands for rect in c.rects]
+    return (frozenset(rect.Y for rect in rects),
+            min(rect.x0 for rect in rects), max(rect.x1 for rect in rects))
+
+
+def cost(choices):
+    """What a whole choice of places costs, compared lexicographically (spec 7.3): the pairs of
+    chosen labels whose texts overlap, the line owners those texts lie on, and the sum of the
+    preference ranks of the places taken.
+
+    Every term is a sum of non-negative parts, one per label or per pair of them, which is what lets
+    the search price a half-built choice and lets a component be solved apart from the rest."""
+    took = sorted(choices, key=lambda c: c.edge)
+    pairs = sum(1 for k, a in enumerate(took) for b in took[k + 1:] if meet(a.cand, b.cand))
+    return pairs, sum(len(c.hits) for c in took), sum(c.cand.rank for c in took)
+
+
+def fits(order, cands, needs, cards):
+    """({label: the places whose text stands clear of the cards and the bounds, preferred first},
+    {label: the room the roomiest place offered}).
+
+    A place a card or a bound covers is dropped, since no choice may put a text on one. A label
+    left with none of them keeps the roomiest place it had and answers with the room there, which
+    is the fit error of criterion E3 and what `flow.plan` has always reported."""
+    keep, short = {}, {}
+    for i in order:
+        wide = [room(c, cards) for c in cands[i]]
+        left = [c for c, w in zip(cands[i], wide) if needs[i] <= w]
+        if left:
+            keep[i] = left
+        else:
+            at = max(range(len(wide)), key=lambda k: wide[k])
+            keep[i], short[i] = [cands[i][at]], max(wide[at], 0)
+    return keep, short
+
+
+def components(free, places):
+    """The labels of `free` grouped by whether their places can overlap: two are in one group when
+    some place of the one meets some place of the other, and a group is solved apart from the rest
+    because no choice inside it can change what any other group costs. Groups come back in the
+    model's order, by the first label of each."""
+    home = {i: i for i in free}
+
+    def root(i):
+        while home[i] != i:
+            home[i] = home[home[i]]
+            i = home[i]
+        return i
+
+    spans, clear = {i: _span(places[i]) for i in free}, CLEARANCE[LABEL]
+    for k, i in enumerate(free):
+        rows, x0, x1 = spans[i]
+        for j in free[k + 1:]:
+            other, ox0, ox1 = spans[j]
+            if (root(i) == root(j) or not (rows & other)
+                    or ox0 - clear >= x1 or x0 - clear >= ox1):
+                continue
+            if any(meet(a, b) for a in places[i] for b in places[j]):
+                home[root(j)] = root(i)
+    out = {}
+    for i in free:
+        out.setdefault(root(i), []).append(i)
+    return [out[k] for k in sorted(out, key=lambda k: min(out[k]))]
 
 
 def met(cand, rects):
@@ -412,62 +526,185 @@ def met(cand, rects):
     return None if near is None else near[1]
 
 
-def greedy(order, cands, needs, cards, runs, upright):
-    """The labels of `order` in that order, each taking the first of its candidates with room for
-    its text: today's choice, over whatever candidates it is given.
+def verdicts(order, took, short, cards, runs, upright):
+    """What a plan has to say about a finished choice: one Choice per label of `order`, in that
+    order, with `took` the place each one holds and `short` the room of the labels that fit nowhere.
 
-    Room is measured three ways, as the places of spec 7.2 fall into three families. Every place is
-    measured against the cards and the bounds, which a text may never stand on. Every place but one
-    over or under a horizontal second segment is measured against the lines as well, and a text that
-    has to lie on one is told about; on a horizontal second segment the lines are looked for once the
-    text stands somewhere, because what counts there is the ones that run through the text itself.
-    Beside a vertical second segment the labels already placed count too — that is the one family
-    whose places differ in the rows they stand in, so it is the one another label can push out of a
-    row.
-
-    Failing all of them the roomiest place is taken with the room it offered and the nearest thing
-    in the way there, which is the fit error. `cards` and `runs` are the rectangles of `occupancy`
-    split by kind, `needs` the width of each text in px, and `upright` the runs of `uprights`."""
-    out, keys, placed = [], {}, []
+    Every place is read against every rectangle of the rows it stands in, whatever family it belongs
+    to (spec 7.3 as amended). What the families differ in is the wording: a line crossing a text on
+    a horizontal second segment raises the "пересечёт" of its own, so the "ляжет" of such a label is
+    left to the lines along its rows and to the other labels. A pair of labels whose texts overlap
+    is told about once, on the later of the two in the model's order — as SAME_PLACE where the two
+    took the very same place, and inside that label's one "ляжет" where they merely meet. A label
+    therefore answers for the labels before it and never for the ones after, which is also what the
+    fit error names beside its room."""
+    out = []
     for i in order:
-        cs, need = cands[i], needs[i]
-        wide = [room(c, cards) for c in cs]
-        tight = [w if c.where in SECOND_RUN else
-                 min(w, room(c, runs + (placed if c.where == BESIDE else [])))
-                 for c, w in zip(cs, wide)]
-        clashes, short, blocked = [], None, None
-        spot = next((c for c, t in zip(cs, tight) if need <= t), None)
-        if spot is None:
-            spot = next((c for c, w in zip(cs, wide) if need <= w), None)
-            if spot is not None:
-                on = met(spot, runs + (placed if spot.where == BESIDE else []))
-                clashes.append(Clash(ON_LINE, on and on.owner))
-        if spot is None:
-            at = max(range(len(cs)), key=lambda k: wide[k])
-            spot, short = cs[at], max(wide[at], 0)
-            # what the error names beside the room: the nearest of everything drawn, since a text
-            # that fits nowhere is stopped by a card or a bound and may lie on a line nearer still
-            blocked = met(spot, cards + runs + placed)
-        placed += list(spot.rects)
-        if spot.key in keys:
-            clashes.append(Clash(SAME_PLACE, keys[spot.key]))
-        keys[spot.key] = i
-        if spot.where in SECOND_RUN:
-            crossed = {run.owner[0] for run in runs
-                       if run.owner in upright and (run.Y, run.owner) not in spot.exempt
-                       and any(overlaps(text, run) for text in spot.rects)}
-            clashes += [Clash(CROSSED, j) for j in sorted(crossed)]
-        out.append(Choice(i, spot, tuple(clashes), short, blocked))
+        cand, hit = took[i], hits(took[i], runs)
+        crossed = sorted({run.owner[0] for run in runs if run.owner in hit
+                          and run.owner in upright}) if cand.where in SECOND_RUN else []
+        before = [rect for j in order if j < i for rect in took[j].rects]
+        lay = [j for j in order if j < i and meet(took[j], cand)]
+        same = [j for j in lay if took[j].key == cand.key]
+        clashes = []
+        # a label that fits nowhere is answered for by its error, which already names the nearest
+        # thing in its way: the warning that it lies on something would be the same fact twice, and
+        # the advice of spec 6 counts both
+        if i not in short and ([owner for owner in hit if owner not in upright or not crossed]
+                               or lay):
+            on = met(cand, runs + before)
+            clashes.append(Clash(ON_LINE, on and on.owner))
+        clashes += [Clash(SAME_PLACE, j) for j in same]
+        clashes += [Clash(CROSSED, j) for j in crossed]
+        # what the error of a label that fits nowhere names beside the room: the nearest of
+        # everything drawn, since such a text is stopped by a card or a bound and may lie on a line
+        # nearer still
+        blocked = met(cand, cards + runs + before) if i in short else None
+        out.append(Choice(i, cand, tuple(clashes), short.get(i), blocked, hit))
     return out
 
 
-def place(edges, texts, paths, offsets, geo, cells, occupied, card_w):
-    """Where the label of every routed edge that carries one goes: a Choice per label, in the order
-    they were placed — the labels that never look at another one first, so that the ones beside a
-    vertical second segment, which do, see them all. `texts` is the drawn text of each edge, empty
-    where the edge carries none.
+def greedy(order, cands, needs, cards, runs, upright):
+    """The labels of `order` in that order, each taking the first of its places with room for its
+    text: today's choice, over whatever candidates it is given, and the complete choice the search
+    of spec 7.3 starts from and is never allowed to do worse than.
 
-    At this commit the places are the table of spec 7.2 and the choice is `greedy`'s."""
+    Room is measured three ways here, as the places of spec 7.2 fall into three families. Every
+    place has already been measured against the cards and the bounds by `fits`, which a text may
+    never stand on. Every place but one on a horizontal second segment is measured against the lines
+    as well; on that segment they are not, which is why greedy always takes the first of the three
+    places there and why the two the table adds are reached by the search alone. Beside a vertical
+    second segment the labels already placed count too. Failing all of them the preferred place is
+    taken, and `verdicts` says what the label then lies on.
+
+    `cards` and `runs` are the rectangles of `occupancy` split by kind, `needs` the width of each
+    text in px, and `upright` the runs of `uprights`."""
+    keep, short = fits(order, cands, needs, cards)
+    return verdicts(order, _first_fit(order, keep, needs, runs), short, cards, runs, upright)
+
+
+def _first_fit(order, keep, needs, runs):
+    """{label: the place greedy takes}, over the places `fits` left it — the half of `greedy` the
+    search calls with the `fits` it has already paid for."""
+    took, placed = {}, []
+    for i in order:
+        spot = next((c for c in keep[i]
+                     if c.where in SECOND_RUN
+                     or needs[i] <= room(c, runs + (placed if c.where == BESIDE else []))),
+                    keep[i][0])
+        took[i], placed = spot, placed + list(spot.rects)
+    return took
+
+
+def _pairings(group, places):
+    """{label: {another label of the component: whether each of their places meets each of its}}.
+    This is the whole of what couples the labels of a component, and the search looks it up at
+    every node rather than measuring two rectangles again there."""
+    near = {i: {} for i in group}
+    spans = {i: _span(places[i]) for i in group}
+    clear = CLEARANCE[LABEL]
+    for k, i in enumerate(group):
+        rows, x0, x1 = spans[i]
+        for j in group[k + 1:]:
+            other, ox0, ox1 = spans[j]
+            if not (rows & other) or ox0 - clear >= x1 or x0 - clear >= ox1:
+                continue
+            grid = [[meet(a, b) for b in places[j]] for a in places[i]]
+            if any(any(row) for row in grid):
+                near[i][j] = grid
+                near[j][i] = [list(col) for col in zip(*grid)]
+    return near
+
+
+def _score(walk, pick, priced, near):
+    """What a complete choice of one component costs: each place on its own, and the pairs of this
+    component's labels that meet in it."""
+    out = [0, 0, 0]
+    for k, i in enumerate(walk):
+        for term, part in enumerate(priced[i][pick[i]]):
+            out[term] += part
+        out[0] += sum(1 for j in walk[:k] if j in near[i] and near[i][j][pick[i]][pick[j]])
+    return tuple(out)
+
+
+def _bound(group, places, priced, start, budget):
+    """Branch and bound over one component, most constrained first: {label: the place it takes}, as
+    a position in its own list. `priced` gives each place what it costs on its own, `start` is the
+    incumbent greedy left and `budget` the nodes left over the whole plan, spent here and read by
+    the caller. The incumbent comes back unchanged when nothing cheaper is found and when the nodes
+    run out, which is what makes the search never worse than greedy and stop wherever it is.
+
+    A half-built choice already costs what its head costs: every term of the cost is a sum of
+    non-negative parts, so a branch that has reached the incumbent's cost cannot be brought under it
+    further down and is cut off there.
+
+    A node is one place priced against the head above it, and one choice carried to its end: what
+    the allowance bounds is the work, not the depth, and an allowance of one buys the root of the
+    walk and no place at all."""
+    near = _pairings(group, places)
+    walk = sorted(group, key=lambda i: (len(places[i]), -len(near[i]), i))
+    best = [dict(start), _score(walk, start, priced, near)]
+    held = {}
+
+    def step(k, acc):
+        if budget[0] <= 0:
+            return
+        budget[0] -= 1
+        if k == len(walk):
+            best[0], best[1] = dict(held), acc
+            return
+        i = walk[k]
+        for at in range(len(places[i])):
+            if budget[0] <= 0:
+                return
+            budget[0] -= 1
+            own = priced[i][at]
+            with_it = (acc[0] + own[0] + sum(1 for j in walk[:k] if j in near[i]
+                                             and near[i][j][at][held[j]]),
+                       acc[1] + own[1], acc[2] + own[2])
+            if with_it >= best[1]:
+                continue
+            held[i] = at
+            step(k + 1, with_it)
+    step(0, (0, 0, 0))
+    return best[0]
+
+
+def search(order, cands, needs, cards, runs, upright, nodes=NODES):
+    """(the choices, the nodes the search spent): the cheapest choice of places it found, priced by
+    `cost` (spec 7.3).
+
+    The labels whose places can overlap form components, and each is solved by branch and bound from
+    greedy's choice over the same candidates, which is complete by construction. A label left one
+    place stands still and is priced into the places of the labels it meets. The components are
+    given the node allowance in the model's order, so a plan that runs out of nodes keeps greedy's
+    choice for the components it never reached: the result is never worse than greedy's, and the
+    same input always gives the same one."""
+    keep, short = fits(order, cands, needs, cards)
+    took = _first_fit(order, keep, needs, runs)
+    free = [i for i in sorted(order) if len(keep[i]) > 1]
+    still = [i for i in sorted(order) if len(keep[i]) == 1]
+    left = [nodes]
+    for group in components(free, keep):
+        # what the labels outside this component contribute is the same whatever it chooses: the
+        # ones left a single place stand still, and no place of another component can meet one of
+        # this one, which is what a component is
+        pinned = [took[j] for j in still]
+        priced = {i: [(sum(1 for other in pinned if meet(c, other)), len(hits(c, runs)), c.rank)
+                      for c in keep[i]] for i in group}
+        start = {i: keep[i].index(took[i]) for i in group}
+        for i, at in _bound(group, {i: keep[i] for i in group}, priced, start, left).items():
+            took[i] = keep[i][at]
+    return verdicts(order, took, short, cards, runs, upright), nodes - left[0]
+
+
+def place(edges, texts, paths, offsets, geo, cells, occupied, card_w, nodes=NODES):
+    """Where the label of every routed edge that carries one goes: a Choice per label, in the order
+    they were placed — the labels whose place stands in one row first, so that the ones beside a
+    vertical second segment, which reach into several, are placed against them. `texts` is the drawn
+    text of each edge, empty where the edge carries none, and `nodes` the allowance the search of
+    spec 7.3 has; `nodes=1` buys the root of the first component and nothing else, which is greedy's
+    own choice."""
     rects = occupancy(cells, paths, offsets, geo, occupied)
     cards = [r for r in rects if r.kind in (CARD, BOUND)]
     runs = [r for r in rects if r.kind == LINE]
@@ -476,4 +713,4 @@ def place(edges, texts, paths, offsets, geo, cells, occupied, card_w):
     needs = {i: label_width(texts[i]) for i in order}
     cands = {i: candidates(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells, occupied,
                            card_w) for i in order}
-    return greedy(order, cands, needs, cards, runs, uprights(paths))
+    return search(order, cands, needs, cards, runs, uprights(paths), nodes)[0]

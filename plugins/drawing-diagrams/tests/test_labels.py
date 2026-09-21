@@ -15,15 +15,17 @@ tests/test_labels.py --record` prints the whole of it from the tree it runs in, 
 regenerated when the places move; the differential against the previous tree goes in that commit's
 report, never here.
 
-The places are the table of spec 7.2 as amended on 2026-09-21, which this commit filled in: a
-straight exit down or up may stand left of its line as well as right, a straight sideways one below
-its line as well as above, and a label on a horizontal second segment stands just after the bend
-rather than at the far end, anchored to that segment as it is drawn. The classes below hold each of
-those to a case of its own; `TheTwoReadingsTheSwitchCarries` keeps the two readings the commit
-before this one carried.
+The places are the table of spec 7.2 as amended on 2026-09-21, and the choice among them is the
+search of spec 7.3, which this commit filled in: `labels.place` is a bounded branch and bound over
+the components of labels whose places can overlap, started from greedy's choice. `TheSearch` holds
+it to costing no more than that start, to answering greedy when its allowance is one node, to
+solving a component apart from the others and to finding what an exhaustive walk finds; the classes
+around it hold the table of places and the two readings the commit before this one carried.
 """
 import copy
 import functools
+import itertools
+import math
 import re
 import sys
 import unittest
@@ -71,11 +73,11 @@ LABEL_CASES = {
     'along the gutter, 8 towards': 'a?->b O | a?->g R ; ляжет',
     "along the row ['. b d', 'e . f', '. g .']": 'e->f B',
     "along the row ['d b .', 'f . e', '. g .']": 'e->f B',
-    'an exit up that does not fit': 'a?->d A | a?->c O | b->d O | c->b A | d->b O | d->c L ; пересечёт',
+    'an exit up that does not fit': 'a?->d A | a?->c U | b->d O | c->b A | d->b O | d->c L',
     'beside a second segment, a banded row': 'd->b R2 ; ляжет',
-    'beside a second segment, a gutter row': 'a->c A | a->d L2 | e->c O',
+    'beside a second segment, a gutter row': 'a->c A | a->d L2 | e->c U',
     'exit down': 'a?->b L | a?->c O',
-    'exit up': 'a?->d A | a?->c O | b->d O | c->b A | d->b O | d->c L ; пересечёт',
+    'exit up': 'a?->d A | a?->c U | b->d O | c->b A | d->b O | d->c L',
     "lines at the source card's own height, beside": 'a?->b R | a?->t A',
     "lines at the source card's own height, into": 'a?->b R | a?->t B',
     "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c B | b?->d R',
@@ -98,19 +100,15 @@ LABEL_CASES = {
     'turning from the far side, down': 'a?->b A | a?->c R',
     'turning from the far side, up': 'a?->c O | a?->b R',
     'two labels in one place':
-        ('n00->n06 R | n01->n13 R2 | n04->n01 O | n07->n00 R2 | n09->n14 O | n11->n08 O | n14->n03 R4 | '
-         'n15->n06 O ; ляжет, не помещается, одно место',
-         'n00->n06 L | n01->n13 O | n04->n01 O | n07->n00 O | n09->n14 O | n11->n08 O | n14->n03 R4 | '
-         'n15->n06 O ; ляжет, пересечёт, пересечёт, пересечёт, пересечёт, пересечёт'),
+        ('n00->n06 R | n01->n13 R4 | n04->n01 O | n07->n00 R2 | n09->n14 F | n11->n08 O | n14->n03 L2 | '
+         'n15->n06 O ; ляжет, не помещается',
+         'n00->n06 L | n01->n13 O | n04->n01 O | n07->n00 U | n09->n14 O | n11->n08 O | n14->n03 L2 | '
+         'n15->n06 F ; ляжет, ляжет, ляжет, пересечёт, пересечёт, пересечёт'),
     "under the row's own line": 'c->a A',
 }
-
-# The 442 labels of the hundred seeded instances, by the place they take and by what is said about
-# them. Two labels never fall in one place across the hundred, which is why the label cases above
-# carry a model that does (the first instance of the same stream past the hundred).
-SEEDED_PLACES = {'над вторым отрезком': 171, 'рядом со вторым отрезком': 161, 'у выхода вбок': 62,
-                 'у выхода вниз': 34, 'у выхода вверх': 14}
-SEEDED_SAID = {LIES: 43, NO_FIT: 24, CROSSES: 17}
+SEEDED_PLACES = {'рядом со вторым отрезком': 161, 'над вторым отрезком': 151, 'у выхода вбок': 62,
+                 'у выхода вниз': 34, 'под вторым отрезком': 20, 'у выхода вверх': 14}
+SEEDED_SAID = {LIES: 53, NO_FIT: 24, CROSSES: 9}
 
 # The five seeded instances the end-row reading moves, and what each moves: the label, where it
 # stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
@@ -203,13 +201,30 @@ def candidates(layout, mode_name):
             labels.uprights(paths))
 
 
-def chosen(layout, mode_name, exempt=True):
-    """The choices of a layout, by the road `labels.place` itself takes. `exempt=False` takes the
-    exemptions of spec 7.1 off every candidate, which is what the test of them needs."""
+def chosen(layout, mode_name, exempt=True, nodes=labels.NODES):
+    """The choices of a layout, by the road `labels.place` itself takes — the search of spec 7.3.
+    `exempt=False` takes the exemptions of spec 7.1 off every candidate, which is what the test of
+    them needs, and `nodes` is the allowance the search is given."""
     order, cands, needs, cards, runs, upright = candidates(layout, mode_name)
     if not exempt:
         cands = {i: [c._replace(exempt=frozenset()) for c in cs] for i, cs in cands.items()}
+    return labels.search(order, cands, needs, cards, runs, upright, nodes)[0]
+
+
+def greedily(layout, mode_name):
+    """The choices greedy makes on a layout: the first place with the room for each label, in
+    today's order, which is where the search of spec 7.3 starts from."""
+    order, cands, needs, cards, runs, upright = candidates(layout, mode_name)
     return labels.greedy(order, cands, needs, cards, runs, upright)
+
+
+def price(order, took, runs):
+    """What a complete choice of places costs, straight from the places themselves: the tuple
+    `labels.cost` gives a list of Choices, computed without one so an exhaustive walk can price a
+    choice nothing ever wrote a verdict about."""
+    picked = [took[i] for i in sorted(order)]
+    pairs = sum(1 for k, a in enumerate(picked) for b in picked[k + 1:] if labels.meet(a, b))
+    return pairs, sum(len(labels.hits(c, runs)) for c in picked), sum(c.rank for c in picked)
 
 
 def post_check(layout):
@@ -398,17 +413,16 @@ class WhatThePlansSay(unittest.TestCase):
 
     def test_the_corpus_exercises_every_place(self):
         """What the record above has to hold to read anything: every place of the table of spec 7.2
-        a greedy choice can reach is taken somewhere in the corpus, a place that reaches into more
-        than one row is taken too, and every kind of message is heard at least once. A place is
-        named here as `greedy` sees it, by its family and its rank in it, so the two of the table
-        that nothing reaches are named by their absence.
+        is taken somewhere in the corpus, a place that reaches into more than one row is taken too,
+        and every kind of message a plan can write is heard at least once. A place is named here by
+        its family and its rank in it.
 
-        Those two are missing for one reason. Over and under a horizontal second segment are
-        measured against the cards and the bounds alone, and differ only down the row, so their
-        room is the same number and the first of them always answers first; the far end of that
-        segment has the same limit again. What will choose between them is the search of spec 7.3,
-        by the lines each one meets — `TheTableOfPlaces` below holds all three to being offered, in
-        order, whoever ends up taking them."""
+        With the search of spec 7.3 the table is whole. The two places greedy never reached — under
+        a horizontal second segment, and over it at its far end — have the same room as the place
+        before them, so nothing could tell them apart until something priced the lines each one
+        meets. The message this corpus no longer hears from a plan is the one about two labels in
+        one place: a pair costs more than any number of lines or ranks, so the search parts them
+        wherever either can move, and `TheSearch` holds the model where greedy still does not."""
         taken, rows, words = set(), set(), set()
         for name, mode, layout, warnings in planned(examples() + label_models() + seeded()):
             for choice in chosen(layout, mode):
@@ -418,13 +432,14 @@ class WhatThePlansSay(unittest.TestCase):
             words |= set(said(warnings))
         self.assertEqual(taken, {(labels.DOWN, 0), (labels.DOWN, 1), (labels.UP, 0), (labels.UP, 1),
                                  (labels.SIDEWAYS, 0), (labels.SIDEWAYS, 1), (labels.OVER, 0),
-                                 (labels.BESIDE, None)})
+                                 (labels.OVER, 2), (labels.BENEATH, 1), (labels.BESIDE, None)})
         self.assertEqual(rows, {True, False})
-        self.assertEqual(words, {LIES, NO_FIT, CROSSES, SAME})
+        self.assertEqual(words, {LIES, NO_FIT, CROSSES})
 
-    def test_place_is_greedy_over_the_candidates(self):
-        """The interface of this commit: `labels.place` is `labels.greedy` over `labels.candidates`
-        and nothing else, so the road the tests above take is the one `flow.plan` takes."""
+    def test_place_is_the_search_over_the_candidates(self):
+        """The interface of this commit: `labels.place` is `labels.search` over
+        `labels.candidates` and nothing else, so the road the tests above take is the one
+        `flow.plan` takes."""
         for name, mode, layout, _ in planned(label_models()):
             geo, paths, offsets, cells, occupied = inputs(layout, mode)
             texts = [e["label"] for e in layout["edges"]]
@@ -463,9 +478,10 @@ BRANCH = cases.exit_model(["a b c", "d e f", "g h i"],
                           ["a -> f : да", "b -> d", "c -> e", "d -> h", "e -> g", "f -> i"])
 
 # The seeded instances where one line edge is met in several rows of one place, with the edge whose
-# label meets it and how many rows of that place it is met in: a label beside the middle of a long
-# vertical second segment, and a line running down beside the whole of it.
-MET_IN_ROWS = {"seeded #47": ("n00 -> n08", 4), "seeded #56": ("n00 -> n04", 4)}
+# label meets it and how many rows of that place it is met in: a label beside a vertical second
+# segment, and a label under a card shorter than its row, which stands in the gutter and reaches
+# into the row as well.
+MET_IN_ROWS = {"seeded #15": ("n12 -> n08", 2), "seeded #38": ("n09 -> n12", 2)}
 
 # The model of a label that has to give way to one already placed: `e -> d` leaves sideways along
 # the bottom row and its text stands there, and `d -> c`, which comes later, would take the middle
@@ -586,9 +602,9 @@ class TheTableOfPlaces(unittest.TestCase):
 
     def test_a_line_met_in_several_rows_of_one_place_is_one_warning(self):
         """Spec 7.3: one warning where a label lies on a line, however many rectangles this model
-        cuts that line into. A place beside the middle of a vertical second segment reaches every
-        row the middle can fall in, and a line drawn down beside the whole of it is met in four of
-        them; `met` answers with the nearest owner, once, and `flow.plan` writes one message."""
+        cuts that line into. A place that reaches into more than one row meets a line running down
+        past all of them once per row; `hits` names the owner once, `met` answers with the nearest,
+        and `flow.plan` writes one message."""
         models = {name: (model, mode) for name, model, mode in seeded()}
         for name, (edge, rows) in MET_IN_ROWS.items():
             model, mode = models[name]
@@ -611,6 +627,148 @@ class TheTableOfPlaces(unittest.TestCase):
                                  [f"связь {edge}: подпись {layout['edges'][i]['label']!r} "
                                   f"{choice.cand.where} ляжет на другую линию или подпись; "
                                   f"переставьте узлы или уберите подпись в сноску"], warnings)
+
+
+# What the search does with the seven seeded instances the candidates commit left with one more
+# 'пересечёт' than the commit before it — every one a label greedy stands over a horizontal second
+# segment just after the bend, with a line through it there. Per instance: the edge, the place the
+# search moves it to (`U` under the segment, `F` over it at its far end, `O` where it stays), and
+# the lines still crossing it afterwards.
+SEEDED_CROSSED = {
+    "seeded #7": ("n00 -> n06", "U", 0),
+    "seeded #16": ("n05 -> n09", "U", 1),
+    "seeded #20": ("n15 -> n05", "O", 2),
+    "seeded #33": ("n07 -> n09", "U", 0),
+    "seeded #35": ("n07 -> n02", "U", 0),
+    "seeded #54": ("n07 -> n04", "F", 0),
+    "seeded #67": ("n06 -> n04", "F", 0),
+}
+
+# How many of the seeded instances the search leaves at a strictly lower cost than greedy's choice.
+SEEDED_BETTER = 29
+
+# The seeded instance whose labels fall into two pairs and four labels standing alone: no place of
+# any group can meet a place of another, so each is solved on its own and the nodes the search
+# spends on the whole plan are the nodes the groups spend one at a time.
+SEEDED_APART = ("seeded #11", ((0,), (3, 18), (6, 9), (12,), (15,), (21,)))
+
+
+class TheSearch(unittest.TestCase):
+    """Spec 7.3, criterion E4: `labels.place` is a bounded branch and bound over the components of
+    labels whose places can overlap, started from greedy's choice under the same cost, so the
+    result is never worse than greedy's and the same input always gives the same choice."""
+
+    def test_the_search_never_costs_more_than_greedy(self):
+        """Criterion E4's first half, over the seeded hundred: the cost of the choice `place`
+        returns is never above the cost of the choice `greedy` starts it from, and on some
+        instances it is strictly lower."""
+        better = []
+        for name, mode, layout, _ in planned(seeded()):
+            was, now = greedily(layout, mode), chosen(layout, mode)
+            with self.subTest(instance=name):
+                self.assertLessEqual(labels.cost(now), labels.cost(was))
+            if labels.cost(now) < labels.cost(was):
+                better.append(name)
+        self.assertEqual(len(better), SEEDED_BETTER, better)
+
+    def test_one_node_is_greedys_own_choice(self):
+        """Criterion E4's second half: one node buys the root of the first component's walk and no
+        place at all, so what comes back is the choice the search started from."""
+        for name, mode, layout, _ in planned(label_models() + seeded()):
+            with self.subTest(instance=name):
+                self.assertEqual(chosen(layout, mode, nodes=1), greedily(layout, mode))
+
+    def test_the_same_input_twice_gives_the_same_choice(self):
+        for name, mode, layout, _ in planned(seeded()):
+            with self.subTest(instance=name):
+                self.assertEqual(chosen(layout, mode), chosen(layout, mode))
+
+    def test_the_search_finds_what_an_exhaustive_walk_finds(self):
+        """What the bound and the order are allowed to cut away: nothing. Every component of the
+        seeded corpus small enough to walk whole is walked, and the cheapest choice the walk finds
+        costs exactly what the search's does."""
+        walked = 0
+        for name, mode, layout, _ in planned(seeded()):
+            order, cands, needs, cards, runs, upright = candidates(layout, mode)
+            took = {c.edge: c.cand for c in chosen(layout, mode)}
+            keep = labels.fits(order, cands, needs, cards)[0]
+            free = [i for i in sorted(order) if len(keep[i]) > 1]
+            for group in labels.components(free, keep):
+                if math.prod(len(keep[i]) for i in group) > labels.NODES:
+                    continue
+                walked += 1
+                best = min(price(order, {**took, **dict(zip(group, combo))}, runs)
+                           for combo in itertools.product(*[keep[i] for i in group]))
+                with self.subTest(instance=name, group=tuple(group)):
+                    self.assertEqual(price(order, took, runs), best)
+        self.assertGreater(walked, 300, f"harness: only {walked} components were walked whole")
+
+    def test_a_component_is_solved_apart_from_the_others(self):
+        """The nodes of one plan are spent group by group (spec 7.3): the search over the whole
+        instance spends exactly what the groups spend one at a time, with the other labels pinned
+        to the places it gave them, and answers the same."""
+        name, want = SEEDED_APART
+        layout, mode = next((lay, m) for n, m, lay, _ in planned(seeded()) if n == name)
+        order, cands, needs, cards, runs, upright = candidates(layout, mode)
+        keep = labels.fits(order, cands, needs, cards)[0]
+        free = [i for i in sorted(order) if len(keep[i]) > 1]
+        groups = labels.components(free, keep)
+        self.assertEqual(tuple(tuple(g) for g in groups), want,
+                         f"premise: the labels of {name} no longer fall into these groups")
+        self.assertEqual(sum(1 for g in groups if len(g) == 2), 2,
+                         "premise: the two pairs this case is named for are gone")
+        whole, spent = labels.search(order, cands, needs, cards, runs, upright)
+        took = {c.edge: c.cand for c in whole}
+        apart = 0
+        for group in groups:
+            alone = {i: (cands[i] if i in group else [took[i]]) for i in order}
+            one, cost = labels.search(order, alone, needs, cards, runs, upright)
+            apart += cost
+            self.assertEqual(one, whole, f"group {group} answers differently on its own")
+        self.assertEqual(apart, spent)
+
+    def test_a_label_greedy_leaves_crossed_goes_under_the_segment_or_to_its_far_end(self):
+        """The places the table of spec 7.2 added and no greedy choice ever reached: over and under
+        a horizontal second segment have one room between them, so greedy always takes the first
+        and answers for the lines through it afterwards. The search prices those lines, and the
+        seven instances the candidates commit left with one more 'пересечёт' are where it shows —
+        five of them lose the crossing, one keeps it because the same line runs through both places
+        and one because nothing on that segment is free."""
+        found = {}
+        for name, mode, layout, _ in planned(seeded()):
+            if name not in SEEDED_CROSSED:
+                continue
+            edge = SEEDED_CROSSED[name][0]
+            i = next(k for k, e in enumerate(layout["edges"]) if f"{e['a']} -> {e['b']}" == edge)
+            was = next(c for c in greedily(layout, mode) if c.edge == i)
+            now = next(c for c in chosen(layout, mode) if c.edge == i)
+            self.assertEqual((was.cand.where, was.cand.rank), (labels.OVER, 0),
+                             f"premise: greedy no longer stands {edge} of {name} after the bend")
+            self.assertTrue([c for c in was.clashes if c.kind == labels.CROSSED],
+                            f"premise: greedy no longer leaves {edge} of {name} crossed")
+            found[name] = (edge, place(dict(layout["edges"][i], la=now.cand.la)),
+                           len([c for c in now.clashes if c.kind == labels.CROSSED]))
+        self.assertEqual(found, SEEDED_CROSSED)
+
+    def test_two_labels_greedy_leaves_in_one_place_are_moved_apart(self):
+        """The one warning the corpus no longer hears from a plan, and why: a pair of labels costs
+        more than any number of lines or ranks, so the search parts two labels wherever either of
+        them can move at all. The model named for the case is where greedy still leaves them in one
+        place, told once and on the later of the two in the model's order (spec 7.3 as amended)."""
+        model = next(m for n, m, mode in label_models()
+                     if n == "two labels in one place widget" and mode == "widget")
+        layout, _ = flow.plan(copy.deepcopy(model), "widget", draft=True)
+        was = {c.edge: c for c in greedily(layout, "widget")}
+        same = [(c.edge, x.owner) for c in was.values() for x in c.clashes
+                if x.kind == labels.SAME_PLACE]
+        self.assertEqual(len(same), 1, same)
+        late, early = same[0]
+        self.assertLess(early, late, "the pair is told on the earlier of the two")
+        self.assertEqual(was[late].cand.key, was[early].cand.key)
+        now = {c.edge: c for c in chosen(layout, "widget")}
+        self.assertNotEqual(now[late].cand.key, now[early].cand.key)
+        self.assertEqual([x for c in now.values() for x in c.clashes
+                          if x.kind == labels.SAME_PLACE], [])
 
 
 class TheSegmentALabelHangsFrom(unittest.TestCase):
@@ -730,12 +888,16 @@ class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
         segment and which spanned its row, wherever along it the text stood; the model warns once
         per line that runs through the text's own rectangle. So the old one answered for lines the
         text never reaches, and missed the line that comes down into the row and turns there, which
-        stops on the text instead of passing it."""
+        stops on the text instead of passing it.
+
+        The two are compared over greedy's places, which are the ones both checks were written
+        about: the search of spec 7.3 moves a struck label off the place the line runs through, so
+        over its choice there is barely a crossed label left to compare anything on."""
         only_before = only_now = both = 0
         for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
             geo, paths, offsets, cells, occupied = inputs(layout, mode)
             rects = labels.occupancy(cells, paths, offsets, geo, occupied)
-            choices = chosen(layout, mode)
+            choices = greedily(layout, mode)
             took = {choice.edge: choice.cand for choice in choices}
             now = {(choice.edge, c.owner) for choice in choices
                    for c in choice.clashes if c.kind == labels.CROSSED}
@@ -832,18 +994,21 @@ class TheNumbersComeFromThisModule(unittest.TestCase):
                                 ("dx", labels.LABEL_BEND), ("dy", -labels.LABEL_LIFT),
                                 ("dy", labels.LABEL_SINK), ("dy", labels.LABEL_BELOW),
                                 ("dy", -labels.LABEL_ABOVE), ("dy", -labels.LABEL_OVER),
-                                ("dy", labels.LABEL_DROP)})
+                                ("dy", labels.LABEL_UNDER), ("dy", labels.LABEL_DROP)})
 
-    def test_the_one_offset_no_plan_emits_is_the_place_no_plan_takes(self):
-        """LABEL_UNDER is the exception to the test above, and the same exception the corpus makes:
-        `greedy` never reaches the place under a horizontal second segment, so no plan emits the
-        number it is drawn with. `TheTableOfPlaces` holds the anchor that carries it, so the script
-        will draw it the day the search of spec 7.3 chooses it."""
-        offered = set()
+    def test_the_offset_no_greedy_choice_emits_is_the_one_the_search_reaches(self):
+        """LABEL_UNDER was the exception to the test above while `greedy` was the whole choice: the
+        place under a horizontal second segment has the same room as the one over it, so greedy
+        never reached it and no plan emitted the number it is drawn with. The search of spec 7.3
+        reaches it, which is why the test above now names it — and greedy, still the choice the
+        search starts from, still does not."""
+        offered, greedy_dy = set(), set()
         for _, mode, layout, _ in planned(label_models()):
             for cs in candidates(layout, mode)[1].values():
                 offered |= {("dy", c.la[4]) for c in cs}
+            greedy_dy |= {("dy", c.cand.la[4]) for c in greedily(layout, mode)}
         self.assertIn(("dy", labels.LABEL_UNDER), offered)
+        self.assertNotIn(("dy", labels.LABEL_UNDER), greedy_dy)
 
     def test_there_is_one_copy_of_each_and_it_is_this_module_s(self):
         """diagrams/flow.py carries the names the tests that measure a drawn label reach for, and

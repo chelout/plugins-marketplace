@@ -37,7 +37,10 @@ Test cases (written from the declaration of the change, before the implementatio
 11. "label-over-row-line", both modes: the label over a horizontal second segment that runs along a
     row line of a pill and a taller step card has its baseline LABEL_OVER above that segment as
     drawn — not above the row's middle, and since spec 7.2 as amended not above the row line's base
-    either, so a segment spread off that base takes its label with it.
+    either, so a segment spread off that base takes its label with it. "anchor-under-segment", both
+    modes: the same contract for the place under such a segment, which the search of spec 7.3
+    reaches and no greedy choice does — the baseline LABEL_UNDER below the segment as drawn, and
+    the box clear of it, which is what tells the two offsets apart.
 12. "gutter-swap", both modes: a -> d and c -> b go corner to opposite corner up one gutter and swap
     sides along it, one crossing on the lattice, and the page draws exactly that one;
     "gutter-no-swap": a -> d and d -> a share a gutter in one order from end to end, no crossing
@@ -97,8 +100,9 @@ Test cases (written from the declaration of the change, before the implementatio
     what the rectangle Python chooses for a label is held against.
 21. The examples and the models of ANCHOR_CASES, which between them take every form the anchor of
     spec 7.4 has and a plan emits — the four straight exits on either side of their own line, a
-    sideways one above and below it, a horizontal second segment just after its bend either way, a
-    vertical one on either side at its middle and anchored to the base of a row — in both modes:
+    sideways one above and below it, a horizontal second segment just after its bend either way and
+    over or under it, a vertical one on either side at its middle and anchored to the base of a row
+    — in both modes:
     every label box lies inside the rectangle diagrams/labels.py chose for it across, within BOX_TOL
     and the glyph table's own width error at the far edge, and the text stands where the anchor
     says. Where the anchor asks is recomputed from the line the page drew and from `la` alone — the
@@ -303,6 +307,16 @@ ANCHOR_CASES = {
                                              {"id": "d", "kind": "terminal", "title": "D"}],
                                    "edges": ["a -> b?", "b? -> c : да", "b? -> d : нет",
                                              "c -> a"]},
+    # b -> d is a label under a horizontal second segment, the place no greedy choice reaches and
+    # the search of spec 7.3 does: over that segment d -> c comes down the gutter and turns there,
+    # through the text, and under it nothing does. The model is "anchor-exits" the other way round
+    # the grid, so the segment runs rightwards where that one's runs left
+    "anchor-under-segment": {"kind": "flow", "grid": ["b c", "a? d", ". e"],
+                             "nodes": [{"id": i, "title": i.upper()}
+                                       for i in ("b", "c", "a?", "d", "e")],
+                             "edges": ["a? -> d : да", "a? -> c : да", "b -> d : да",
+                                       "c -> b : да", "d -> b : да", "d -> c : да", "c -> e",
+                                       "e -> a?"]},
 }
 # The one form left: the middle of a vertical second segment on its left. a -> d goes out to the
 # right margin and down it, where the right side lies outside the grid box and is never offered, and
@@ -317,10 +331,10 @@ ANCHOR_HAND = {"anchor-beside-left": (
     [[(1, 1), (6, 1), (6, 3), (3, 3)], [(3, 3), (3, 4), (5, 4), (5, 5)]])}
 
 # Every form of anchor a plan emits, named as `anchor_form` names it; docstring case 21 asks for all
-# fourteen. Two places of the table of spec 7.2 are missing, and are missing everywhere: under a
-# horizontal second segment and over it at its far end both have the same room as the place before
-# them, so `greedy` never reaches either, and nothing draws an anchor no plan emits. The search of
-# spec 7.3 is what will choose them, and this list grows with it.
+# sixteen. Under a horizontal second segment joined them with the search of spec 7.3: that place and
+# the one over the segment have the same room, so `greedy` never chose between them and nothing drew
+# the anchor no plan emitted. The one place of the table still missing is over that segment at its
+# far end — a plan reaches it, and no model these cases draw does.
 ANCHOR_FORMS = frozenset({"exit down, right of its line", "exit down, left of its line",
                           "exit up, right of its line", "exit up, left of its line",
                           "exit sideways right, above its line",
@@ -329,6 +343,8 @@ ANCHOR_FORMS = frozenset({"exit down, right of its line", "exit down, left of it
                           "exit sideways left, below its line",
                           "over a second segment after the bend, leftwards",
                           "over a second segment after the bend, rightwards",
+                          "under a second segment after the bend, leftwards",
+                          "under a second segment after the bend, rightwards",
                           "beside a second segment, right at its middle",
                           "beside a second segment, left at its middle",
                           "beside a second segment, right on a row",
@@ -765,30 +781,42 @@ def pinned_label_misses(layout, names, lines, texts, cards):
     return misses, checked
 
 
-def second_run_label_misses(layout, names, lines, texts, cards):
-    """(misses, checked): labels over a horizontal second segment on a lattice row line (odd Y)
-    whose baseline does not stand LABEL_OVER above that segment as the page drew it, away from the
-    band's limits.
+def second_run_label_misses(layout, names, lines, texts, boxes, cards):
+    """(misses, checked): labels on a horizontal second segment whose baseline does not stand where
+    their own anchor asks — `dy` below that segment as the page drew it, away from the limits of the
+    band where the segment runs along a row line of cards — or whose box that segment runs through.
 
     Spec 7.2 as amended: the text hangs from a point of the segment, not from `base(Y)`, so what it
-    is held to here is the drawn y of the run itself and not that y less its router offset."""
+    is held to here is the drawn y of the run itself and not that y less its router offset. The
+    anchor's `dy` is read off the edge rather than spelled out, since a place over the segment and
+    one under it are the same contract with two numbers; what says the number is the right one is
+    the box, which a text drawn over its line with the offset meant for under it — or the other way
+    round — has that line through (LABEL_OVER against LABEL_UNDER, spec 7.2)."""
     bands = row_bands(layout, cards)
     misses, checked = [], 0
     for i, e in enumerate(layout["edges"]):
         path = e["path"]
-        if not e["label"] or len(path) < 3 or path[1][1] != path[2][1] or path[1][1] % 2 == 0:
+        if not e["label"] or len(path) < 3 or path[1][1] != path[2][1]:
             continue
+        if e["la"][0] != 1 or e["la"][1] != "p":
+            continue  # the label of this segment does not hang from the bend it starts at
         if len(path) != len(lines[i]) + 1 or lines[i][1][0] != "h":
             continue  # the page merged points of this line; its runs cannot be matched to the lattice
-        Y, y = path[1][1], lines[i][1][1]
-        if at_limit(y, bands.get(Y)):
-            continue
-        if texts[i] is None:
-            raise HarnessError(f"{names[i]} has a label over its second segment and no text in the page")
+        Y, y, dy = path[1][1], lines[i][1][1], e["la"][4]
+        if Y % 2 == 1 and at_limit(y, bands.get(Y)):
+            continue  # a run clamped into the band of a row of cards is drawn off its own offset
+        if texts[i] is None or boxes[i] is None:
+            raise HarnessError(f"{names[i]} has a label on its second segment and no "
+                               f"{'text' if texts[i] is None else 'box'} in the page")
         checked += 1
-        if abs(texts[i][1] + LABEL_OVER - y) > AXIS_TOL:
-            misses.append(f"{names[i]}: label over its second segment on row line {Y} has its baseline at y "
-                          f"{texts[i][1]:.2f}; that segment is drawn at {y:.2f}")
+        where = "over" if dy < 0 else "under"
+        if abs(texts[i][1] - dy - y) > AXIS_TOL:
+            misses.append(f"{names[i]}: label {where} its second segment on row line {Y} has its baseline at y "
+                          f"{texts[i][1]:.2f}; that segment is drawn at {y:.2f} and the anchor asks for {dy:+}")
+        if boxes[i][1] <= y <= boxes[i][1] + boxes[i][3]:
+            misses.append(f"{names[i]}: label {where} its second segment on row line {Y} is drawn in the box "
+                          f"y {boxes[i][1]:.2f}..{boxes[i][1] + boxes[i][3]:.2f}, and its own segment runs "
+                          f"through it at {y:.2f}")
     return misses, checked
 
 
@@ -1265,12 +1293,36 @@ class BrowserLines(unittest.TestCase):
                 layout, names, lines = self.measured("label-over-row-line", mode)
                 got = self.results["label-over-row-line", mode]
                 try:
-                    misses, checked = second_run_label_misses(layout, names, lines, got["texts"], got["cards"])
+                    misses, checked = second_run_label_misses(layout, names, lines, got["texts"],
+                                                              got["labels"], got["cards"])
                 except HarnessError as exc:
                     self.fail(f"harness: label-over-row-line {mode}: {exc}")
                 self.assertEqual(misses, [], f"label-over-row-line {mode}: a label over a second segment off its base")
                 # the case exists only if a -> b runs its second segment along the row line of b and c
                 self.assertEqual(checked, 1, f"harness: {mode}: no label over a second segment on a row line was checked")
+
+    def test_label_under_second_run(self):
+        """Docstring case 21, the place the search of spec 7.3 reaches and no greedy choice does:
+        b -> d stands its label under its horizontal second segment, and the page draws it there —
+        the baseline LABEL_UNDER below that segment as drawn, and the box clear of the segment,
+        where the offset of the place over it would put the line through the text."""
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                layout, names, lines = self.measured("anchor-under-segment", mode)
+                got = self.results["anchor-under-segment", mode]
+                under = [i for i, e in enumerate(layout["edges"])
+                         if e["label"] and tuple(e["la"][:2]) == (1, "p") and e["la"][4] > 0]
+                # the case exists only while the search still stands a label under its own segment
+                self.assertEqual([names[i] for i in under], ["b -> d"],
+                                 f"harness: {mode}: the labels under a second segment are not b -> d")
+                try:
+                    misses, checked = second_run_label_misses(layout, names, lines, got["texts"],
+                                                              got["labels"], got["cards"])
+                except HarnessError as exc:
+                    self.fail(f"harness: anchor-under-segment {mode}: {exc}")
+                self.assertEqual(misses, [], f"anchor-under-segment {mode}: a label off its own segment")
+                self.assertGreaterEqual(checked, len(under),
+                                        f"harness: {mode}: the label under its segment was not checked")
 
     def measure_label_boxes(self, name):
         """One record per (mode, label) of one page: the box the page drew the label's text in, the

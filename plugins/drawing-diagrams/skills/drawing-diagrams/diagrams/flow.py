@@ -619,11 +619,12 @@ def plan(model, mode_name, overrides=None, draft=False):
         layout_errors.append(overfull_error(group, routed, grid_cols, drawn_rows))
     occupied = set(placed.values())
 
-    # where every label goes: diagrams/labels.py answers with the place it took and with what stands
-    # in its way there, as rectangles of the lattice row they share, and the messages are written
-    # here. A label raises one warning where it lies on a line or on another label, one per line
-    # running through a text over a horizontal second segment, and one where another label took its
-    # place first — the numbers the advice of spec 6 counts
+    # where every label goes: diagrams/labels.py searches the places of all the labels together for
+    # the cheapest arrangement, answers with the place each one took and with what stands in its way
+    # there, as rectangles of the lattice row they share, and the messages are written here. A label
+    # raises one warning where it lies on a line along its rows or on another label, one per line
+    # crossing a text on a horizontal second segment, and one per pair of labels that land in one
+    # place, on the later of the two — the numbers the advice of spec 6 counts
     texts = [(e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip()
              if e["label"] or e["note"] else "" for e in routed]
     choices = labels.place(routed, texts, paths, offsets, geo, cells, occupied, card_w)
