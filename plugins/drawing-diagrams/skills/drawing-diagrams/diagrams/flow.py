@@ -1,17 +1,16 @@
 """Kinds `flow` (algorithm with decisions) and `swimlane` (steps by participant)."""
 import json
-import math
 import re
 
 from . import assets, labels, router
 from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_prefix, label_width, labels_for, text_width,
                      too_wide_word, wrap_lines)
 from .grid import check_placement, empty_lines, parse_grid
-# The label offsets of template/js/flow.js, in one copy, beside the model that measures with them.
-# Nothing here reads them any more — diagrams/labels.py places every label — but the tests that hold
-# the script to these numbers reach them under this name.
+# The label offsets, in one copy, beside the model that measures with them. Nothing here reads them
+# any more — diagrams/labels.py places every label and emits the anchor that carries them to the
+# script — but the tests that measure a drawn label reach them under this name.
 from .labels import (LABEL_ABOVE, LABEL_BELOW, LABEL_BEND, LABEL_BESIDE, LABEL_CLEAR, LABEL_DROP,
-                     LABEL_SIDE, LABEL_WORD, LINE_REACH)
+                     LABEL_LIFT, LABEL_OVER, LABEL_SIDE, LABEL_WORD, LINE_REACH)
 
 MODES = {
     "state": {
@@ -604,8 +603,6 @@ def plan(model, mode_name, overrides=None, draft=False):
     # here. A label raises one warning where it lies on a line or on another label, one per line
     # running through a text over a horizontal second segment, and one where another label took its
     # place first — the numbers the advice of spec 6 counts
-    for e in routed:
-        e["lside"] = "R"
     texts = [(e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip()
              if e["label"] or e["note"] else "" for e in routed]
     choices = labels.place(routed, texts, paths, offsets, geo, cells, occupied, card_w)
@@ -620,9 +617,7 @@ def plan(model, mode_name, overrides=None, draft=False):
             fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot.where}, "
                       f"влезает ~{fit_prefix(text, label_fits)}; сократите, вынесите в сноску [n] "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
-        e["lside"] = spot.ls
-        if spot.ly is not None:
-            e["ly"] = spot.ly
+        e["la"] = spot.la
         for clash in choice.clashes:
             if clash.kind == labels.SAME_PLACE:
                 first = routed[clash.owner]
@@ -657,10 +652,10 @@ def plan(model, mode_name, overrides=None, draft=False):
             "path": [[x, y, ox, oy] for (x, y), (ox, oy) in zip(p, off)],
             "d": 1 if e["dashed"] else 0,
             "label": (e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip(),
-            "ls": e.get("lside", "R"),
         }
-        if "ly" in e:
-            out["ly"] = e["ly"]  # lattice row of a label beside a vertical second segment
+        if out["label"]:
+            # where the script draws that label: (pt, ref, Y, dx, dy, anchor) of spec 7.4
+            out["la"] = e["la"]
         out_edges.append(out)
 
     # grid_rows is the drawn count: a swimlane's lane background, which render() spans from it, ends

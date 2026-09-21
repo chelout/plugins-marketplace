@@ -46,9 +46,9 @@ LABEL_MESSAGE = re.compile(r"^(связь .*: подпись |связи .* и .
 # segment, or another label took its place first.
 LIES, NO_FIT, CROSSES, SAME = "ляжет", "не помещается", "пересечёт", "одно место"
 
-# What a plan says about the labels of one model: the place of each, as `ls` and `ly` are emitted
-# (`R2` is the right side pinned to lattice row 2, `R` the side with no row of its own), and then
-# the messages by their word. One string per model, and one entry per model of
+# What a plan says about the labels of one model: the place of each, as `place` below reads it off
+# the anchor (`R2` is the right side pinned to lattice row 2, `R` the side with no row of its own),
+# and then the messages by their word. One string per model, and one entry per model of
 # `tests/test_label_lines.py`; a pair where the two modes answer differently.
 LABEL_CASES = {
     'a card alone in its row': 'a?->b R | a?->q R',
@@ -130,10 +130,28 @@ def said(warnings):
     return sorted(out)
 
 
+def beside(e):
+    """(side, pinned lattice row) of a label beside a vertical second segment, read off the anchor
+    the edge carries: `la` is (pt, ref, Y, dx, dy, anchor) of spec 7.4, the text runs rightwards
+    from the line when `dx` is positive, and the row is None where the anchor takes the middle of
+    the segment instead of the base of a row."""
+    _, ref, Y, dx = e["la"][:4]
+    return ("R" if dx > 0 else "L"), (Y if ref == "r" else None)
+
+
+def place(e):
+    """The place of a labelled edge as the record below has always named it. Only a place beside a
+    vertical second segment hangs from point 1 of the path and has a side and a row to name; every
+    other shape of route offers one place, which this record has always called `R`."""
+    if e["la"][0] != 1:
+        return "R"
+    side, row = beside(e)
+    return side + ("" if row is None else str(row))
+
+
 def digest(layout, warnings):
     """A plan's labels as `LABEL_CASES` records them."""
-    spots = [f"{e['a']}->{e['b']} {e['ls']}{e.get('ly', '')}"
-             for e in layout["edges"] if e["label"]]
+    spots = [f"{e['a']}->{e['b']} {place(e)}" for e in layout["edges"] if e["label"]]
     words = said(warnings)
     return " | ".join(spots) + (" ; " + ", ".join(words) if words else "")
 
@@ -356,7 +374,7 @@ class WhatThePlansSay(unittest.TestCase):
                 continue
             edge, _, now = SEEDED_MOVED[name]
             e = next(x for x in layout["edges"] if f"{x['a']} -> {x['b']}" == edge)
-            found[name] = (e["ls"], e.get("ly"))
+            found[name] = beside(e)
         self.assertEqual(found, {name: now for name, (_, _, now) in SEEDED_MOVED.items()})
 
     def test_the_corpus_exercises_every_place(self):
@@ -398,10 +416,9 @@ class WhatThePlansSay(unittest.TestCase):
             want += [NO_FIT for choice in choices if choice.room is not None]
             with self.subTest(model=name):
                 self.assertEqual(said(warnings), sorted(want))
-                self.assertEqual({choice.edge: (choice.cand.ls, choice.cand.ly)
-                                  for choice in choices},
-                                 {i: (e["ls"], e.get("ly"))
-                                  for i, e in enumerate(layout["edges"]) if e["label"]})
+                self.assertEqual({choice.edge: choice.cand.la for choice in choices},
+                                 {i: e["la"] for i, e in enumerate(layout["edges"]) if e["label"]})
+                self.assertEqual([e for e in layout["edges"] if "la" in e and not e["label"]], [])
 
 
 class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
@@ -425,7 +442,7 @@ class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
                     continue
                 lo, hi = min(p[1][1], p[2][1]), max(p[1][1], p[2][1])
                 bend = {p[1][1]: off[1][1], **({p[2][1]: off[2][1]} if len(p) >= 4 else {})}
-                for rect in (r for c in cs if c.ly is None for r in c.rects):
+                for rect in (r for c in cs if c.la[1] == "m" for r in c.rects):
                     if rect.Y not in bend or rect.Y not in (lo, hi):
                         continue
                     ends += 1
@@ -496,33 +513,58 @@ class TheCardALabelHangsFromIsExempt(unittest.TestCase):
         self.assertEqual(bare.room, 0)
 
 
-class TheNumbersComeFromTheScript(unittest.TestCase):
+class TheNumbersComeFromThisModule(unittest.TestCase):
+    """Spec 7.4: the label block of the script applies the anchor `flow.plan` emits and holds no
+    placement rule and no offset of its own, so every number a label is drawn with lives in
+    diagrams/labels.py, in one copy. What holds those numbers to the drawing is no longer a pattern
+    over the script but the browser test of criterion E5, which measures the box the page draws."""
+
     SCRIPT = (support.SKILL / "template" / "js" / "flow.js").read_text(encoding="utf-8")
     SOURCE = (support.SKILL / "diagrams" / "flow.py").read_text(encoding="utf-8")
 
-    # Every number diagrams/labels.py measures a place with, and the offset of the label code in
-    # template/js/flow.js it has to be.
-    OFFSETS = ((r"lx=rt\?p2\.x-(\d+):", "LABEL_BEND"),
-               (r"ly=base\(e\.path\[1\]\[1\]\)-(\d+)", "LABEL_OVER"),
-               (r"\(p1\.y\+p2\.y\)/2\)\+(\d+);", "LABEL_DROP"),
-               (r"e\.sa==='B'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
-               (r"e\.sa==='B'\)\{lx=a0\.x\+\d+;ly=a0\.y\+(\d+)\}", "LABEL_BELOW"),
-               (r"e\.sa==='T'\)\{lx=a0\.x\+\d+;ly=a0\.y-(\d+)\}", "LABEL_ABOVE"),
-               (r"e\.sa==='R'\)\{lx=a0\.x\+(\d+);", "LABEL_SIDE"))
+    def label_block(self):
+        found = re.search(r"if\(e\.label\)\{.*?g\.appendChild\(t\)\}", self.SCRIPT, re.S)
+        self.assertIsNotNone(found, "template/js/flow.js has no label block to read")
+        return found.group(0)
 
-    def test_every_offset_the_model_measures_with_is_the_script_s(self):
-        for pattern, name in self.OFFSETS:
-            with self.subTest(constant=name):
-                found = re.findall(pattern, self.SCRIPT)
-                self.assertEqual(len(found), 1, f"{pattern!r} in template/js/flow.js")
-                self.assertEqual(int(found[0]), getattr(labels, name))
+    def test_the_label_block_holds_no_offset_of_its_own(self):
+        """Every number a label is drawn with reaches the script inside the anchor. What the block
+        still spells, once the positions are taken out of it — which point of the path the anchor
+        hangs from, which field of the anchor each part is — is the halving that makes the middle
+        of a segment, and that is what the `m` reference means, not an offset."""
+        bare = re.sub(r"\[\d\]", "[]", self.label_block())
+        self.assertEqual(sorted({int(n) for n in re.findall(r"\d+", bare)}), [2], bare)
+
+    def test_the_label_block_holds_no_placement_rule(self):
+        """It reads the anchor and the points the page drew, and nothing about the shape of the
+        route: the side a line leaves by, the lattice path and the two fields the anchor replaced
+        are all gone from it."""
+        block = self.label_block()
+        for name in ("e.sa", "e.sb", "e.path", "e.ls", "e.ly"):
+            with self.subTest(name=name):
+                self.assertNotIn(name, block)
+
+    def test_every_offset_of_the_model_reaches_the_drawing_through_an_anchor(self):
+        """Each number is emitted as the `dx` or `dy` of some anchor, and the label cases take a
+        place that carries every one of them: a number the model measures with and never emits
+        would be one the script could not draw with."""
+        seen = set()
+        for _, _, layout, _ in planned(label_models()):
+            for e in layout["edges"]:
+                if e["label"]:
+                    seen |= {("dx", abs(e["la"][3])), ("dy", e["la"][4])}
+        self.assertEqual(seen, {("dx", labels.LABEL_SIDE), ("dx", labels.LABEL_BESIDE),
+                                ("dx", labels.LABEL_BEND), ("dy", -labels.LABEL_LIFT),
+                                ("dy", labels.LABEL_BELOW), ("dy", -labels.LABEL_ABOVE),
+                                ("dy", -labels.LABEL_OVER), ("dy", labels.LABEL_DROP)})
 
     def test_there_is_one_copy_of_each_and_it_is_this_module_s(self):
-        """diagrams/flow.py carries the names the tests that hold the script to them reach for, and
+        """diagrams/flow.py carries the names the tests that measure a drawn label reach for, and
         carries them by import: a second definition there could drift from the model that measures
         with it. LINE_CLEAR and the rest of the capacity numbers are flow.py's own and stay there."""
-        for name in ("LABEL_BEND", "LABEL_SIDE", "LABEL_BESIDE", "LABEL_BELOW", "LABEL_ABOVE",
-                     "LABEL_DROP", "LABEL_CLEAR", "LINE_REACH", "LABEL_WORD"):
+        for name in ("LABEL_BEND", "LABEL_SIDE", "LABEL_LIFT", "LABEL_BESIDE", "LABEL_BELOW",
+                     "LABEL_ABOVE", "LABEL_OVER", "LABEL_DROP", "LABEL_CLEAR", "LINE_REACH",
+                     "LABEL_WORD"):
             with self.subTest(constant=name):
                 self.assertEqual(getattr(flow, name), getattr(labels, name))
                 self.assertIsNone(re.search(rf"^{name} = ", self.SOURCE, re.M),

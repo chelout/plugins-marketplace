@@ -15,14 +15,14 @@ Two of those values carry an uncertainty this side cannot resolve, and both sit 
 than on the line, because a clamped line and a text drawn from a point of the same clamped band move
 together and only their order survives:
 
-- Beside a vertical second segment the text stands on the base of a row (template/js/flow.js:
-  `base(e.ly)`), while template/js/flow.js clamps every line of a row where a line enters or leaves
-  a card sideways into the band of those cards. A line of such a row is drawn nearer the base than
+- Beside a vertical second segment the text stands on the base of a row (the anchor's `r`
+  reference), while template/js/flow.js clamps every line of a row where a line enters or leaves a
+  card sideways into the band of those cards. A line of such a row is drawn nearer the base than
   its offset says, by an amount that depends on card heights, so the text covers the whole of that
   row there.
-- At a straight sideways exit the text stands `LABEL_SIDE` px beside the card edge and 9 px above
-  its own line, both clamped with that line: the text is modelled as everything above the top edge
-  of its own line, which is the order the clamp preserves.
+- At a straight sideways exit the text stands `LABEL_SIDE` px beside the card edge and `LABEL_LIFT`
+  px above its own line, both clamped with that line: the text is modelled as everything above the
+  top edge of its own line, which is the order the clamp preserves.
 
 A candidate that hangs from its own source card — a straight exit down — is not tested against that
 card, which it lies below by construction, nor against the lines that leave or enter the card within
@@ -42,11 +42,12 @@ from .common import label_width
 
 INF = math.inf
 
-# Where drawFlow in template/js/flow.js puts a label, in px. The numbers live here, beside the model
-# that reads them, in one copy: diagrams/flow.py imports the names it used to define, and
-# tests/test_labels.py reads every one of them out of the script.
+# Where a label stands, in px. The numbers live here, beside the model that reads them, in one copy:
+# they go to the script as the `la` anchor of the edge that carries the label, and diagrams/flow.py
+# imports the names it used to define.
 LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
 LABEL_SIDE = 3    # from the card edge at a straight sideways exit
+LABEL_LIFT = 5    # from the line up to the baseline at a straight sideways exit
 LABEL_BESIDE = 5  # from the line at a straight exit down or up
 LABEL_BELOW = 14  # from the card's bottom edge to the baseline at a straight exit down
 LABEL_ABOVE = 6   # from the baseline to the card's top edge at a straight exit up
@@ -79,9 +80,10 @@ Rect = collections.namedtuple("Rect", "Y y0 y1 x0 x1 kind owner")
 # `rank` its preference, 0 first; `start` the near edge of the text and `grow` the direction it runs
 # from there ("R" rightwards, "L" leftwards); `limit` the most room the place can offer whatever
 # stands around it; `key` names the place, so two labels taking the same one are told about;
-# `exempt` the (row, owner) pairs this place is not tested against; `ls` and `ly` what `flow.plan`
-# emits for it today (`ly` is None where the edge carries none).
-Candidate = collections.namedtuple("Candidate", "where rank rects start grow limit key exempt ls ly")
+# `exempt` the (row, owner) pairs this place is not tested against; `la` the anchor `flow.plan` emits
+# for it, `(pt, ref, Y, dx, dy, anchor)` as spec 7.4 defines it, which is the whole of what the
+# script needs to draw the text where this rectangle stands.
+Candidate = collections.namedtuple("Candidate", "where rank rects start grow limit key exempt la")
 
 # What a plan has to say about one label, and who raised it: ON_LINE that the text lies on a line or
 # on another label, CROSSED that a line runs through a text standing over a horizontal second
@@ -206,7 +208,7 @@ def _at_card(node, paths):
     return out
 
 
-def _beside(Y, ly, lo, hi, bend, banded):
+def _beside(Y, pin, lo, hi, bend, banded):
     """The y of a text beside a vertical second segment, in row Y.
 
     Pinned to a row, and in the rows the middle of the segment can fall in, the text stands on the
@@ -216,7 +218,7 @@ def _beside(Y, ly, lo, hi, bend, banded):
     so it covers the row past that line and no more. `flow.band_obstacles` reads such a row the
     other way round: every line that crosses it counts, wherever it stops, and every line that runs
     along it is left out, wherever it runs. That is the one reading the two differ in."""
-    if ly is None and Y in bend and Y in (lo, hi):
+    if pin is None and Y in bend and Y in (lo, hi):
         return (bend[Y] + 1, INF) if Y == lo else (-INF, bend[Y] - 1)
     return (-INF, INF) if Y in banded else (-TEXT_HALF, TEXT_HALF)
 
@@ -251,12 +253,14 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
                           (_text(Y, mid - TEXT_HALF, mid + TEXT_HALF, start, grow, need, i),),
                           start, grow, abs(x2 - x1) - LABEL_BEND - LABEL_CLEAR,
                           ("h", Y, p[2][0], p[2][0] > p[1][0]),
-                          frozenset((Y, (i, k)) for k in range(len(p) - 1)), "R", None)]
+                          frozenset((Y, (i, k)) for k in range(len(p) - 1)),
+                          (2, "r", Y, -LABEL_BEND if rt else LABEL_BEND, -LABEL_OVER,
+                           "end" if rt else "start"))]
     if len(p) >= 3:
-        # beside the vertical second segment. Without `ly` template/js/flow.js centres the label on
-        # the segment, at a pixel row that depends on card heights: that place is kept when the side
-        # is clear in every row the middle can fall in. Otherwise the label is pinned to one row the
-        # segment passes, gutters included: the middle first, the rows of its ends last
+        # beside the vertical second segment. Anchored to the middle of the segment the script draws
+        # the text at a pixel row that depends on card heights: that place is kept when the side is
+        # clear in every row the middle can fall in. Otherwise the text is anchored to the base of
+        # one row the segment passes, gutters included: the middle first, the rows of its ends last
         X, Y1, Y2 = p[1][0], p[1][1], p[2][1]
         x = geo.x(X) + off[1][0]
         if len(p) == 3:
@@ -272,16 +276,19 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
             bend[Y2] = off[2][1]
         exempt = frozenset((Y, (i, 1)) for Y in range(lo, hi + 1))
         out, rank = [], 0
-        for ly, rows in [(None, middle)] + [(Y, [Y]) for Y in pinned]:
-            blo, bhi = (lo, hi) if ly is None else (ly, ly)
+        for pin, rows in [(None, middle)] + [(Y, [Y]) for Y in pinned]:
+            blo, bhi = (lo, hi) if pin is None else (pin, pin)
             for side in ("R", "L"):
                 if (side == "R" and X == 2 * geo.cols) or (side == "L" and X == 0):
                     continue  # outside the grid box the section clips the text
                 start = x + LABEL_BEND if side == "R" else x - LABEL_BEND
-                rects = tuple(_text(Y, *_beside(Y, ly, lo, hi, bend, banded), start, side, need, i)
+                rects = tuple(_text(Y, *_beside(Y, pin, lo, hi, bend, banded), start, side, need, i)
                               for Y in rows)
+                la = (1, "m" if pin is None else "r", 0 if pin is None else pin,
+                      LABEL_BEND if side == "R" else -LABEL_BEND, LABEL_DROP,
+                      "start" if side == "R" else "end")
                 out.append(Candidate(BESIDE, rank, rects, start, side,
-                                     card_w - 20, ("v", X, blo, bhi, side), exempt, side, ly))
+                                     card_w - 20, ("v", X, blo, bhi, side), exempt, la))
                 rank += 1
         return out
     if sa in ("L", "R"):
@@ -292,7 +299,9 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         return [Candidate(SIDEWAYS, 0,
                           (_text(Y, -INF, off[0][1] - 1, start, sa, need, i),),
                           start, sa, geo.gap + card_w - 20, (e["a"], sa),
-                          frozenset({(Y, (i, 0)), (Y, e["a"])}), "R", None)]
+                          frozenset({(Y, (i, 0)), (Y, e["a"])}),
+                          (0, "p", 0, LABEL_SIDE if sa == "R" else -LABEL_SIDE, -LABEL_LIFT,
+                           "start" if sa == "R" else "end"))]
     # straight down or up: the text stands in the gutter under or over the card, between the card
     # and the middle of the gutter, where lines run. Under a card shorter than its row it stands
     # higher, never lower, so when the row holds other cards it may stand in the row as well
@@ -308,7 +317,8 @@ def today(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
         rects.append(_text(R, -INF, INF, start, "R", need, i))
         exempt |= {(R, e["a"])} | {(R, owner) for owner in _at_card(p[0], paths)}
     return [Candidate(UP if up else DOWN, 0, tuple(rects), start, "R",
-                      card_w, (e["a"], sa), frozenset(exempt), "R", None)]
+                      card_w, (e["a"], sa), frozenset(exempt),
+                      (0, "p", 0, LABEL_BESIDE, -LABEL_ABOVE if up else LABEL_BELOW, "start"))]
 
 
 def uprights(paths):

@@ -20,8 +20,7 @@
    var p=document.createElementNS(NS,'path');p.setAttribute('d',d);if(e.d)p.setAttribute('class','d');g.appendChild(p);
    var last=pts[pts.length-1],prev=pts[pts.length-2],dirIn=last.x===prev.x?(last.y>prev.y?'B':'T'):(last.x>prev.x?'R':'L');
    mark(g,last,dirIn,'arrow',!!e.d);
-   /* label offsets (6, 3, row e.ly) are mirrored by the room check in diagrams/flow.py */
-   if(e.label){var t=document.createElementNS(NS,'text'),a0=pts[0],lx,ly,anc='start';
-    if(pts.length>=3){var p1=pts[1],p2=pts[2];if(p2.y===p1.y){var rt=p2.x>p1.x;lx=rt?p2.x-6:p2.x+6;ly=base(e.path[1][1])-9;anc=rt?'end':'start'}else{var my=(e.ly!=null?base(e.ly):(p1.y+p2.y)/2)+4;if(e.ls==='L'){lx=p1.x-6;ly=my;anc='end'}else{lx=p1.x+6;ly=my}}}else if(e.sa==='B'){lx=a0.x+5;ly=a0.y+14}else if(e.sa==='T'){lx=a0.x+5;ly=a0.y-6}else if(e.sa==='R'){lx=a0.x+3;ly=a0.y-5}else{lx=a0.x-3;ly=a0.y-5;anc='end'}
-    t.setAttribute('x',lx);t.setAttribute('y',ly);t.setAttribute('text-anchor',anc);t.textContent=e.label;g.appendChild(t)}
+   if(e.label){var t=document.createElementNS(NS,'text'),A=e.la,P=pts[A[0]],
+    yb=A[1]==='p'?P.y:A[1]==='m'?(pts[1].y+pts[2].y)/2:base(A[2]);
+    t.setAttribute('x',P.x+A[3]);t.setAttribute('y',yb+A[4]);t.setAttribute('text-anchor',A[5]);t.textContent=e.label;g.appendChild(t)}
    svg.appendChild(g)})};

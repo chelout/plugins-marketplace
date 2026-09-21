@@ -29,9 +29,9 @@ Test cases (written from the declaration of the change, before the implementatio
    band (CLAMP_IN inside the cards lines enter or leave sideways there), and two runs there with
    different offsets are drawn exactly their offset difference apart unless one sits at the band's
    limit. "one-pair-both-ways" holds two straight lines between one pair of cards (offsets -4, 4).
-9. "pinned-label-row", both modes: the label beside a vertical second segment is pinned (`ly`) to a
-   row of cards holding a step card, a shorter pill and a straight line between them; its baseline
-   stands LABEL_DROP below that row line's base as drawn, not below the row's middle.
+9. "pinned-label-row", both modes: the label beside a vertical second segment is anchored to the
+   base of a row of cards holding a step card, a shorter pill and a straight line between them; its
+   baseline stands LABEL_DROP below that row line's base as drawn, not below the row's middle.
 10. "planned-crossing", both modes: two straight lines cross in an empty cell, one crossing on the
     lattice, and the page draws exactly that one.
 11. "label-over-row-line", both modes: the label over a horizontal second segment that runs along a
@@ -94,6 +94,15 @@ Test cases (written from the declaration of the change, before the implementatio
     table computes for the same text. The table is an advance-width sum calibrated in a browser;
     this is the measurement of how far it stands from the browser that draws it, and the box is
     what the rectangle Python chooses for a label is held against.
+21. The examples and the models of ANCHOR_CASES, which between them take every form the anchor of
+    spec 7.4 has — the four straight exits, a horizontal second segment either way, a vertical one
+    on either side at its middle and anchored to the base of a row — in both modes: every label box
+    lies inside the rectangle diagrams/labels.py chose for it across, within BOX_TOL and the glyph
+    table's own width error at the far edge, and the text stands where the anchor says. Where the
+    anchor asks is recomputed from the line the page drew and from `la` alone — the x of the point
+    it hangs from, and the drawn y of that point, the middle of the second segment or `base(Y)` —
+    and the page's x, y and text-anchor are held to it. Down the page the rectangle is mostly
+    unbounded, because card heights are unknown in Python; the anchor is what answers for it there.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -107,15 +116,15 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from collections import Counter
+from collections import Counter, namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
 import support
 import render
-from diagrams import common, flow, router
-from diagrams.flow import LABEL_DROP, TRACK_LEAD
+from diagrams import common, flow, labels, router
+from diagrams.flow import LABEL_DROP, LABEL_OVER, TRACK_LEAD
 
 KINDS = ("flow", "swimlane", "state", "blocks")
 MODES = ("page", "widget")
@@ -130,9 +139,6 @@ AXIS_TOL = 0.5
 # pixels: template/js/flow.js clamps the y of a line on a row line this far inside a card's top and
 # bottom edges (clampY, and the row line's own clamp)
 CLAMP_IN = 10
-# pixels: template/js/flow.js stands the baseline of a label over a horizontal second segment this far
-# above the base of the lattice line that segment runs along
-LABEL_OVER = 9
 # share of the width diagrams/common.py computes for a label that the width the page draws it may
 # differ by: the glyph table is a sum of advance widths measured once in a browser, and the browser
 # that draws the page lays the same string out with its own fallbacks, kerning and rounding
@@ -140,6 +146,16 @@ LABEL_WIDTH_TOL = 0.15
 # the example the label boxes are measured on (docstring case 20): ten labels, nine of them one
 # short Cyrillic word and one carrying a circled footnote number out of a fallback font
 LABEL_BOX_EXAMPLE = "resolver-rules"
+# pixels: how far across the box the page draws may stand outside the rectangle diagrams/labels.py
+# chose for that label. The near edge of the rectangle is the anchor itself, so this is what
+# Python's model of the layout and the browser's own may differ by there.
+BOX_TOL = 2.0
+# share of the width diagrams/common.py computes for a label that its far edge may overshoot that
+# rectangle by, on top of BOX_TOL: the rectangle is as wide as the glyph table says and the browser
+# lays the same string out with its own kerning and rounding, so the whole of that error lands on
+# the far edge. The run prints the widest error it saw; over every label this test draws it stays
+# inside 2.5 %, and this leaves twice that.
+BOX_WIDTH_SLACK = 0.05
 BROWSER_TIMEOUT = 60  # seconds per page; a launch takes about 3 s
 
 # The reported case: `write -> both` leaves the step card `write` straight sideways into the
@@ -227,6 +243,53 @@ CASES = {
 }
 # Five or more lines along one row line (docstring case 7).
 SATURATED = ("two-point-side-miss", "two-point-order", "upper-limit-interior-run", "lower-limit-interior-run")
+
+# Docstring case 21. The forms of the anchor the examples and the cases above do not already take.
+# The models are `tests/test_label_lines.py`'s, whose comments there say what holds each of these
+# shapes: the ways round the grid that leave `d -> c` no step cheaper than the two straight up, the
+# card standing alone in its row, and the three lines along the gutter row that send `a -> d` out to
+# the right margin and back along it.
+ANCHOR_CASES = {
+    # d -> c is the straight exit up; a? -> d and c -> b the two straight sideways ones; d -> b a
+    # label over a horizontal second segment drawn leftwards, a? -> c and b -> d two drawn rightwards
+    "anchor-exits": {"kind": "flow", "grid": ["c b", "d a?", "e ."],
+                     "nodes": [{"id": i, "title": i.upper()} for i in ("c", "b", "d", "a?", "e")],
+                     "edges": ["a? -> d : да", "a? -> c : да", "b -> d : да", "c -> b : да",
+                               "d -> b : да", "d -> c : да", "c -> e", "e -> b"]},
+    # a? -> b is the straight exit down, a? -> q a label at the middle of a vertical second segment
+    # on its right: a? stands alone in its row, so the side stays clear in every row the middle of
+    # the segment can fall in and the label is never anchored to a row of its own
+    "anchor-beside-middle": {"kind": "flow", "grid": ["q . . .", "a? . . .", "b . . ."],
+                             "nodes": [{"id": i, "title": i.upper()} for i in ("q", "a?", "b")],
+                             "edges": ["a? -> b : ручная сверка данных", "a? -> q : нет"]},
+    # a -> d is anchored to the base of the gutter row under the cards, on the left of its second
+    # segment; three lines run along that row, so the page shows where its base is
+    "anchor-pinned-left": {"kind": "flow", "grid": [". . d e", ". b c a"],
+                           "nodes": [{"id": "d", "title": "D"}, {"id": "e", "kind": "terminal", "title": "E"},
+                                     {"id": "b", "title": "B"}, {"id": "c", "title": "C"},
+                                     {"id": "a", "title": "A"}],
+                           "edges": ["a -> c : да", "a -> d : да", "d -> a", "e -> c : да", "b -> c",
+                                     "d -> b"]},
+}
+# The one form left: the middle of a vertical second segment on its left. a -> d goes out to the
+# right margin and down it, where the right side lies outside the grid box and is never offered, and
+# the cells to the left of it in both rows of cards are empty, so the middle place on the left has
+# the room and the label is never anchored to a row. The route is put in by hand, as the margin
+# models' are: the router would step straight down between the columns instead. Every column of the
+# grid holds a card, since a column that holds none is laid out one way by the page's own grid and
+# another by tracks(), which invents a track for it — the plan warns about such a column.
+ANCHOR_HAND = {"anchor-beside-left": (
+    {"kind": "flow", "grid": ["a b .", "c d .", ". . e"], "edges": ["a -> d : да", "d -> e"],
+     "nodes": [{"id": i, "title": i.upper()} for i in ("a", "b", "c", "d", "e")]},
+    [[(1, 1), (6, 1), (6, 3), (3, 3)], [(3, 3), (3, 4), (5, 4), (5, 5)]])}
+
+# Every form of anchor, named as `anchor_form` names it; docstring case 21 asks for all ten.
+ANCHOR_FORMS = frozenset({"exit down", "exit up", "exit sideways right", "exit sideways left",
+                          "over a second segment, leftwards", "over a second segment, rightwards",
+                          "beside a second segment, right at its middle",
+                          "beside a second segment, left at its middle",
+                          "beside a second segment, right on a row",
+                          "beside a second segment, left on a row"})
 
 # Docstring case 14. Two cards per row and two rows, so the outer lattice lines are Y = 0 and
 # Y = 4, with the paths put in by hand: `route` prices a margin above every inner gutter, so no
@@ -385,8 +448,9 @@ GATE_SEVEN = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .
 
 # Written after the page has drawn (draw() runs at load, on fonts ready and at 300 ms): `lines`, the
 # `d` of the line of every edge group in the svg, in drawing order, which is the order of the edges
-# the renderer handed to the page; `texts`, in the same order, the [x, y] of the group's label text
-# or null; `labels`, in the same order again, getBBox() of that text as [x, y, width, height] or
+# the renderer handed to the page; `texts`, in the same order, the [x, y, text-anchor] of the
+# group's label text or null — the three attributes the anchor of spec 7.4 sets, and the first two
+# are the point it names; `labels`, in the same order again, getBBox() of that text as [x, y, width, height] or
 # null — the frame is the svg's own, which draw() of template/js/draw.js gives the grid box's size,
 # so a box is px from the grid box's top-left corner, as `texts` and `lines` are;
 # `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
@@ -400,7 +464,7 @@ PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],labels:[],cards
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
          "t=g.querySelector('text'),k=t?t.getBBox():null;"
          "o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
-         "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y')]:null);"
+         "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y'),t.getAttribute('text-anchor')]:null);"
          "o.labels.push(k?[k.x,k.y,k.width,k.height]:null)});"
          "if(s){var m=s.getScreenCTM().inverse(),q=s.createSVGPoint();"
          "var u=function(x,y){q.x=x;q.y=y;var w=q.matrixTransform(m);return[w.x,w.y]};"
@@ -481,7 +545,7 @@ def render_page(model, mode, path, paths=None):
 
 def run_chrome(chrome, page):
     """The probe output of `page` after it has drawn, as {"lines": [(data-e, d), ...], "texts":
-    [[x, y] or None, ...], "labels": [[x, y, width, height] or None, ...], "cards":
+    [[x, y, text-anchor] or None, ...], "labels": [[x, y, width, height] or None, ...], "cards":
     {id: [left, top, right, bottom]}}. No --user-data-dir:
     on macOS a fresh profile directory keeps headless Chrome from exiting after --dump-dom."""
     cmd = [chrome, "--headless=new", "--disable-gpu", "--window-size=1300,1200",
@@ -633,14 +697,17 @@ def row_spacing_misses(layout, names, lines, cards):
 
 
 def pinned_label_misses(layout, names, lines, texts, cards):
-    """(misses, checked): labels pinned to a lattice row of cards (`ly` odd) whose baseline does not
-    stand LABEL_DROP below that row line's base as drawn: the y, less its offset, of a horizontal
-    run on that row line away from the band's limits."""
+    """(misses, checked): labels anchored to the base of a lattice row of cards — `la` hanging from
+    point 1 with the `r` reference on an odd row — whose baseline does not stand LABEL_DROP below
+    that row line's base as drawn: the y, less its offset, of a horizontal run on that row line away
+    from the band's limits."""
     bands, rows = row_bands(layout, cards), row_runs(layout, lines)
     misses, checked = [], 0
     for i, e in enumerate(layout["edges"]):
-        Y = e.get("ly")
-        if Y is None or Y % 2 == 0 or not e["label"]:
+        if not e["label"]:
+            continue
+        pt, ref, Y = e["la"][:3]
+        if pt != 1 or ref != "r" or Y % 2 == 0:
             continue
         if texts[i] is None:
             raise HarnessError(f"{names[i]} has a label pinned to row line {Y} and no text in the page")
@@ -695,6 +762,109 @@ def label_boxes(layout, names, texts, boxes):
                                f"{'text' if texts[i] is None else 'box'} for it")
         out.append((names[i], e["label"], texts[i], boxes[i], common.label_width(e["label"])))
     return out
+
+
+# One label of one page against the place Python chose for it (docstring case 21): `form` the form
+# of its anchor, `rect` the (x0, x1) of the rectangle diagrams/labels.py measured its text in,
+# `box` the (x0, x1) the page drew it in, `width` what the glyph table gives the text, `want` the
+# (x, y) the anchor asks for read off the drawn line or None where the page shows no base for the
+# row it takes, and `drawn` the [x, y, text-anchor] the page used.
+LabelPlace = namedtuple("LabelPlace", "mode name text form anchor rect box width want drawn")
+
+
+def chosen_rects(layout, mode):
+    """{edge index: the place diagrams/labels.py chose for that label}: `flow.plan`'s own placement
+    replayed over the layout it returned — the geometry it built, the offsets it wrote into the edge
+    JSON, the cells of the grid and the ones cards stand on. A place carries both the rectangle its
+    text was measured in and the anchor the edge was given."""
+    geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
+                        *flow.margin_room(layout["kind"], mode, layout["footnotes"]),
+                        empty=layout["empty_rows"])
+    offsets = [[(pt[2], pt[3]) for pt in e["path"]] for e in layout["edges"]]
+    occupied = {rc for nid, rc in layout["cells"].items() if nid in layout["nodes"]}
+    choices = labels.place(layout["edges"], [e["label"] for e in layout["edges"]], layout["paths"],
+                           offsets, geo, layout["cells"], occupied, layout["card_w"])
+    return {choice.edge: choice.cand for choice in choices}
+
+
+def row_bases(layout, lines, cards):
+    """{lattice row line: the pixel y of base(Y) as the page drew it}: the y of a horizontal run
+    matched to that row line, less the router offset it was drawn with. A run clamped into the band
+    of a row of cards is drawn off its own base by an amount that depends on card heights, and is
+    left out, as the row-spacing checks leave it out."""
+    bands, out = row_bands(layout, cards), {}
+    for i, e in enumerate(layout["edges"]):
+        path = e["path"]
+        if len(path) != len(lines[i]) + 1:
+            continue  # the page merged points of this line; its runs cannot be matched to the lattice
+        for k, (a, b) in enumerate(zip(path, path[1:])):
+            if a[1] != b[1] or lines[i][k][0] != "h":
+                continue
+            y = lines[i][k][1]
+            if not (a[1] % 2 == 1 and at_limit(y, bands.get(a[1]))):
+                out.setdefault(a[1], y - a[3])
+    return out
+
+
+def anchor_point(la, pts, bases):
+    """The (x, y) the anchor `la` of spec 7.4 asks for, from the line the page drew and from `la`
+    alone: the x of the point it hangs from plus `dx`, and `dy` below the drawn y of that point,
+    the middle of the second segment, or base(Y). None where the page shows no base for that row."""
+    pt, ref, Y, dx, dy, _ = la
+    if ref == "p":
+        y = pts[pt][1]
+    elif ref == "m":
+        y = (pts[1][1] + pts[2][1]) / 2
+    elif Y in bases:
+        y = bases[Y]
+    else:
+        return None
+    return pts[pt][0] + dx, y + dy
+
+
+def anchor_form(la, sa):
+    """Which of the ten forms the anchor takes, as docstring case 21 enumerates them. The point it
+    hangs from tells the shape of the route apart: 0 is a straight exit, whose side is the side the
+    line leaves by, 2 a horizontal second segment and 1 a vertical one."""
+    pt, ref, _, dx, _, _ = la
+    if pt == 0:
+        return "exit " + {"B": "down", "T": "up", "R": "sideways right", "L": "sideways left"}[sa]
+    if pt == 2:
+        return "over a second segment, " + ("rightwards" if dx > 0 else "leftwards")
+    return ("beside a second segment, " + ("right " if dx > 0 else "left ")
+            + ("at its middle" if ref == "m" else "on a row"))
+
+
+def label_places(mode, layout, names, texts, boxes, polys, lines, cards):
+    """One LabelPlace per labelled edge of one page. A labelled edge the page drew no text or no box
+    for is a harness error, and so is a place whose anchor is not the one the edge carries: the
+    replay above has to be the placement `flow.plan` itself made."""
+    rects, bases, out = chosen_rects(layout, mode), row_bases(layout, lines, cards), []
+    for i, e in enumerate(layout["edges"]):
+        if not e["label"]:
+            continue
+        if texts[i] is None or boxes[i] is None:
+            raise HarnessError(f"{names[i]} carries the label {e['label']!r} and the page drew no "
+                               f"{'text' if texts[i] is None else 'box'} for it")
+        cand = rects[i]
+        if cand.la != e["la"]:
+            raise HarnessError(f"{names[i]}: the replayed place answers {cand.la}, the edge carries "
+                               f"{e['la']}")
+        rect = cand.rects[0]  # the rectangle is the same across in every row its place can fall in
+        want = anchor_point(e["la"], polys[i], bases) if len(polys[i]) == len(e["path"]) else None
+        out.append(LabelPlace(mode, names[i], e["label"], anchor_form(e["la"], e["sa"]), e["la"][5],
+                              (rect.x0, rect.x1), (boxes[i][0], boxes[i][0] + boxes[i][2]),
+                              common.label_width(e["label"]), want, texts[i]))
+    return out
+
+
+def outside_rect(place):
+    """Whether the box the page drew lies outside the rectangle Python chose, across. The near edge
+    is the anchor itself and keeps BOX_TOL; the far one is that anchor plus the width the glyph
+    table gives the text, and keeps the table's own error as well."""
+    wide = BOX_TOL + BOX_WIDTH_SLACK * place.width
+    low, high = ((BOX_TOL, wide) if place.anchor == "start" else (wide, BOX_TOL))
+    return place.box[0] < place.rect[0] - low or place.box[1] > place.rect[1] + high
 
 
 def runs_on_row_lines(layout, lines, wanted):
@@ -888,10 +1058,12 @@ class BrowserLines(unittest.TestCase):
         cls.addClassCleanup(tmp.cleanup)
         root = Path(tmp.name)
         cls.examples = flow_like_examples()
-        cls.models = [(REPORTED_NAME, REPORTED)] + list(CASES.items()) + list(TRAILING.items()) + cls.examples
+        cls.models = ([(REPORTED_NAME, REPORTED)] + list(CASES.items()) + list(ANCHOR_CASES.items())
+                      + list(TRAILING.items()) + cls.examples)
         # the margin and capacity models are routed by hand, so they stand beside the models the
         # router routed; the capacity one is a page's, and its groups are over a widget's capacity
         drawn = [(name, model, None, MODES) for name, model in cls.models]
+        drawn += [(name, model, paths, MODES) for name, (model, paths) in ANCHOR_HAND.items()]
         drawn += [(name, model, paths, MODES) for name, (model, paths) in MARGINS.items()]
         drawn += [(name, model, paths, MODES) for name, (model, paths) in EMPTY_BANDS.items()]
         drawn += [(name, model, paths, ("page",)) for name, (model, paths) in CAPACITY.items()]
@@ -1086,6 +1258,56 @@ class BrowserLines(unittest.TestCase):
                if abs(box[2] - want) > LABEL_WIDTH_TOL * want]
         self.assertEqual(off, [], f"a label is drawn more than {LABEL_WIDTH_TOL:.0%} from the width the "
                                   f"glyph table computes:\n" + shown)
+
+    # The pages that take the forms of anchor the examples do not, or take them again where the
+    # page shows the base of the row an anchor asks for (docstring case 21).
+    LABEL_PLACE_CASES = (tuple(ANCHOR_CASES) + tuple(ANCHOR_HAND)
+                         + ("pinned-label-row", "label-over-row-line"))
+
+    def measure_label_places(self, name):
+        """The LabelPlace records of one page, in both modes."""
+        out = []
+        for mode in MODES:
+            layout, names, lines = self.measured(name, mode)
+            got = self.results[name, mode]
+            polys = [polyline(d or "") for _, d in got["lines"]]
+            try:
+                out += label_places(mode, layout, names, got["texts"], got["labels"], polys, lines,
+                                    got["cards"])
+            except HarnessError as exc:
+                self.fail(f"harness: {name} {mode}: {exc}")
+        return out
+
+    def test_every_label_stands_in_the_place_python_chose(self):
+        """Docstring case 21, criterion E5: the page draws every label inside the rectangle
+        diagrams/labels.py measured its text in, across, and at the point the anchor of spec 7.4
+        names. The anchor is recomputed from the drawn line alone, so what is held is the contract
+        between the two sides and not a second copy of the placement rule."""
+        measured = []
+        for name in self.LABEL_PLACE_CASES + tuple(name for name, _ in self.examples):
+            measured += self.measure_label_places(name)
+        shown = "\n".join(
+            f"  {p.mode:6} {p.name:24} {p.text!r:14} {p.form:44} rect {p.rect[0]:7.2f}..{p.rect[1]:7.2f}, "
+            f"box {p.box[0]:7.2f}..{p.box[1]:7.2f}, anchor {p.drawn[2]:5} at "
+            f"({p.drawn[0]:7.2f}, {p.drawn[1]:7.2f}), asked for "
+            + ("none" if p.want is None else f"({p.want[0]:7.2f}, {p.want[1]:7.2f})")
+            for p in measured)
+        widest = max(abs(p.box[1] - p.box[0] - p.width) / p.width for p in measured)
+        print(f"\nlabel places measured: {len(measured)}; the page draws a label at most "
+              f"{100 * widest:.2f} % from the width the glyph table computes")
+        outside = [f"{p.mode} {p.name} {p.text!r}" for p in measured if outside_rect(p)]
+        self.assertEqual(outside, [], f"a label is drawn outside the rectangle Python chose for it, by more "
+                                      f"than {BOX_TOL} px and {BOX_WIDTH_SLACK:.0%} of its width:\n" + shown)
+        adrift = [f"{p.mode} {p.name} {p.text!r}" for p in measured if p.want is not None
+                  and (abs(p.drawn[0] - p.want[0]) > AXIS_TOL or abs(p.drawn[1] - p.want[1]) > AXIS_TOL
+                       or p.drawn[2] != p.anchor)]
+        self.assertEqual(adrift, [], "a label does not stand where its own anchor says:\n" + shown)
+        # the case exists only while every form of anchor is drawn somewhere and its point, which
+        # needs the base of the row it takes, can be recomputed from the page for at least one of them
+        forms = {p.form for p in measured}
+        self.assertEqual(forms, ANCHOR_FORMS, f"harness: never drawn: {sorted(ANCHOR_FORMS - forms)}")
+        held = {p.form for p in measured if p.want is not None}
+        self.assertEqual(held, ANCHOR_FORMS, f"harness: drawn but never recomputed: {sorted(ANCHOR_FORMS - held)}")
 
     def test_planned_crossing(self):
         for mode in MODES:

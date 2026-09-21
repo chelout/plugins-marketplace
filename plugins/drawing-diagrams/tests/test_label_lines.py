@@ -1,4 +1,3 @@
-import re
 import unittest
 
 import support
@@ -456,8 +455,8 @@ class UnderShortCard(ExitLabelCase):
 
 
 class BesideSecondSegment(unittest.TestCase):
-    """A label beside a vertical second segment, pinned to a row of cards: template/js/flow.js stands
-    the middle of the text on the row's base, LABEL_BEND off the line."""
+    """A label beside a vertical second segment, pinned to a row of cards: the anchor stands the
+    middle of the text on the row's base, LABEL_BEND off the line."""
 
     def along_the_row(self, layout, edge, Y, side):
         """The other lines along lattice row Y whose px span meets the text of `edge`'s label
@@ -511,7 +510,7 @@ class BesideSecondSegment(unittest.TestCase):
                                  f"the lines along row 3 no longer take a slot each {pitch} px apart")
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("d", "b"))
                 self.assertEqual((own["sa"], own["path"][0][1], own["path"][1][1] != own["path"][2][1]), ("R", 3, True))
-                self.assertEqual((own["ly"], own["ls"]), (2, "R"))
+                self.assertEqual(own["la"], (1, "r", 2, flow.LABEL_BEND, flow.LABEL_DROP, "start"))
                 self.assertEqual(self.along_the_row(layout, ("d", "b"), 3, "R"), [(("c", "d"), pitch)])
                 self.assertGreaterEqual(pitch, flow.LINE_REACH)
                 found = [w for w in warnings if w.startswith("связь d -> b:")]
@@ -547,32 +546,13 @@ class BesideSecondSegment(unittest.TestCase):
                 self.assertEqual(on_row, [-pitch, 0.0, pitch],
                                  f"gutter row 2 has room {room}: the lines along it no longer lie {pitch} px apart")
                 own = next(e for e in layout["edges"] if (e["a"], e["b"]) == ("a", "d"))
-                self.assertEqual((own["sa"], own["ly"], own["ls"]), ("R", 2, "L"))
+                self.assertEqual((own["sa"], own["la"]),
+                                 ("R", (1, "r", 2, -flow.LABEL_BEND, flow.LABEL_DROP, "end")))
                 self.assertEqual(self.along_the_row(layout, ("a", "d"), 2, "L"), [(("a", "d"), -pitch)])
                 self.assertGreaterEqual(pitch, flow.LINE_REACH)
                 self.assertEqual([e for e in layout["edges"]
                                   if e["path"][0][1] == e["path"][1][1] == 2 or e["path"][-1][1] == e["path"][-2][1] == 2], [])
                 self.assertEqual([w for w in warnings if w.startswith("связь a -> d:")], [], warnings)
-
-
-class ScriptOffsets(unittest.TestCase):
-    SCRIPT = (support.SKILL / "template" / "js" / "flow.js").read_text(encoding="utf-8")
-
-    def test_the_check_mirrors_where_the_script_puts_labels(self):
-        # each pattern captures one offset of the label code in template/js/flow.js, and names the
-        # constant diagrams/flow.py measures it with
-        for pattern, name in ((r"lx=rt\?p2\.x-(\d+):", "LABEL_BEND"),
-                              (r"\{lx=p1\.x\+(\d+);ly=my\}", "LABEL_BEND"),
-                              (r"\(p1\.y\+p2\.y\)/2\)\+(\d+);", "LABEL_DROP"),
-                              (r"e\.sa==='B'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
-                              (r"e\.sa==='B'\)\{lx=a0\.x\+\d+;ly=a0\.y\+(\d+)\}", "LABEL_BELOW"),
-                              (r"e\.sa==='T'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
-                              (r"e\.sa==='T'\)\{lx=a0\.x\+\d+;ly=a0\.y-(\d+)\}", "LABEL_ABOVE"),
-                              (r"e\.sa==='R'\)\{lx=a0\.x\+(\d+);", "LABEL_SIDE")):
-            with self.subTest(constant=name, pattern=pattern):
-                found = re.findall(pattern, self.SCRIPT)
-                self.assertEqual(len(found), 1, f"{pattern!r} in template/js/flow.js")
-                self.assertEqual(int(found[0]), getattr(flow, name, None))
 
 
 if __name__ == "__main__":
