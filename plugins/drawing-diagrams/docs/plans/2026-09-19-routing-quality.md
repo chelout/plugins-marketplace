@@ -584,6 +584,22 @@ Amended 2026-09-21, before the stage, for what stages A to D built and what the 
   plain and with `--advice` again: every verifying plan of the advice now places its labels by the
   search.
 
+Amended 2026-09-21, after task 19 and the controller's reading of it against the browser (spec §7.1
+and §7.2 as amended).
+
+- Task 20 commit 1, the switch, carries the model's readings: the fit verdicts and the places of
+  today but for the rows a vertical second segment ends in (the five seeded instances
+  `tests/test_labels.py` names; the examples and the label cases do not move, so the golden
+  comparison holds), and the check of a label over a horizontal second segment by the text's own
+  rectangle. That check changes which models warn — fewer, and the right ones — so the perimeter of
+  commit 1 takes `tests/test_advice.py` and `tests/test_render_cli.py` as commit 2's does, and a
+  case of `tests/test_label_lines.py` that asserts a warning of the old check is restated with the
+  line it now names, never dropped.
+- Task 20 commit 2 also anchors every place over or under a horizontal second segment to the
+  segment as drawn. Tests: a labelled segment drawn 12 px above the base of its row keeps its label
+  over it; over the seeded corpus no label's own line runs through its rectangle. The browser
+  proves it at task 21's test, which by then reads every anchor form.
+
 ### Task 18: The browser probe records label boxes
 
 Spec: §7.4, criterion E1.

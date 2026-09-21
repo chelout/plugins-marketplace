@@ -493,6 +493,25 @@ same `base()`, and the lattice the model covers ends with the last occupied row,
 `BOUND` is what today's code keeps a text inside: the left edge and `Geometry.total` across, and
 the side of a line in an outermost lattice column that faces out of the grid box.
 
+Amended 2026-09-21, with the model built (task 19) and read against the browser. Three readings
+the sentences above left open are settled as the model has them.
+
+- The clamp tolerance sits on the text, not on the line. The script clamps the lines of a banded
+  row and a text drawn from a point of that row together, so only their order survives: a text on
+  the base of a banded row covers the whole row, and a text above its own line at a sideways exit
+  covers everything above that line's top edge. Both answer as today's code does.
+- In a row a vertical second segment ends in, the text at the middle of the segment lies past the
+  bend drawn there, half a lattice row away, and covers the row past that line and no more. Today's
+  code reads such a row the other way round — every line that crosses it counts wherever it stops,
+  no line along it counts wherever it runs. This is the one class in which the fit verdicts of the
+  two differ: 5 of 100 seeded instances move a label, the examples and the label cases none. The
+  model's reading is the stage's.
+- The check of a label over a horizontal second segment tests the text's own rectangle. Today's
+  tests the whole segment, and the browser says what that is worth: over the 171 such labels of
+  the seeded corpus it warns of 133 lines of which 7 run through the drawn text, and misses 35 of
+  the 42 that do; the rectangle warns of 36, of which 32 do. Over all 442 labels today's code
+  raises 58 false alarms and misses 20 struck labels; the model 11 and 10.
+
 ### 7.2 Candidates
 
 All of today's places stay candidates, in today's order of preference, and new ones are added:
@@ -506,6 +525,13 @@ All of today's places stay candidates, in today's order of preference, and new o
 
 "Just after the bend": the text starts `LABEL_BEND` px past the bend and grows away from the source.
 It moves the label of every horizontal second segment, short or long (Q4).
+
+Amended 2026-09-21: "above" and "below" a horizontal second segment are read from the segment as it
+is drawn, not from the base of its row. Today's script hangs the text 9 px over `base(Y)` whatever
+the segment's own offset, so a segment drawn 9 px or more above the base runs through its own
+label: 8 of the 171 such labels of the seeded corpus, read off the browser, and 15 more have the
+line on their baseline. With the new places of this table every place over or under a horizontal second segment
+is anchored to the drawn `y` of the segment (`ref` `"p"`, §7.4), today's far end among them.
 
 ### 7.3 Choice
 
