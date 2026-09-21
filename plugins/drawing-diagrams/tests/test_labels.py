@@ -111,7 +111,7 @@ LABEL_CASES = {
 }
 SEEDED_PLACES = {'рядом со вторым отрезком': 161, 'над вторым отрезком': 151, 'у выхода вбок': 62,
                  'у выхода вниз': 34, 'под вторым отрезком': 20, 'у выхода вверх': 14}
-SEEDED_SAID = {LIES: 53, NO_FIT: 24, CROSSES: 9}
+SEEDED_SAID = {LIES: 51, NO_FIT: 24, CROSSES: 10}
 
 # The five seeded instances the end-row reading moves, and what each moves: the label, where it
 # stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
@@ -496,8 +496,10 @@ BRANCH = cases.exit_model(["a b c", "d e f", "g h i"],
 # The seeded instances where one line edge is met in several rows of one place, with the edge whose
 # label meets it and how many rows of that place it is met in: a label beside a vertical second
 # segment, and a label under a card shorter than its row, which stands in the gutter and reaches
-# into the row as well.
-MET_IN_ROWS = {"seeded #15": ("n12 -> n08", 2), "seeded #38": ("n09 -> n12", 2)}
+# into the row as well. The first of the two used to be seeded #15's n12 -> n08, which meets no line
+# any more: the line it met was one ending at a bend drawn 12 px off the base of a gutter row, and
+# a run read where its bend is drawn (spec 7.1 as amended) never reaches that text.
+MET_IN_ROWS = {"seeded #64": ("n08 -> n00", 2), "seeded #38": ("n09 -> n12", 2)}
 
 # The model of a label that has to give way to one already placed: `e -> d` leaves sideways along
 # the bottom row and its text stands there, and `d -> c`, which comes later, would take the middle
@@ -1170,6 +1172,133 @@ class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
         self.assertGreater(both, 0, "harness: the two checks never agree at all")
         self.assertGreater(only_before, 0, "harness: the old check never reaches past the text")
         self.assertGreater(only_now, 0, "harness: no line ever stops on a text the old check missed")
+
+
+# The two seeded instances that show what an end read down to the base of its row costs, as (the
+# instance, the label read, the line whose run ends off the base, the lattice column that run
+# stands in, the row it ends in, the px its bend is drawn off the base of that row). Each is one
+# half of the amendment's claim:
+#
+# INVENTED — the turn of n08 -> n01 is drawn 12 px above the base of gutter row 4 and the left place
+# of n12 -> n08's text stands on that base, so a turn read down to the base covers a text the line
+# never reaches: the search took the right place, which lies on another line, and the plan warned.
+# HIDDEN — n05 -> n14 turns down out of gutter row 8 four px above its base, at the x of the text of
+# n10 -> n05, which stands over its own second segment above that base: a turn read down to the base
+# stops under the text and the plan says nothing about a line drawn through it.
+RUN_END_INVENTED = ("seeded #15", "n12 -> n08", "n08 -> n01", 9, 4, -12.0)
+RUN_END_HIDDEN = ("seeded #87", "n10 -> n05", "n05 -> n14", 3, 8, -4.0)
+
+
+class TheEndOfAVerticalRun(unittest.TestCase):
+    """Spec 7.1, amended on 2026-09-21 after the second round of the branch gate: a vertical run
+    that ends at a bend ends where that bend is drawn — the offset of that point, the line's own
+    half-width kept — and not at the base of the row it ends in. Half of that row stays where
+    nothing on this side says where the end is drawn: a row clamped into the band of its cards,
+    whose every line is drawn off its own offset by an amount that depends on card heights, and a
+    run that ends on a card, whose height is unknown here as well."""
+
+    def named(self, case):
+        """(the layout, the mode, what the plan said, the label's edge index, the other line's edge
+        index, the px x its run is drawn at) of one of the two cases above, and its premise
+        asserted: that run stands in the lattice column the case names and ends in the row it
+        names, at a bend drawn the px off the base of that row that it names."""
+        name, mine, other, X, Y, oy = case
+        layout, mode, said = next((lay, m, w) for n, m, lay, w in planned(seeded()) if n == name)
+        where = {f"{e['a']} -> {e['b']}": i for i, e in enumerate(layout["edges"])}
+        i, j = where[mine], where[other]
+        p, off = layout["paths"][j], [(pt[2], pt[3]) for pt in layout["edges"][j]["path"]]
+        at = [k for k in range(len(p) - 1)
+              if p[k][0] == p[k + 1][0] == X and Y in (p[k][1], p[k + 1][1])]
+        self.assertEqual(len(at), 1, f"premise: {other} of {name} no longer has one run in column "
+                                     f"{X} ending in row {Y}: {p}")
+        k = at[0]
+        self.assertEqual(off[k if p[k][1] == Y else k + 1][1], oy,
+                         f"premise: the bend {other} of {name} turns at in row {Y} is no longer "
+                         f"drawn {oy} px off the base of it: {off}")
+        return layout, mode, said, i, j, inputs(layout, mode)[0].x(X) + off[k][0]
+
+    def ends(self, layout, mode):
+        """([(what the model reads an end of a vertical run as, what the amendment asks for, the
+        end)], the tally of the three kinds of end) over one plan."""
+        geo, paths, offsets, cells, occupied = inputs(layout, mode)
+        banded = labels.banded_rows(paths)
+        rects = {(r.owner, r.Y): r for r in labels.occupancy(cells, paths, offsets, geo, occupied)
+                 if r.kind == labels.LINE}
+        read, kinds = [], {"at a bend": 0, "off the base": 0, "half the row": 0}
+        for j, (q, off) in enumerate(zip(paths, offsets)):
+            for k in range(len(q) - 1):
+                if q[k][0] != q[k + 1][0]:
+                    continue
+                lo = min(q[k][1], q[k + 1][1])
+                for at in (k, k + 1):
+                    Y, oy = q[at][1], off[at][1]
+                    # the two the amendment leaves at the base: the clamp of a banded row, and an
+                    # end on a card, which is an end of the path itself
+                    known = Y not in banded and 0 < at < len(q) - 1
+                    kinds["at a bend" if known else "half the row"] += 1
+                    kinds["off the base"] += int(known and oy != 0)
+                    rect = rects[(j, k), Y]
+                    want = (oy - 1 if Y == lo else oy + 1) if known else 0.0
+                    read.append((rect.y0 if Y == lo else rect.y1, want, (j, k, Y)))
+        return read, kinds
+
+    def test_every_end_of_the_corpus_is_read_where_its_bend_is_drawn(self):
+        """End by end over the whole corpus: the offset of the bend where the run turns in a plain
+        row, and the half row it comes from where the row is banded or the run ends on a card."""
+        wrong, tally = [], {"at a bend": 0, "off the base": 0, "half the row": 0}
+        for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
+            read, kinds = self.ends(layout, mode)
+            wrong += [f"{name} run {end}: {got} for {want}" for got, want, end in read
+                      if got != want]
+            for kind, count in kinds.items():
+                tally[kind] += count
+        self.assertEqual(wrong[:10], [], f"{len(wrong)} ends are read elsewhere; the first of them")
+        # the case exists only while the corpus holds ends of both kinds, and while the ends at a
+        # bend are drawn off the base often enough for the two readings to differ at all
+        self.assertGreater(tally["off the base"], 100,
+                           f"harness: too few ends are drawn off the base: {tally}")
+        self.assertGreater(tally["half the row"], 100,
+                           f"harness: too few ends keep the half row: {tally}")
+
+    def test_an_end_off_the_base_no_longer_covers_a_place_it_never_reaches(self):
+        """The half of the amendment about a conflict invented: read down to the base, the turn of
+        n08 -> n01 covers the left place of n12 -> n08's text, which stands on that base 12 px under
+        it, and the search takes the right place — which lies on another line and is warned about.
+        Read where it is drawn, that place is clear and the label takes it."""
+        layout, mode, said, i, _, turn = self.named(RUN_END_INVENTED)
+        mine, Y = RUN_END_INVENTED[1], RUN_END_INVENTED[4]
+        _, cands, _, _, runs, _ = candidates(layout, mode)
+        left = next(c for c in cands[i] if c.la[1] == "m" and c.grow == "L")
+        text = next(r for r in left.rects if r.Y == Y)
+        self.assertEqual((text.y0, text.y1), (-labels.TEXT_HALF, labels.TEXT_HALF),
+                         f"premise: that place no longer stands on the base of row {Y}")
+        self.assertTrue(text.x0 < turn < text.x1,
+                        f"premise: the turn at {turn} is no longer drawn at the x of the text "
+                        f"{text.x0}..{text.x1}")
+        self.assertEqual(sorted(labels.hits(left, runs)), [])
+        choice = next(c for c in chosen(layout, mode) if c.edge == i)
+        self.assertEqual(place(dict(layout["edges"][i], la=choice.cand.la)), "L")
+        self.assertEqual(choice.clashes, ())
+        self.assertEqual([w for w in said if w.startswith(f"связь {mine}:")], [], said)
+
+    def test_an_end_off_the_base_no_longer_hides_a_line_through_a_text(self):
+        """The other half, a conflict hidden: n05 -> n14 turns down out of gutter row 8 four px
+        above its base, through the text of n10 -> n05, which stands over its own second segment
+        above that base. Read down to the base the turn stops under the text and the plan says
+        nothing; read where it is drawn the line crosses the text and the plan says so."""
+        layout, mode, said, i, j, turn = self.named(RUN_END_HIDDEN)
+        mine, other, Y = RUN_END_HIDDEN[1], RUN_END_HIDDEN[2], RUN_END_HIDDEN[4]
+        choice = next(c for c in chosen(layout, mode) if c.edge == i)
+        text = next(r for r in choice.cand.rects if r.Y == Y)
+        self.assertEqual(choice.cand.where, labels.OVER,
+                         "premise: that label no longer stands over its own second segment")
+        self.assertLess(text.y1, 0, f"premise: its text no longer stands above the base of row {Y}")
+        self.assertTrue(text.x0 < turn < text.x1,
+                        f"premise: the turn at {turn} is no longer drawn at the x of the text "
+                        f"{text.x0}..{text.x1}")
+        self.assertIn(labels.Clash(labels.CROSSED, j), choice.clashes)
+        self.assertIn(f"связь {mine}: подпись {layout['edges'][i]['label']!r} пересечёт линию "
+                      f"{other}; переставьте узлы или уберите подпись в сноску", said)
 
 
 class TheCardALabelHangsFromIsExempt(unittest.TestCase):

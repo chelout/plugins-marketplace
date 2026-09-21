@@ -4,9 +4,10 @@ Every drawn object is one or more rectangles `(Y, y0, y1, x0, x1, kind, owner)`:
 `y` in px from the base of that row as `base()` of template/js/flow.js computes it, `x` in px across
 from the grid box as `Geometry` computes it. Card heights are unknown in Python, so the model keeps
 that uncertainty instead of guessing: a card is the whole of its row, a vertical run is the whole of
-every row it passes and half of the rows it ends in, and a text whose place depends on a height
-covers every row it can fall in. One predicate — `overlaps` — tests two rectangles of one row, and
-`room` measures the px a text has from its near edge outwards to the nearest of them.
+every row it passes and reaches, in a row it ends in, the bend drawn there — or half that row where
+nothing here says where the end is drawn — and a text whose place depends on a height covers every
+row it can fall in. One predicate — `overlaps` — tests two rectangles of one row, and `room`
+measures the px a text has from its near edge outwards to the nearest of them.
 
 What diagrams/flow.py used to do with `half`, `reach`, `horizontal` and a pass after the label loop
 are values of `y0`, `y1` here (spec 7.1).
@@ -151,6 +152,17 @@ def banded_rows(paths):
     return frozenset(out)
 
 
+def _turn(q, off, at, Y, banded):
+    """The y a vertical run of path `q` ends at in row `Y`, where this side knows it: the offset of
+    the bend drawn at point `at`, which is where template/js/flow.js draws the corner (spec 7.1 as
+    amended). None where the y depends on a card height — the row is clamped into the band of its
+    cards, and every line of it with an unknown amount, or the run ends on a card, whose own height
+    is unknown here. The half row of the model is what stands for it there."""
+    if Y in banded or at in (0, len(q) - 1):
+        return None
+    return off[at][1]
+
+
 def occupancy(cells, paths, offsets, geo, occupied):
     """Every drawn object as rectangles: the cards on `occupied` cells, named by the node standing
     there; the runs of every path, named by (path index, segment index); and the bounds the drawn
@@ -158,22 +170,29 @@ def occupancy(cells, paths, offsets, geo, occupied):
 
     A card is the whole of its row: its height is unknown here, and cards align to the top of the
     row, so nothing below its bottom edge can be told from inside it. A vertical run covers the
-    whole of every row it passes through and half of a row it ends in — the half it comes from. A
-    horizontal run is its offset either way of the base, as wide as it is drawn."""
+    whole of every row it passes through, and a row it ends in down to the bend drawn there, its own
+    half-width kept; where `_turn` cannot say where that end is drawn, half of the row stays — the
+    half the run comes from. A horizontal run is its offset either way of the base, as wide as it is
+    drawn."""
     named = {}
     for nid, rc in cells.items():
         if rc in occupied:
             named.setdefault(rc, nid)
     out = [Rect(2 * r + 1, -INF, INF, geo.left(c), geo.right(c), CARD, named.get((r, c), (r, c)))
            for r, c in sorted(occupied)]
+    banded = banded_rows(paths)
     for j, (q, off) in enumerate(zip(paths, offsets)):
         for k in range(len(q) - 1):
             (x1, y1), (x2, y2) = q[k], q[k + 1]
             if x1 == x2:
                 x = geo.x(x1) + off[k][0]
                 lo, hi = min(y1, y2), max(y1, y2)
+                above, below = (k, k + 1) if y1 < y2 else (k + 1, k)
+                top, bottom = _turn(q, off, above, lo, banded), _turn(q, off, below, hi, banded)
+                starts = 0.0 if top is None else top - 1
+                stops = 0.0 if bottom is None else bottom + 1
                 for Y in range(lo, hi + 1):
-                    out.append(Rect(Y, -INF if Y > lo else 0.0, INF if Y < hi else 0.0,
+                    out.append(Rect(Y, -INF if Y > lo else starts, INF if Y < hi else stops,
                                     x - 1, x + 1, LINE, (j, k)))
             else:
                 xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
@@ -252,7 +271,12 @@ def _beside(Y, pin, lo, hi, bend, banded):
     middle of the text stays beyond the bend drawn there — half a row of the lattice away from it —
     so it covers the row past that line and no more. `flow.band_obstacles` reads such a row the
     other way round: every line that crosses it counts, wherever it stops, and every line that runs
-    along it is left out, wherever it runs. That is the one reading the two differ in."""
+    along it is left out, wherever it runs. That is the one reading the two differ in.
+
+    A banded row is read past the bend here where `_turn` gives a run of that row no y at all: this
+    text hangs from the middle of its own second segment, so the clamp that moves the bend moves the
+    text with it and the order of the two survives, where the px a clamped line stands from the base
+    of its row do not."""
     if pin is None and Y in bend and Y in (lo, hi):
         return (bend[Y] + 1, INF) if Y == lo else (-INF, bend[Y] - 1)
     return (-INF, INF) if Y in banded else (-TEXT_HALF, TEXT_HALF)

@@ -98,11 +98,11 @@ Test cases (written from the declaration of the change, before the implementatio
     table computes for the same text. The table is an advance-width sum calibrated in a browser;
     this is the measurement of how far it stands from the browser that draws it, and the box is
     what the rectangle Python chooses for a label is held against.
-21. The examples and the models of ANCHOR_CASES, which between them take every form the anchor of
-    spec 7.4 has and a plan emits — the four straight exits on either side of their own line, a
-    sideways one above and below it, a horizontal second segment just after its bend either way and
-    over or under it, a vertical one on either side at its middle and anchored to the base of a row
-    — in both modes:
+21. The examples and the models of ANCHOR_CASES and ANCHOR_HAND, which between them take every form
+    the anchor of spec 7.4 has and a plan emits — the four straight exits on either side of their
+    own line, a sideways one above and below it, a horizontal second segment just after its bend
+    either way and over or under it, that same segment at its far end either way, a vertical one on
+    either side at its middle and anchored to the base of a row — in both modes:
     every label box lies inside the rectangle diagrams/labels.py chose for it across, within BOX_TOL
     and the glyph table's own width error at the far edge, and the text stands where the anchor
     says. Where the anchor asks is recomputed from the line the page drew and from `la` alone — the
@@ -321,23 +321,52 @@ ANCHOR_CASES = {
                                        "c -> b : да", "d -> b : да", "d -> c : да", "c -> e",
                                        "e -> a?"]},
 }
-# The one form left: the middle of a vertical second segment on its left. a -> d goes out to the
-# right margin and down it, where the right side lies outside the grid box and is never offered, and
-# the cells to the left of it in both rows of cards are empty, so the middle place on the left has
-# the room and the label is never anchored to a row. The route is put in by hand, as the margin
-# models' are: the router would step straight down between the columns instead. Every column of the
-# grid holds a card, since a column that holds none is laid out one way by the page's own grid and
-# another by tracks(), which invents a track for it — the plan warns about such a column.
-ANCHOR_HAND = {"anchor-beside-left": (
-    {"kind": "flow", "grid": ["a b .", "c d .", ". . e"], "edges": ["a -> d : да", "d -> e"],
-     "nodes": [{"id": i, "title": i.upper()} for i in ("a", "b", "c", "d", "e")]},
-    [[(1, 1), (6, 1), (6, 3), (3, 3)], [(3, 3), (3, 4), (5, 4), (5, 5)]])}
+# The three forms left, their routes put in by hand as the margin models' are: the router would
+# take another way round each of these grids, and what is measured here is where the script draws a
+# label of a route, not which route the router picks. Every column of the grid holds a card, since a
+# column that holds none is laid out one way by the page's own grid and another by tracks(), which
+# invents a track for it — the plan warns about such a column.
+#
+# "anchor-beside-left" is the middle of a vertical second segment on its left: a -> d goes out to
+# the right margin and down it, where the right side lies outside the grid box and is never offered,
+# and the cells to the left of it in both rows of cards are empty, so the middle place on the left
+# has the room and the label is never anchored to a row.
+#
+# The other two are a label over a horizontal second segment at its far end, one drawn each way. In
+# both, a -> f leaves a into the gutter row under it and runs the whole width of the grid along that
+# row; a -> b turns up out of that row halfway along it and d -> e turns down out of it there, so
+# the three lie beside one another over the first half of the row and take a slot each — a -> b
+# above the label's own line and d -> e below it, one pitch away on either side. Both places after
+# the bend therefore lie on a line and the far end of the segment, which the other two never reach,
+# lies on none: the search of spec 7.3 takes the label there. The grid of the second is the first
+# mirrored, so the segment runs leftwards and the text at the far end grows rightwards.
+ANCHOR_HAND = {
+    "anchor-beside-left": (
+        {"kind": "flow", "grid": ["a b .", "c d .", ". . e"], "edges": ["a -> d : да", "d -> e"],
+         "nodes": [{"id": i, "title": i.upper()} for i in ("a", "b", "c", "d", "e")]},
+        [[(1, 1), (6, 1), (6, 3), (3, 3)], [(3, 3), (3, 4), (5, 4), (5, 5)]]),
+    "anchor-far-end-left": (
+        {"kind": "flow", "grid": ["a b c", "d e f"],
+         "nodes": [{"id": i, "title": i.upper()} for i in ("a", "b", "c", "d", "e")]
+                  + [{"id": "f", "kind": "terminal", "title": "F"}],
+         "edges": ["a -> f : да", "a -> b", "d -> e", "b -> c", "c -> d", "e -> f"]},
+        [[(1, 1), (1, 2), (5, 2), (5, 3)], [(1, 1), (1, 2), (3, 2), (3, 1)],
+         [(1, 3), (1, 2), (3, 2), (3, 3)], [(3, 1), (5, 1)],
+         [(5, 1), (6, 1), (6, 3), (5, 3)], [(3, 3), (5, 3)]]),
+    "anchor-far-end-right": (
+        {"kind": "flow", "grid": ["c b a", "f e d"],
+         "nodes": [{"id": i, "title": i.upper()} for i in ("c", "b", "a", "e", "d")]
+                  + [{"id": "f", "kind": "terminal", "title": "F"}],
+         "edges": ["a -> f : да", "a -> b", "d -> e", "b -> c", "c -> d", "e -> f"]},
+        [[(5, 1), (5, 2), (1, 2), (1, 3)], [(5, 1), (5, 2), (3, 2), (3, 1)],
+         [(5, 3), (5, 2), (3, 2), (3, 3)], [(3, 1), (1, 1)],
+         [(1, 1), (0, 1), (0, 3), (1, 3)], [(3, 3), (1, 3)]])}
 
 # Every form of anchor a plan emits, named as `anchor_form` names it; docstring case 21 asks for all
-# sixteen. Under a horizontal second segment joined them with the search of spec 7.3: that place and
-# the one over the segment have the same room, so `greedy` never chose between them and nothing drew
-# the anchor no plan emitted. The one place of the table still missing is over that segment at its
-# far end — a plan reaches it, and no model these cases draw does.
+# eighteen. Under a horizontal second segment joined them with the search of spec 7.3: that place
+# and the one over the segment have the same room, so `greedy` never chose between them and nothing
+# drew the anchor no plan emitted. Over that segment at its far end joined them with the models of
+# `ANCHOR_HAND`, which is the whole table of spec 7.2 drawn.
 ANCHOR_FORMS = frozenset({"exit down, right of its line", "exit down, left of its line",
                           "exit up, right of its line", "exit up, left of its line",
                           "exit sideways right, above its line",
@@ -348,6 +377,8 @@ ANCHOR_FORMS = frozenset({"exit down, right of its line", "exit down, left of it
                           "over a second segment after the bend, rightwards",
                           "under a second segment after the bend, leftwards",
                           "under a second segment after the bend, rightwards",
+                          "over a second segment at its far end, leftwards",
+                          "over a second segment at its far end, rightwards",
                           "beside a second segment, right at its middle",
                           "beside a second segment, left at its middle",
                           "beside a second segment, right on a row",
