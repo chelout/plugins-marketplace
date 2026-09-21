@@ -544,6 +544,18 @@ Spec: §6 "Measured before it is kept", criterion D4.
   failed renders, `out`, `cr`, final crossings.
 - [ ] Owner's decision recorded in `design.md` §14: keep on, make opt-in, or remove.
 
+Amended 2026-09-21, as run (spec §10 D4 as amended). By the owner's word the reduced run: T4 and
+two new briefs — T5, a flow of 9 nodes and 16 edges, and T6, a swimlane of four lanes — without
+T1–T3, which need a source repository. The variant without advice is the plugin at `main`, which the
+branch under `--no-advice` equals byte for byte and which also lacks the passage about the block, so
+the comparison is "ship it or not". Process plugins are switched off for both variants. The harness
+is a copy (`.experiments/d4`, outside the repository) whose scorer also counts the renderer calls an
+author makes through a shell variable or a script of their own, the calls that carried a block, and
+the crossings each call showed. After the first pair of each task T4 and T5 were stopped — the
+author's first grid crosses 0 and 1 times there, no block is ever printed — and T7 took their place:
+two trivial edits of the dense test model, which crosses 15 times as given. T6 and T7 ran three
+pairs, T4 and T5 one: 16 sessions.
+
 ---
 
 ## Stage E — labels (branch `feat/drawing-diagrams-labels`)

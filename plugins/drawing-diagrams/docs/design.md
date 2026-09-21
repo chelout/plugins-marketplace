@@ -596,3 +596,28 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   after the errors and the map, and still exits 1 (`tests/test_render_cli.py`, criterion D3). All 14
   shipped renders stay byte-identical, on stdout and on stderr alike: not one of them has a trigger,
   so not one of them gains a block.
+- Measured before it is kept (spec §6, criterion D4 as amended), 2026-09-21: sixteen headless
+  sessions of `claude-opus-5` at effort `xhigh` by the method of the token cost experiment, over two
+  plugins that draw alike — this branch, and `main` at `1fcb07e`, which has neither the block nor
+  the passage about it. Where a block was printed the author applied it whole, rendered once more
+  and stopped. T7, a constructed task (two trivial edits of a model that crosses 15 times as given),
+  three runs of three: 2 renderer calls, 4.2K output tokens, 0.87 USD and 56 s a run, against 5.3
+  calls, 22.7K tokens, 1.73 USD and 514 s without the block, where the author writes a grid search
+  of its own over `render.py --check`. T6, a new swimlane of four lanes that reached the trigger by
+  itself in all six of its sessions (3 to 5 crossings on the author's first grid), the one run of
+  three that was offered a block: 75 s and 0.94 USD, where the three runs without advice averaged
+  253 s and 1.61 USD.
+  What the block costs is the last crossing. On T7 it ends at 1 and the author stops there, the
+  warning being gone; the authors without it, free to relay the whole grid, ended at 0, 1 and 0, at
+  ten times the wall time. On T6 every run of both variants ends at 2.
+  Two of T6's three runs with advice were offered nothing at 3 crossings. With one card a row the
+  only moves are the 23 other lane orders; the two that reach 2 crossings bring a label warning, and
+  a move that leaves the author with more warnings is dropped. Those authors reached 2 by giving a
+  card to another lane, which no move may do. A trigger without a block costs what no advice costs.
+  The trigger is rarer than the tasks were written for: on T4, the edit task of the token cost
+  experiment, and on T5, a new flow of 9 nodes and 16 edges whose reading-order grid crosses six
+  times, the author's first grid crosses 0 and 1 times, no block is ever printed and the variants
+  differ in nothing, so each ran one pair. T5's two sessions are the dearest of the sixteen, 3.78
+  and 6.50 USD and 13 and 35 minutes, and spend all of it on label warnings — stage E's subject.
+  28.33 USD in all. Three runs a cell make the means an indication; the finding is the pattern.
+  The harness and its rows stay outside the repository (`.experiments/d4`).

@@ -624,7 +624,11 @@ Stage D
   run, stdout and exit codes unchanged: CLI tests.
 - D4. Headless benchmark with and without advice on the four tasks of the token cost experiment and
   two tasks that raise the crossings warning: report with renders per diagram and output tokens;
-  the owner's recorded decision.
+  the owner's recorded decision. Amended 2026-09-21, as run: the owner cut it to the edit task of
+  the token cost experiment and the two new tasks, three pairs each, and the first pair of each
+  showed that the edit task and the new flow never reach the trigger, so neither can tell the
+  variants apart; they ran once, and a constructed edit of a model that already crosses 15 times
+  took their place. Sixteen sessions; the report is `design.md` §14.
 
 Stage E
 - E1. The browser probe records label boxes: `tests/test_browser_lines.py`.
