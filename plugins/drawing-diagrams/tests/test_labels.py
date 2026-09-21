@@ -1490,7 +1490,14 @@ class TheFrameATextIsReadIn(unittest.TestCase):
     def test_a_text_on_one_band_line_meets_a_line_and_a_label_on_another(self):
         """The answer's example: over a leading band of one row, a text over a segment on the
         gutter at -10 spans -29.5 to -16.5 and a line on the empty row's own line at -20 spans -21
-        to -19. Each stands on a lattice row of its own, and both are read in the one frame."""
+        to -19. Each stands on a lattice row of its own, and both are read in the one frame.
+
+        A text and a horizontal line are written in the frame by `_stands`, which reads
+        `Geometry.frame` itself; a vertical run is written by `_column`, row by row through `_key`.
+        So the frame is held here on a vertical run as well, read as `occupancy` writes it: b's line
+        up through the gutter to its bend on the empty row's line, drawn at -20, stands in the
+        frame from -21 down — through the lower text and clear of the upper one, which a run
+        written in its own rows would cover, the gutter's row whole."""
         paths = [[(1, 3), (1, 2), (5, 2), (5, 3)], [(3, 3), (3, 1), (0, 1), (0, 3), (1, 3)],
                  [(5, 3), (5, 1), (1, 1), (1, 3)]]
         offsets = [[(0.0, 0.0)] * len(q) for q in paths]
@@ -1508,6 +1515,11 @@ class TheFrameATextIsReadIn(unittest.TestCase):
         wide = [places(0, "a", "c", 130.0)[0], places(2, "c", "a", 130.0)[0]]
         self.assertEqual([from_cards(geo, c.rects[0].Y, c.rects[0].y0) for c in wide], [-29.5, -39.5])
         self.assertTrue(labels.meet(*wide))
+        column = [(r.Y, from_cards(geo, r.Y, r.y0), from_cards(geo, r.Y, r.y1))
+                  for r in runs if r.owner == (1, 0) and geo.frame(r.Y) is not None]
+        self.assertEqual(column, [(2, -21.0, labels.INF)])
+        self.assertIn((1, 0), labels.hits(wide[0], runs))
+        self.assertEqual(labels.hits(wide[1], runs), frozenset())
 
     def test_a_straight_exit_across_a_band_is_bounded_by_its_own_card(self):
         """A straight exit down hangs its text LABEL_BELOW under its card, 16.5 px down to the text's
@@ -1558,6 +1570,37 @@ class TheFrameATextIsReadIn(unittest.TestCase):
         middle = places(0, "a", "c")[0]
         self.assertEqual((middle.where, middle.la[1]), (labels.BESIDE, "m"))
         self.assertIn((1, 1), labels.hits(middle, runs))
+
+    def test_the_middle_of_a_segment_through_a_band_is_read_over_the_whole_band(self):
+        """The middle again, where the rows between the two ends share no frame with either of
+        them: a sideways exit from a card of the row over a band of one empty row, turning down
+        through the band onto the top edge of a card under it. The script draws the text at the
+        middle of the two drawn points — the base of the source card's row, half that card's height
+        over the band, and the top of the target card — so the taller the source card, the nearer
+        the band's top the text: at 100 px it meets a line 8 px over the base of the band's first
+        gutter. A text of TEXT_HALF about the base of each row the segment passes stands clear of
+        that line, however those rows are merged into the frame; the model keeps them whole and
+        meets it, in both modes."""
+        for mode in MODES:
+            paths = [[(1, 1), (3, 1), (3, 5)], [(5, 5), (5, 2), (0, 2), (0, 1), (1, 1)]]
+            offsets = [[(0.0, 0.0)] * 3,
+                       [(0.0, 0.0), (0.0, -8.0), (0.0, -8.0), (0.0, 0.0), (0.0, 0.0)]]
+            geo, _, runs, places = scene(mode, ["a . .", ". . .", ". c d"], paths, offsets)
+            bases = INTERIOR_BASES[1](geo.margin, geo.row_gap)
+            run = next(r for r in runs if r.owner == (1, 1))
+            line = (from_cards(geo, run.Y, run.y0), from_cards(geo, run.Y, run.y1))
+            # the drawn points: the middle of a 100 px source card, whose row ends where the band
+            # begins, and the top edge of the target card, which is 0 on this scale
+            mid = (-2 * geo.row_gap - 100 / 2 + 0.0) / 2
+            text = (mid - labels.TEXT_HALF, mid + labels.TEXT_HALF)
+            finite = (bases[0] - labels.TEXT_HALF, bases[-1] + labels.TEXT_HALF)
+            middle = places(0, "a", "c")[0]
+            with self.subTest(mode=mode):
+                self.assertEqual(line, (bases[0] - 9, bases[0] - 7))
+                self.assertTrue(text[0] < line[1] and line[0] < text[1], f"{text} misses {line}")
+                self.assertLessEqual(line[1], finite[0], "premise: the finite reading meets it")
+                self.assertEqual((middle.where, middle.la[1]), (labels.BESIDE, "m"))
+                self.assertIn((1, 1), labels.hits(middle, runs))
 
     def test_the_text_of_a_sideways_exit_is_read_in_the_gutter_it_reaches(self):
         """The answer's example, widget: a 32 px card, its line drawn at 22 — 6 px under the middle
