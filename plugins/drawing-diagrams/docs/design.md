@@ -621,3 +621,8 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   and 6.50 USD and 13 and 35 minutes, and spend all of it on label warnings — stage E's subject.
   28.33 USD in all. Three runs a cell make the means an indication; the finding is the pattern.
   The harness and its rows stay outside the repository (`.experiments/d4`).
+- The owner's decision on that report, 2026-09-21 (task 17, spec §12 Q2): the advice stays on
+  whenever it is triggered, with `--no-advice` to switch the search off; it is neither made opt-in
+  nor removed. The rule that drops a move which leaves the author with more warnings stays as built:
+  the two runs it left without a block are its known price, and what would lower that price is fewer
+  label warnings, which is stage E's work, not a block that trades one warning for another.

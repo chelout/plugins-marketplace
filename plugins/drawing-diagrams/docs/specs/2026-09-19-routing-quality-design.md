@@ -678,6 +678,10 @@ The owner took the default of each on 2026-09-19.
   before layout, which would retire the band rules of `design.md` §14 at the price of changing how
   such models look.
 - **Q2.** Advice: on whenever it is triggered, with `--no-advice` (default), or opt-in `--advise`?
+  Settled by the owner on 2026-09-21 on the report of the D4 experiment (`design.md` §14): on
+  whenever it is triggered, with `--no-advice`. The rule that a move which leaves the author with
+  more warnings is not offered (§6) stays as built, with its measured price known: two of the three
+  runs of the swimlane task with advice were offered nothing at three crossings.
 - **Q3.** Order and cut of the stream: A, C fast `Traffic`, B, C, D, E, each a pull request of its
   own (default); or stop after C and decide on D and E from its results?
 - **Q4.** "Just after the bend" moves the label of every horizontal second segment in existing
