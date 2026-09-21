@@ -727,7 +727,8 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   lines of one band, a straight exit across a band of two or three rows, a pinned place on a band
   line 2.5 px from a card, the drawn middle of a vertical segment, a sideways text clamped out of
   its row, a text over a segment along a banded row, and one carried out of a row of cards by its
-  offset — and the fix found a ninth, a vertical run ending at a bend a clamp moves. One mechanism
+  offset — and the fix found a ninth, a vertical run ending at a bend a clamp moves; the qa confirmation found a
+  tenth, a vertical run ending at a bend on a row of cards no line enters sideways. One mechanism
   closes them: `Geometry.frame` states where every row line Python knows the px of — a gutter, an
   outer margin, every line of a band — stands against the cards around it, built from `_tracks`,
   the construction `_band` prices stage B's room from (room answers as before, held by a test);
