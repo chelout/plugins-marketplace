@@ -113,6 +113,16 @@ Test cases (written from the declaration of the change, before the implementatio
     page's own frame, which `place_bands` reads off the drawn lines the way the row checks do. A
     place reaching into several rows is held to one of them, and a place whose rows the page does
     not show is left to the anchor alone.
+22. Every page the harness draws that carries a label, in both modes: no label's ink shares px with
+    a card's box. Nothing in the drawing holds a text off a card — template/js/flow.js applies the
+    anchor and knows no card — so the only thing that does is the model of diagrams/labels.py, and
+    this is the page's answer to it. The ink is the box the probe records less what the em box
+    holds above and below it (`inks`); across, the recorded box stands, which is the advance and
+    already wider than the ink. Among the pages are `anchor-exits`, which is
+    `tests/test_label_lines.UP` — the model the branch gate reported, where a label stood under a
+    second segment spread below the base of its gutter, reached out of that gutter and had its
+    baseline inside the card below — and `anchor-under-right`, where the model leaves such a label
+    under its segment because the cell its text reaches into holds no card.
 
 Each page is rendered through the renderer's own entry points with inline assets, so the script in
 the page is built from template/js (not template/dist), and opened once in headless Chrome.
@@ -133,6 +143,7 @@ from unittest import mock
 
 import support
 import render
+import test_label_lines as label_cases
 from diagrams import common, flow, labels, router
 from diagrams.flow import LABEL_DROP, TRACK_LEAD
 
@@ -320,6 +331,16 @@ ANCHOR_CASES = {
                              "edges": ["a? -> d : да", "a? -> c : да", "b -> d : да",
                                        "c -> b : да", "d -> b : да", "d -> c : да", "c -> e",
                                        "e -> a?"]},
+    # a -> e is a label under a horizontal second segment drawn rightwards, and the one place of
+    # the table that stands on a segment spread below the base of its own gutter row: c -> g runs
+    # the whole width of that row one pitch above a -> e's line, through the place over the segment
+    # and nowhere near the one under it, so the search of spec 7.3 takes the label under. Its text
+    # reaches out of the gutter into the row below (spec 7.1 as amended a third time), where the
+    # cell under it holds no card — which is what the page is drawn to show (docstring case 22).
+    "anchor-under-right": {"kind": "flow", "grid": ["f a b c", "g . d e"],
+                           "nodes": [{"id": i, "title": i.upper()}
+                                     for i in ("f", "a", "b", "c", "g", "d", "e")],
+                           "edges": ["a -> e : да", "c -> g"]},
 }
 # The three forms left, their routes put in by hand as the margin models' are: the router would
 # take another way round each of these grids, and what is measured here is where the script draws a
@@ -546,18 +567,29 @@ GATE_SEVEN = {"kind": "flow", "nodes": [step(i) for i in "abc"], "grid": [". . .
 # are the point it names; `labels`, in the same order again, getBBox() of that text as [x, y, width, height] or
 # null — the frame is the svg's own, which draw() of template/js/draw.js gives the grid box's size,
 # so a box is px from the grid box's top-left corner, as `texts` and `lines` are;
+# `inks`, in the same order once more, the [ascent, descent] of the ink of that very string about
+# its baseline, or null — `measureText`'s actual bounding box, laid out on a canvas with the font
+# the page computed for the text element. getBBox() of an svg text is the font's em box: it holds
+# the whole ascent over the ink and the whole descent under it, so a box that just meets a card is
+# still a text drawn clear of the card, and this is what comes off the box to leave the ink
+# (docstring case 22). The canvas measures in css px and the svg's user unit is one css px, since
+# draw() gives the svg the grid box's own size as its viewBox — the same reading `labels` rests on;
 # `cards`, the box [left, top, right, bottom] of every card, taken from the page layout and
 # mapped into the svg's own coordinates, the ones `d` is written in; `boxes`, the same for the grid
 # box (`grid`), the section that clips what leaves it (`sec`), every swimlane header (`heads`), the
 # footnote list (`foot`, absent when the model has none) and the legend (`legend`, with `legendpad`,
 # its computed padding-top in those same units, the gap between its box top and its first text).
 # Whatever bounds a line drawn along an outer margin stands among them.
-PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],labels:[],cards:{},boxes:{heads:[]}},"
-         "s=document.querySelector('.dg-svg');"
+PROBE = ("<script>setTimeout(function(){var o={lines:[],texts:[],labels:[],inks:[],cards:{},boxes:{heads:[]}},"
+         "s=document.querySelector('.dg-svg'),cv=document.createElement('canvas').getContext('2d');"
          "document.querySelectorAll('.dg-svg > g').forEach(function(g){var p=g.querySelector('path'),"
-         "t=g.querySelector('text'),k=t?t.getBBox():null;"
+         "t=g.querySelector('text'),k=t?t.getBBox():null,w=null;"
+         "if(t){var f=getComputedStyle(t);"
+         "cv.font=f.fontStyle+' '+f.fontWeight+' '+f.fontSize+' '+f.fontFamily;"
+         "w=cv.measureText(t.textContent)}"
          "o.lines.push([g.getAttribute('data-e'),p?p.getAttribute('d'):null]);"
          "o.texts.push(t?[+t.getAttribute('x'),+t.getAttribute('y'),t.getAttribute('text-anchor')]:null);"
+         "o.inks.push(w?[w.actualBoundingBoxAscent,w.actualBoundingBoxDescent]:null);"
          "o.labels.push(k?[k.x,k.y,k.width,k.height]:null)});"
          "if(s){var m=s.getScreenCTM().inverse(),q=s.createSVGPoint();"
          "var u=function(x,y){q.x=x;q.y=y;var w=q.matrixTransform(m);return[w.x,w.y]};"
@@ -852,6 +884,42 @@ def second_run_label_misses(layout, names, lines, texts, boxes, cards):
                           f"y {boxes[i][1]:.2f}..{boxes[i][1] + boxes[i][3]:.2f}, and its own segment runs "
                           f"through it at {y:.2f}")
     return misses, checked
+
+
+def label_card_overlaps(layout, names, texts, boxes, inks, cards):
+    """[(what a label shares px with a card in, as a message)] over one page, and how many labels
+    were read (docstring case 22). Nothing in the drawing holds a text off a card but the model of
+    diagrams/labels.py, and this is the page's own answer to it: the ink of every label against the
+    box of every card, both measured in the frame the probe records them in.
+
+    What is taken is the box the probe records less what the em box holds above and below the ink.
+    getBBox() of an svg text is the font's em box — the whole ascent over the ink and the whole
+    descent under it — so a text whose box meets a card edge by a px is still drawn clear of it,
+    and holding the em box to the cards would fail a text the model rightly allows. Down the page
+    the ink is `inks`, the ascent and descent `measureText` lays the very string out with, about
+    the baseline the anchor stands on; across, the box stays as recorded, which is the text's
+    advance and already wider than its ink.
+
+    No tolerance either way: both boxes are the page's own measurements, in one frame, so nothing
+    here is an estimate that has to be allowed for — unlike the rectangle Python chose, which the
+    case beside this one holds the same box against."""
+    misses, read = [], 0
+    boxen = sorted(cards.items())
+    for i, e in enumerate(layout["edges"]):
+        if not e["label"]:
+            continue
+        if texts[i] is None or boxes[i] is None or inks[i] is None:
+            raise HarnessError(f"{names[i]} carries the label {e['label']!r} and the page drew no "
+                               f"{'text' if texts[i] is None else 'box'} for it")
+        read += 1
+        x0, x1 = boxes[i][0], boxes[i][0] + boxes[i][2]
+        top, bottom = texts[i][1] - inks[i][0], texts[i][1] + inks[i][1]
+        for nid, (left, up, right, down) in boxen:
+            if x0 < right and left < x1 and top < down and up < bottom:
+                misses.append(f"{names[i]} {e['label']!r} ink x {x0:.2f}..{x1:.2f} y {top:.2f}.."
+                              f"{bottom:.2f} on the card {nid} x {left:.2f}..{right:.2f} y "
+                              f"{up:.2f}..{down:.2f}")
+    return misses, read
 
 
 def label_boxes(layout, names, texts, boxes):
@@ -1393,19 +1461,24 @@ class BrowserLines(unittest.TestCase):
                 self.assertEqual(checked, 1, f"harness: {mode}: no label over a second segment on a row line was checked")
 
     def test_label_under_second_run(self):
-        """Docstring case 21, the place the search of spec 7.3 reaches and no greedy choice does:
-        b -> d stands its label under its horizontal second segment, and the page draws it there —
-        the baseline LABEL_UNDER below that segment as drawn, and the box clear of the segment,
-        where the offset of the place over it would put the line through the text."""
+        """Docstring case 21, the place greedy could never choose on its own: d -> b stands its
+        label under its horizontal second segment, and the page draws it there — the baseline
+        LABEL_UNDER below that segment as drawn, and the box clear of the segment, where the offset
+        of the place over it would put the line through the text.
+
+        It used to be b -> d here, the place the search of spec 7.3 walked onto. Since spec 7.1 as
+        amended a third time d -> b's own segment, drawn above the base of its gutter, is the one
+        whose place over it would take the text out of the gutter onto the card there, so `fits`
+        drops that place and the label goes under."""
         for mode in MODES:
             with self.subTest(mode=mode):
                 layout, names, lines = self.measured("anchor-under-segment", mode)
                 got = self.results["anchor-under-segment", mode]
                 under = [i for i, e in enumerate(layout["edges"])
                          if e["label"] and tuple(e["la"][:2]) == (1, "p") and e["la"][4] > 0]
-                # the case exists only while the search still stands a label under its own segment
-                self.assertEqual([names[i] for i in under], ["b -> d"],
-                                 f"harness: {mode}: the labels under a second segment are not b -> d")
+                # the case exists only while a label of this page stands under its own segment
+                self.assertEqual([names[i] for i in under], ["d -> b"],
+                                 f"harness: {mode}: the labels under a second segment are not d -> b")
                 try:
                     misses, checked = second_run_label_misses(layout, names, lines, got["texts"],
                                                               got["labels"], got["cards"])
@@ -1520,6 +1593,47 @@ class BrowserLines(unittest.TestCase):
         self.assertEqual(forms, ANCHOR_FORMS, f"harness: never drawn: {sorted(ANCHOR_FORMS - forms)}")
         held = {p.form for p in measured if p.want is not None}
         self.assertEqual(held, ANCHOR_FORMS, f"harness: drawn but never recomputed: {sorted(ANCHOR_FORMS - held)}")
+
+    def test_no_label_is_drawn_on_a_card(self):
+        """Docstring case 22: over every page here that carries a label, no label's ink shares px
+        with a card's box. The rectangles of diagrams/labels.py are the whole of what keeps a text
+        off a card, and until this case nothing in the browser said whether they do.
+
+        The two readings the case was written for are asserted to be among the pages: the model the
+        branch gate reported, where the model let a text out of its gutter onto the card below
+        without seeing it, and a label the model leaves under a segment spread off its base because
+        the cell its text reaches holds no card."""
+        misses, pages, read, below = [], 0, 0, []
+        for name, mode in sorted(self.layouts):
+            layout = self.layouts[name, mode]
+            if not any(e["label"] for e in layout["edges"]):
+                continue
+            _, names, _ = self.measured(name, mode)
+            got = self.results[name, mode]
+            if "inks" not in got:
+                self.fail(f"harness: {name} {mode}: the probe records no label ink")
+            try:
+                found, count = label_card_overlaps(layout, names, got["texts"], got["labels"],
+                                                   got["inks"], got["cards"])
+            except HarnessError as exc:
+                self.fail(f"harness: {name} {mode}: {exc}")
+            misses += [f"{name} {mode}: {m}" for m in found]
+            pages, read = pages + 1, read + count
+            below += [f"{name} {mode} {names[i]}" for i, e in enumerate(layout["edges"])
+                      if e["label"] and tuple(e["la"][:2]) == (1, "p") and e["la"][4] > 0
+                      and e["path"][1][3] > 0]
+        print(f"\nlabel inks read against the cards: {read} over {pages} pages, "
+              f"{len(misses)} of them on a card")
+        self.assertEqual(misses, [], "a label is drawn on a card:\n  " + "\n  ".join(misses))
+        # the case exists only while the pages carry labels to read at all
+        self.assertGreater(read, 80, f"harness: only {read} labels over {pages} pages were read")
+        # and only while the two readings it was written for are among them: the reported model,
+        # which is `anchor-exits` here, and a label left under a segment drawn below its own base
+        for field in ("grid", "edges"):
+            self.assertEqual(ANCHOR_CASES["anchor-exits"][field], label_cases.UP[field],
+                             f"harness: `anchor-exits` is no longer tests/test_label_lines.UP")
+        self.assertTrue(below, "harness: no page draws a label under a second segment that is "
+                               "itself drawn below the base of its row")
 
     def test_planned_crossing(self):
         for mode in MODES:

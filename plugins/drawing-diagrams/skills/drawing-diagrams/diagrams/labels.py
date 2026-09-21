@@ -33,7 +33,10 @@ its height; it is tested against the other cards of the row and the lines drawn 
 A place over or under a horizontal second segment is the one whose rectangle is read from its own
 line rather than from the base of the row: the text is anchored to the drawn `y` of a point of that
 segment, so a segment drawn away from the base takes its label with it (spec 7.2 as amended). Every
-other place keeps the reference it had.
+other place keeps the reference it had. It is also the one place whose text can leave its row: a
+gutter is `row_gap` high about its base and an outer row margin `margin` deep, and a text hanging
+from a segment drawn off that base can reach past either (spec 7.1 as amended). `reached` says
+which rows it then stands in, and there it lies on the cards it shares px with and on nothing else.
 
 `place` is what `flow.plan` asks; `candidates` is the source of places it has, the table of spec 7.2
 whole, `terms` prices one place and `cost` a whole choice of them, and `search` looks for the
@@ -282,7 +285,42 @@ def _beside(Y, pin, lo, hi, bend, banded):
     return (-INF, INF) if Y in banded else (-TEXT_HALF, TEXT_HALF)
 
 
-def _on_segment(i, p, off, x1, x2, need):
+def reached(geo, Y, y0, y1):
+    """The rows of cards a text spanning `y0`..`y1` of lattice row `Y` reaches into (spec 7.1 as
+    amended a third time on 2026-09-21: a text stands in every row it reaches, not only in the row
+    of the line it hangs from).
+
+    A row line this side states the px of is one whose own row gap is drawn: template/js/head.js
+    `tracks()` and flow.js `by()` put a gutter in the middle of the `row_gap` between two rows of
+    cards and an outer row margin `margin` px outside them, so such a line stands that far from the
+    cards on either side of it. Cards align to the top of their row, so the row under the line
+    begins with its cards and a text reaching into it lies on whatever card it shares px with; the
+    row over it ends with its tallest card, whose height is unknown here, so a text reaching into
+    that one is read the same way.
+
+    Nothing comes back for a row this side has no px of: a row of cards, as high as its own tallest
+    card, and a line beside an empty row, which `tracks()` places against the tracks it invents
+    there (`Geometry._band`) and not against a row gap. A text of such a row keeps the model's
+    uncertainty inside it, as every other unknown height here does."""
+    if Y % 2 or Y // 2 - 1 in geo.empty or Y // 2 in geo.empty:
+        return ()
+    g = Y // 2
+    out = []
+    if g and y0 < -(geo.margin if g == geo.rows else geo.row_gap / 2):
+        out.append(Y - 1)
+    if g < geo.rows and y1 > (geo.margin if g == 0 else geo.row_gap / 2):
+        out.append(Y + 1)
+    return tuple(out)
+
+
+def drawn_owners(paths):
+    """Everything drawn in a row but the cards and the bounds, by the owner the model names it
+    with: a run by the (path, segment) it is, a text by the edge it belongs to."""
+    return (tuple((j, k) for j, q in enumerate(paths) for k in range(len(q) - 1))
+            + tuple(range(len(paths))))
+
+
+def _on_segment(i, p, off, x1, x2, need, geo, owners):
     """The three places on a horizontal second segment, preferred first (spec 7.2): over it just
     after the bend, under it just after the bend, over it at its far end. `x1` is the px x of the
     bend the segment starts at, `x2` of the end it runs to.
@@ -294,27 +332,40 @@ def _on_segment(i, p, off, x1, x2, need):
     Down the row every one of them is read from the segment as it is drawn — `off[1][1]`, the y its
     own line is spread to — and not from the base of the row (spec 7.2 as amended): the anchor takes
     the drawn y of the point it hangs from, so the text moves with the line it belongs to, and a
-    segment drawn far from the base no longer runs through its own label."""
+    segment drawn far from the base no longer runs through its own label. A segment drawn far enough
+    off that base takes its text out of the row as well, and `reached` says which rows it then
+    stands in.
+
+    In a row it only reaches into the text lies on the cards it shares px with, and on nothing else
+    (spec 7.1 as amended): it pokes past the edge of that row, and everything else drawn there — the
+    lines along it, the texts standing on its base — is a card height away from that edge, which
+    this side does not know. A line that crosses the row passes the text's own row on its way and is
+    met there instead. So every such owner is the place's `exempt` in the rows it reaches, beside
+    its own supporting path in all of them."""
     Y, seg, rt = p[1][1], off[1][1], x2 > x1
     # the cells under the segment are empty, so the only limit across is the far end of the segment
     limit = abs(x2 - x1) - LABEL_BEND - LABEL_CLEAR
-    exempt = frozenset((Y, (i, k)) for k in range(len(p) - 1))
     out = []
     for rank, (where, pt, x, back) in enumerate(((OVER, 1, x1, False), (BENEATH, 1, x1, False),
                                                  (OVER, 2, x2, True))):
         away = rt != back  # whether the text grows rightwards from the end it hangs from
         start = x + LABEL_BEND if away else x - LABEL_BEND
+        grow = "R" if away else "L"
         up = where == OVER
         dy = -LABEL_OVER if up else LABEL_UNDER   # from the segment to the baseline
         mid = seg + dy - LABEL_DROP               # and on to the middle of the text
+        y0, y1 = mid - TEXT_HALF, mid + TEXT_HALF
+        rows = reached(geo, Y, y0, y1)
+        exempt = {(Y2, (i, k)) for Y2 in (Y, *rows) for k in range(len(p) - 1)}
+        exempt |= {(Y2, owner) for Y2 in rows for owner in owners}
         out.append(Candidate(where, rank,
-                             (_text(Y, mid - TEXT_HALF, mid + TEXT_HALF, start,
-                                    "R" if away else "L", need, i),),
-                             start, "R" if away else "L", limit,
+                             (_text(Y, y0, y1, start, grow, need, i),
+                              *(_text(Y2, -INF, INF, start, grow, need, i) for Y2 in rows)),
+                             start, grow, limit,
                              # the place a second label would have to take to land on this text:
                              # the end it hangs from and the way it grows, and the segment's own
                              # offset with them, since that is what the text is drawn from now
-                             ("h", Y, seg, p[pt][0], p[2][0] > p[1][0], up), exempt,
+                             ("h", Y, seg, p[pt][0], p[2][0] > p[1][0], up), frozenset(exempt),
                              (pt, "p", 0, LABEL_BEND if away else -LABEL_BEND, dy,
                               "start" if away else "end")))
     return out
@@ -341,7 +392,7 @@ def candidates(i, e, p, need, paths, offsets, geo, cells, occupied, card_w):
             x2 = geo.x(p[2][0]) + off[2][0]
             if len(p) == 4:
                 x2 = geo.clamp(tc, x2)
-        return _on_segment(i, p, off, x1, x2, need)
+        return _on_segment(i, p, off, x1, x2, need, geo, drawn_owners(paths))
     if len(p) >= 3:
         # beside the vertical second segment. Anchored to the middle of the segment the script draws
         # the text at a pixel row that depends on card heights: that place is kept when the side is
@@ -617,10 +668,11 @@ def greedy(order, cands, needs, cards, runs, upright):
     Room is measured three ways here, as the places of spec 7.2 fall into three families. Every
     place has already been measured against the cards and the bounds by `fits`, which a text may
     never stand on. Every place but one on a horizontal second segment is measured against the lines
-    as well; on that segment they are not, which is why greedy always takes the first of the three
-    places there and why the two the table adds are reached by the search alone. Beside a vertical
-    second segment the labels already placed count too. Failing all of them the preferred place is
-    taken, and `verdicts` says what the label then lies on.
+    as well; on that segment they are not, which is why greedy takes the first place `fits` left it
+    there and why what tells the three apart is the search — or, where one of them would take its
+    text out of the gutter onto a card, `fits` itself. Beside a vertical second segment the labels
+    already placed count too. Failing all of them the preferred place is taken, and `verdicts` says
+    what the label then lies on.
 
     `cards` and `runs` are the rectangles of `occupancy` split by kind, `needs` the width of each
     text in px, and `upright` the runs of `uprights`."""

@@ -67,20 +67,21 @@ LABEL_CASES = {
          'a?->b R | a?->p R2'),
     'a lone exit': 'a?->b R | a?->x A',
     'along the gutter over an exit up':
-        ('a?->e O | a?->b R ; ляжет',
-         'a?->e O | a?->b R'),
-    'along the gutter, 4 away': 'a?->f O | a?->d R | a?->g A',
+        ('a?->e U | a?->b R ; ляжет',
+         'a?->e U | a?->b R'),
+    'along the gutter, 4 away': 'a?->f U | a?->d R | a?->g A ; ляжет',
     'along the gutter, 4 towards':
         ('a?->d R | a?->c A ; ляжет',
          'a?->d R | a?->c A'),
-    'along the gutter, 8 towards': 'a?->b O | a?->g R ; ляжет',
+    'along the gutter, 8 towards': 'a?->b U | a?->g R ; ляжет',
     "along the row ['. b d', 'e . f', '. g .']": 'e->f B',
     "along the row ['d b .', 'f . e', '. g .']": 'e->f B',
-    'an exit up that does not fit': 'a?->d A | a?->c U | b->d O | c->b A | d->b O | d->c L',
+    'an exit up that does not fit':
+        'a?->d A | a?->c O | b->d U | c->b A | d->b O | d->c L ; ляжет, ляжет, пересечёт',
     'beside a second segment, a banded row': 'd->b R2 ; ляжет',
-    'beside a second segment, a gutter row': 'a->c A | a->d L2 | e->c U',
+    'beside a second segment, a gutter row': 'a->c A | a->d L2 | e->c F ; ляжет',
     'exit down': 'a?->b L | a?->c O',
-    'exit up': 'a?->d A | a?->c U | b->d O | c->b A | d->b O | d->c L',
+    'exit up': 'a?->d A | a?->c O | b->d U | c->b A | d->b O | d->c L ; ляжет, ляжет, пересечёт',
     "lines at the source card's own height, beside": 'a?->b R | a?->t A',
     "lines at the source card's own height, into": 'a?->b R | a?->t B',
     "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c B | b?->d R',
@@ -103,15 +104,15 @@ LABEL_CASES = {
     'turning from the far side, down': 'a?->b A | a?->c R',
     'turning from the far side, up': 'a?->c O | a?->b R',
     'two labels in one place':
-        ('n00->n06 R | n01->n13 R4 | n04->n01 O | n07->n00 R2 | n09->n14 F | n11->n08 O | n14->n03 L2 | '
-         'n15->n06 O ; ляжет, не помещается',
-         'n00->n06 L | n01->n13 O | n04->n01 O | n07->n00 U | n09->n14 O | n11->n08 O | n14->n03 L2 | '
-         'n15->n06 F ; ляжет, ляжет, ляжет, пересечёт, пересечёт, пересечёт'),
+        ('n00->n06 R | n01->n13 R4 | n04->n01 U | n07->n00 R2 | n09->n14 U | n11->n08 U | n14->n03 L2 | '
+         'n15->n06 U ; ляжет, ляжет, ляжет, ляжет, не помещается',
+         'n00->n06 L | n01->n13 U | n04->n01 U | n07->n00 F | n09->n14 U | n11->n08 U | n14->n03 L2 | '
+         'n15->n06 F ; ляжет, ляжет, ляжет, ляжет, ляжет, ляжет, пересечёт, пересечёт, пересечёт, пересечёт, пересечёт'),
     "under the row's own line": 'c->a A',
 }
-SEEDED_PLACES = {'рядом со вторым отрезком': 161, 'над вторым отрезком': 151, 'у выхода вбок': 62,
-                 'у выхода вниз': 34, 'под вторым отрезком': 20, 'у выхода вверх': 14}
-SEEDED_SAID = {LIES: 51, NO_FIT: 24, CROSSES: 10}
+SEEDED_PLACES = {'рядом со вторым отрезком': 161, 'над вторым отрезком': 103, 'под вторым отрезком': 68,
+                 'у выхода вбок': 62, 'у выхода вниз': 34, 'у выхода вверх': 14}
+SEEDED_SAID = {LIES: 88, NO_FIT: 24, CROSSES: 23}
 
 # The five seeded instances the end-row reading moves, and what each moves: the label, where it
 # stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
@@ -433,11 +434,13 @@ class WhatThePlansSay(unittest.TestCase):
         and every kind of message a plan can write is heard at least once. A place is named here by
         its family and its rank in it.
 
-        With the search of spec 7.3 the table is whole. The two places greedy never reached — under
-        a horizontal second segment, and over it at its far end — have the same room as the place
-        before them, so nothing could tell them apart until something priced the lines each one
-        meets. The message this corpus no longer hears from a plan is the one about two labels in
-        one place: a pair costs more than any number of lines or ranks, so the search parts them
+        With the search of spec 7.3 the table is whole. The two places greedy could not reach on
+        its own — under a horizontal second segment, and over it at its far end — have the same
+        room as the place before them wherever all three stand in the gutter row, so nothing could
+        tell them apart until something priced the lines each one meets; since spec 7.1 as amended
+        a third time `fits` can also drop the place before them, and hand one of the two to greedy
+        after all. The message this corpus no longer hears from a plan is the one about two labels
+        in one place: a pair costs more than any number of lines or ranks, so the search parts them
         wherever either can move, and `TheSearch` holds the model where greedy still does not."""
         taken, rows, words = set(), set(), set()
         for name, mode, layout, warnings in planned(examples() + label_models() + seeded()):
@@ -564,10 +567,15 @@ class TheTableOfPlaces(unittest.TestCase):
                 self.assertEqual(said(warnings), [], warnings)
 
     def test_the_three_places_of_a_horizontal_second_segment_are_offered_in_order(self):
-        """The whole row of the table, which no plan shows because `greedy` stops at the first
-        place with the room and all three have one room between them: over the segment just after
-        the bend, under it just after the bend, over it at its far end. Each is anchored to the end
-        of the segment it hangs from and to that segment's own drawn y."""
+        """The whole row of the table: over the segment just after the bend, under it just after
+        the bend, over it at its far end. Each is anchored to the end of the segment it hangs from
+        and to that segment's own drawn y.
+
+        The three share one limit across, and the room is that limit for every one of them that
+        stands in the gutter row alone — which is why `greedy`, stopping at the first place with
+        the room, could never tell the places over the segment apart. The segment of this model is
+        drawn below the base of its row, so the place under it reaches the row of cards below (spec
+        7.1 as amended a third time) and has no room there at all: that one greedy can tell."""
         layout, _ = flow.plan(copy.deepcopy(BRANCH), "widget", draft=True)
         order, cands, needs, cards, runs, _ = candidates(layout, "widget")
         i = next(k for k in order if (layout["edges"][k]["a"], layout["edges"][k]["b"]) == ("a", "f"))
@@ -580,8 +588,14 @@ class TheTableOfPlaces(unittest.TestCase):
                           (labels.OVER, 2, "L",
                            (2, "p", 0, -labels.LABEL_BEND, -labels.LABEL_OVER, "end"))])
         self.assertEqual(len({c.limit for c in cs}), 1, "the three no longer share one limit")
-        self.assertEqual({labels.room(c, cards) for c in cs}, {cs[0].limit},
-                         "the three no longer have one room between them, so `greedy` could choose")
+        inside = [c for c in cs if len(c.rects) == 1]
+        self.assertEqual([(c.where, c.rank) for c in inside], [(labels.OVER, 0), (labels.OVER, 2)],
+                         "premise: the segment is no longer drawn off the base of its gutter row")
+        self.assertEqual({labels.room(c, cards) for c in inside}, {cs[0].limit},
+                         "the two over the segment no longer have one room between them")
+        self.assertEqual([r.Y for r in cs[1].rects], [layout["paths"][i][1][1],
+                                                      layout["paths"][i][1][1] + 1])
+        self.assertLess(labels.room(cs[1], cards), needs[i])
         # and what that one limit is: the segment's own length, less the bend the text starts past
         # and a clearance at the far end. Nothing else holds LABEL_BEND to this place — the room a
         # text has here is the whole of what the table's three places offer
@@ -613,10 +627,12 @@ class TheTableOfPlaces(unittest.TestCase):
         """Spec 7.3 and `design.md` 14: the error of a label that fits nowhere already names the
         nearest thing in its way, so a warning that the text lies on something would be the same
         fact twice — and `advice.evaluate` counts both. The label of this model keeps a place that
-        lies on six line edges and says nothing about any of them.
+        lies on several line edges and says nothing about any of them.
 
         The record of `LABEL_CASES` holds the count of messages as well, but a regeneration writes
-        whatever the tree answers; this says what the answer has to be."""
+        whatever the tree answers; this says what the answer has to be. The count is read per edge
+        rather than over the whole plan: other labels of the model do lie on lines, and what this
+        case is about is the one that fits nowhere."""
         model = next(m for n, m, mode in label_models()
                      if n == "two labels in one place widget" and mode == "widget")
         layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
@@ -625,7 +641,10 @@ class TheTableOfPlaces(unittest.TestCase):
         self.assertEqual(len(short), 1, "premise: another label of the model fits nowhere too")
         self.assertTrue(short[0].hits, "premise: the place it keeps no longer lies on a line")
         self.assertEqual(short[0].clashes, ())
-        self.assertEqual(said(warnings).count(LIES), 1, warnings)
+        e = layout["edges"][short[0].edge]
+        about = [w for w in warnings if f"связь {e['a']} -> {e['b']}:" in w]
+        self.assertEqual([w for w in about if LIES in w], [], warnings)
+        self.assertEqual(len([w for w in about if NO_FIT in w]), 1, warnings)
 
     def test_what_the_message_calls_each_thing_in_the_way(self):
         """The four kinds a rectangle of the model has, each named the way an author can act on it.
@@ -673,23 +692,30 @@ class TheTableOfPlaces(unittest.TestCase):
                                   f"переставьте узлы или уберите подпись в сноску"], warnings)
 
 
-# What the search does with the seven seeded instances the candidates commit left with one more
-# 'пересечёт' than the commit before it — every one a label greedy stands over a horizontal second
-# segment just after the bend, with a line through it there. Per instance: the edge, the place the
-# search moves it to (`U` under the segment, `F` over it at its far end, `O` where it stays), and
-# the lines still crossing it afterwards.
-SEEDED_CROSSED = {
-    "seeded #7": ("n00 -> n06", "U", 0),
-    "seeded #16": ("n05 -> n09", "U", 1),
-    "seeded #20": ("n15 -> n05", "O", 2),
-    "seeded #33": ("n07 -> n09", "U", 0),
-    "seeded #35": ("n07 -> n02", "U", 0),
-    "seeded #54": ("n07 -> n04", "F", 0),
-    "seeded #67": ("n06 -> n04", "F", 0),
-}
+# Every label of the seeded hundred greedy stands over a horizontal second segment just after the
+# bend with a line through it there, and what the search does with it: the instance, the edge, the
+# place it ends in (`U` under the segment, `F` over it at its far end, `O` where it stays), and the
+# lines still crossing it afterwards. Six of the twelve lose the crossing; the other six keep the
+# place, either because the same line runs through every place left or because nothing else on that
+# segment is free — and since spec 7.1 as amended a third time a place whose text would leave the
+# gutter onto a card is not left either.
+SEEDED_CROSSED = (
+    ("seeded #7", "n00 -> n06", "U", 0),
+    ("seeded #16", "n05 -> n09", "F", 0),
+    ("seeded #20", "n15 -> n05", "O", 2),
+    ("seeded #33", "n07 -> n09", "U", 0),
+    ("seeded #34", "n05 -> n10", "O", 1),
+    ("seeded #35", "n07 -> n02", "O", 1),
+    ("seeded #54", "n07 -> n04", "F", 0),
+    ("seeded #75", "n01 -> n12", "O", 1),
+    ("seeded #77", "n03 -> n09", "O", 1),
+    ("seeded #77", "n05 -> n07", "F", 0),
+    ("seeded #87", "n10 -> n05", "O", 1),
+    ("seeded #87", "n15 -> n11", "U", 0),
+)
 
 # How many of the seeded instances the search leaves at a strictly lower cost than greedy's choice.
-SEEDED_BETTER = 27
+SEEDED_BETTER = 15
 
 # The three seeded instances on which a cost that counted a line's rectangles instead of its edge
 # left the search dearer than the greedy choice it starts from: on each of them the place the search
@@ -828,27 +854,35 @@ class TheSearch(unittest.TestCase):
         self.assertEqual(apart, spent)
 
     def test_a_label_greedy_leaves_crossed_goes_under_the_segment_or_to_its_far_end(self):
-        """The places the table of spec 7.2 added and no greedy choice ever reached: over and under
-        a horizontal second segment have one room between them, so greedy always takes the first
-        and answers for the lines through it afterwards. The search prices those lines, and the
-        seven instances the candidates commit left with one more 'пересечёт' are where it shows —
-        five of them lose the crossing, one keeps it because the same line runs through both places
-        and one because nothing on that segment is free."""
-        found = {}
+        """The places the table of spec 7.2 added and greedy reaches only when `fits` hands them to
+        it: the places over a horizontal second segment and the one under it have one room between
+        them wherever all three stand in the gutter row, so greedy takes the first and answers for
+        the lines through it afterwards. The search prices those lines, and every label greedy
+        leaves crossed over such a segment is `SEEDED_CROSSED`, with the place it ends in."""
+        want = {(name, edge) for name, edge, _, _ in SEEDED_CROSSED}
+        found = []
         for name, mode, layout, _ in planned(seeded()):
-            if name not in SEEDED_CROSSED:
-                continue
-            edge = SEEDED_CROSSED[name][0]
-            i = next(k for k, e in enumerate(layout["edges"]) if f"{e['a']} -> {e['b']}" == edge)
-            was = next(c for c in greedily(layout, mode) if c.edge == i)
-            now = next(c for c in chosen(layout, mode) if c.edge == i)
-            self.assertEqual((was.cand.where, was.cand.rank), (labels.OVER, 0),
-                             f"premise: greedy no longer stands {edge} of {name} after the bend")
-            self.assertTrue([c for c in was.clashes if c.kind == labels.CROSSED],
-                            f"premise: greedy no longer leaves {edge} of {name} crossed")
-            found[name] = (edge, place(dict(layout["edges"][i], la=now.cand.la)),
-                           len([c for c in now.clashes if c.kind == labels.CROSSED]))
-        self.assertEqual(found, SEEDED_CROSSED)
+            at = {f"{e['a']} -> {e['b']}": i for i, e in enumerate(layout["edges"])}
+            now = {c.edge: c for c in chosen(layout, mode)}
+            for was in greedily(layout, mode):
+                if (was.cand.where, was.cand.rank) != (labels.OVER, 0):
+                    continue
+                if not [c for c in was.clashes if c.kind == labels.CROSSED]:
+                    continue
+                e = layout["edges"][was.edge]
+                edge = f"{e['a']} -> {e['b']}"
+                self.assertIn((name, edge), want,
+                              f"premise: greedy leaves {edge} of {name} crossed over its segment "
+                              f"and the record does not name it")
+                found.append((name, edge, place(dict(e, la=now[was.edge].cand.la)),
+                              len([c for c in now[was.edge].clashes if c.kind == labels.CROSSED])))
+                self.assertEqual(at[edge], was.edge)
+        self.assertEqual(tuple(sorted(found, key=lambda r: (int(r[0].split("#")[1]), r[1]))),
+                         SEEDED_CROSSED)
+        # and what the record is there to show: the search takes some of them off the line and
+        # leaves the rest where they are, never onto a place whose text would stand on a card
+        self.assertTrue([r for r in SEEDED_CROSSED if r[3] == 0], SEEDED_CROSSED)
+        self.assertTrue([r for r in SEEDED_CROSSED if r[3]], SEEDED_CROSSED)
 
     def test_two_labels_greedy_leaves_in_one_place_are_moved_apart(self):
         """The one warning the corpus no longer hears from a plan, and why: a pair of labels costs
@@ -988,28 +1022,50 @@ class WhatALabelAnswersFor(unittest.TestCase):
     never for the ones after, and what "the very same place" means is the place's own key."""
 
     def test_two_labels_at_one_bend_and_two_offsets_are_not_one_place(self):
-        """Both labels stand over a horizontal second segment starting at one bend and running one
-        way, and their texts meet; what tells the two places apart is the offset each segment is
-        drawn at, which is where the text hangs from since spec 7.2 as amended. So the later of the
-        two says once that it lies on the other, and not that the two took one place — which would
-        be two warnings where the drawing has one thing wrong with it, and `advice.evaluate` (spec
-        6) counts them.
+        """Two labels on horizontal second segments starting at one bend and running one way: what
+        tells the two places apart is the offset each segment is drawn at, which is where the text
+        hangs from since spec 7.2 as amended, so the two keys differ however near the texts stand.
+
+        On `ONE_BEND` the one segment is drawn below the base of its gutter row and the other above
+        it, so since spec 7.1 as amended a third time one label keeps only the place over its
+        segment and the other only the place under its own, and the two texts no longer come near
+        each other at all. Where they do — the page of `two labels in one place`, whose two
+        segments are spread far enough for the places left to overlap — the later of the two says
+        once that it lies on something, and not that the two took one place, which would be two
+        warnings where the drawing has one thing wrong with it and `advice.evaluate` (spec 6)
+        counts them.
 
         Greedy is what holds it: the search parts the two, which is the whole of its first term."""
         layout, _ = flow.plan(copy.deepcopy(ONE_BEND), "widget", draft=True)
         order, cands, needs, cards, runs, upright = candidates(layout, "widget")
         first, second = labels.greedy(order, cands, needs, cards, runs, upright)
         paths, edges = layout["paths"], layout["edges"]
-        self.assertEqual({c.cand.where for c in (first, second)}, {labels.OVER},
-                         "premise: the two labels no longer stand over their second segments")
+        self.assertEqual({c.cand.where for c in (first, second)}, {labels.OVER, labels.BENEATH},
+                         "premise: the two labels no longer take opposite sides of their segments")
         self.assertEqual(paths[first.edge][1], paths[second.edge][1],
                          "premise: the two segments no longer start at one bend")
         self.assertNotEqual(edges[first.edge]["path"][1][3], edges[second.edge]["path"][1][3],
                             "premise: the two segments are no longer drawn at different offsets")
-        self.assertTrue(labels.meet(first.cand, second.cand),
-                        "premise: the two texts no longer meet")
         self.assertNotEqual(first.cand.key, second.cand.key)
-        self.assertEqual(second.clashes, (labels.Clash(labels.ON_LINE, first.edge),))
+        self.assertFalse(labels.meet(first.cand, second.cand))
+        # and the pair that does meet, on the model whose spread is wide enough for it
+        model = next(m for n, m, mode in label_models()
+                     if n == "two labels in one place page" and mode == "page")
+        layout, _ = flow.plan(copy.deepcopy(model), "page", draft=True)
+        order, cands, needs, cards, runs, upright = candidates(layout, "page")
+        took = labels.greedy(order, cands, needs, cards, runs, upright)
+        pair = [(a, b) for k, a in enumerate(took) for b in took[k + 1:]
+                if a.cand.where in labels.SECOND_RUN and b.cand.where in labels.SECOND_RUN
+                and layout["paths"][a.edge][1] == layout["paths"][b.edge][1]
+                and labels.meet(a.cand, b.cand)]
+        self.assertEqual(len(pair), 1, "premise: that model no longer has one such pair")
+        first, second = pair[0]
+        self.assertNotEqual(layout["edges"][first.edge]["path"][1][3],
+                            layout["edges"][second.edge]["path"][1][3],
+                            "premise: the two segments are no longer drawn at different offsets")
+        self.assertNotEqual(first.cand.key, second.cand.key)
+        self.assertEqual([c.kind for c in second.clashes].count(labels.ON_LINE), 1, second.clashes)
+        self.assertEqual([c for c in second.clashes if c.kind == labels.SAME_PLACE], [])
 
     def test_the_error_of_a_label_names_nothing_placed_after_it(self):
         """Which label a fit error may name: the nearest thing of all is the text of the label
@@ -1050,16 +1106,19 @@ class TheSegmentALabelHangsFrom(unittest.TestCase):
 
     def test_a_segment_drawn_above_the_base_of_its_row_takes_its_label_with_it(self):
         """The named case: the widest-spread labelled segment of the corpus, drawn 17.5 px above the
-        base of its row, with its text over it and clear of it — where a text measured from the base
-        would have had that line through it."""
+        base of its row, with its text under it and clear of it — where a text measured from the
+        base would have had that line through it. Under, because over a segment drawn that far above
+        the base the text would leave the gutter onto the card above it (spec 7.1 as amended a third
+        time), and that place is dropped before the choice is made."""
         found = {(name, edge): (seg, box) for name, mode, edge, seg, box
                  in self.far_off_the_base(label_models()) if mode == "page"}
         seg, box = found[("two labels in one place page", "n04 -> n01")]
         self.assertEqual(seg, -17.5, "premise: that segment is no longer the widest spread one")
-        self.assertEqual(box, (seg - labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF,
-                               seg - labels.LABEL_OVER - labels.LABEL_DROP + labels.TEXT_HALF))
-        self.assertLess(box[1], seg - 1, "the text stands over the segment, clear of it")
-        # and the rule it replaced: from the base of the row, that line runs through the text
+        self.assertEqual(box, (seg + labels.LABEL_UNDER - labels.LABEL_DROP - labels.TEXT_HALF,
+                               seg + labels.LABEL_UNDER - labels.LABEL_DROP + labels.TEXT_HALF))
+        self.assertGreater(box[0], seg + 1, "the text stands under the segment, clear of it")
+        # and the rule it replaced: the script hung such a text LABEL_OVER over `base(Y)` whatever
+        # the segment's own offset, and measured from that base this segment runs through its label
         was = (-labels.LABEL_OVER - labels.LABEL_DROP - labels.TEXT_HALF,
                -labels.LABEL_OVER - labels.LABEL_DROP + labels.TEXT_HALF)
         self.assertTrue(was[0] < seg + 1 and seg - 1 < was[1], (was, seg))
@@ -1075,6 +1134,189 @@ class TheSegmentALabelHangsFrom(unittest.TestCase):
         self.assertEqual(struck, [])
         self.assertGreater(len(far), 20, f"harness: only {len(far)} segments are spread far enough "
                                          f"off the base for this to say anything")
+
+
+# The three labelled horizontal second segments of `tests/test_label_lines.UP`, each drawn at a
+# different place in its own gutter row: (the edge, the lattice row its segment runs along, the px
+# it is drawn off the base of that row). `a? -> c` is the case the third round of the branch gate
+# reported — under a segment drawn below the middle of a 40 px gutter the text spans 10.5 to 23.5
+# and its baseline stands inside the card below. `b -> d` is the same the other way up, and
+# `d -> b` the segment on the middle of its own gutter, which keeps every place it has.
+UP_SEGMENTS = {"a? -> c": (2, 4.0), "b -> d": (2, -4.0), "d -> b": (4, 0.0)}
+
+
+class TheRowsATextReaches(unittest.TestCase):
+    """Spec 7.1, amended a third time on 2026-09-21 after the third round of the branch gate: a text
+    stands in every row it reaches, not only in the row of the line it hangs from.
+
+    A gutter is `row_gap` high about its base and an outer row margin `margin` deep, so a place over
+    or under a horizontal second segment drawn off that base can leave its row. Cards align to the
+    top of their row, so the row under such a line begins with its cards and a text reaching into it
+    lies on whatever card it shares px with; the row over it ends with its tallest card, whose height
+    is unknown here, and a text reaching into that one is read the same way.
+
+    The three cases below are the three segments of `UP_SEGMENTS`, in widget mode, where the gutter
+    is 40 px and a text over or under a segment on the base of one fills it with half a px to spare.
+    """
+
+    def up(self, mode="widget"):
+        """(the layout, what the plan said, {edge: its index}) of `tests/test_label_lines.UP`, with
+        the premise of every case here asserted: each of the three labels hangs from a horizontal
+        second segment running along the lattice row `UP_SEGMENTS` names, drawn the px off the base
+        of that row it names, and the gutter that row is has the height `Geometry` gives it."""
+        layout, warnings = flow.plan(copy.deepcopy(cases.UP), mode, draft=True)
+        at = {f"{e['a']} -> {e['b']}": i for i, e in enumerate(layout["edges"])}
+        geo = inputs(layout, mode)[0]
+        for edge, (Y, seg) in UP_SEGMENTS.items():
+            p, e = layout["paths"][at[edge]], layout["edges"][at[edge]]
+            self.assertEqual((len(p) >= 3 and p[1][1] == p[2][1], p[1][1], e["path"][1][3]),
+                             (True, Y, seg),
+                             f"premise: {edge} no longer turns into a horizontal second segment "
+                             f"along row {Y} drawn {seg} off its base: {e['path']}")
+            self.assertEqual(Y % 2, 0, f"premise: row {Y} is no longer a gutter")
+        self.assertEqual(geo.row_gap, 40, "premise: a widget's row gap is no longer 40 px")
+        return layout, warnings, at
+
+    def places(self, layout, mode, edge, at):
+        """{(family, rank): the place} of one label, and the choice it took."""
+        cands = candidates(layout, mode)[1][at[edge]]
+        took = next(c for c in chosen(layout, mode) if c.edge == at[edge])
+        return {(c.where, c.rank): c for c in cands}, took
+
+    def test_a_text_under_a_segment_below_the_middle_of_its_gutter_reaches_the_card_row(self):
+        """The reported case. `a? -> c` hangs from a segment drawn 4 px below the base of gutter
+        row 2: the place under it spans 10.5 to 23.5, past the 20 px the gutter has, and the card a?
+        of row 3 begins there and covers the whole of the text across. So the place is dropped
+        (spec 7.3), the label takes the one over the segment, and the plan says what stands there."""
+        layout, warnings, at = self.up()
+        geo, _, _, _, occupied = inputs(layout, "widget")
+        cards = [r for r in labels.occupancy(layout["cells"], layout["paths"],
+                                             [[(pt[2], pt[3]) for pt in e["path"]]
+                                              for e in layout["edges"]], geo, occupied)
+                 if r.kind == labels.CARD]
+        spots, took = self.places(layout, "widget", "a? -> c", at)
+        under = spots[labels.BENEATH, 1]
+        text, reach = under.rects[0], under.rects[1:]
+        self.assertEqual((text.Y, text.y0, text.y1), (2, 10.5, 23.5))
+        self.assertGreater(text.y1, geo.row_gap / 2, "the text no longer leaves its gutter")
+        self.assertEqual([r.Y for r in reach], [3], under.rects)
+        # the card that covers it there, and the room it leaves the text: none at all
+        covers = [r.owner for r in cards if r.Y == 3 and r.x0 < text.x1 and text.x0 < r.x1]
+        self.assertEqual(covers, ["a?"], "premise: a? no longer stands under that text")
+        need = label_width(layout["edges"][at["a? -> c"]]["label"])
+        self.assertLess(labels.room(under, cards), need)
+        # so the label stands over its own segment instead, and answers for what is there
+        self.assertEqual((took.cand.where, took.cand.rank), (labels.OVER, 0))
+        self.assertEqual(layout["edges"][at["a? -> c"]]["la"],
+                         (1, "p", 0, -labels.LABEL_BEND, -labels.LABEL_OVER, "end"))
+        self.assertEqual(sorted(c.kind for c in took.clashes), [labels.CROSSED, labels.ON_LINE])
+        self.assertEqual([w for w in warnings if w.startswith("связь a? -> c:")],
+                         ["связь a? -> c: подпись 'да' над вторым отрезком ляжет на другую линию "
+                          "или подпись; переставьте узлы или уберите подпись в сноску",
+                          "связь a? -> c: подпись 'да' пересечёт линию b -> d; переставьте узлы "
+                          "или уберите подпись в сноску"], warnings)
+
+    def test_a_text_over_a_segment_above_the_middle_of_its_gutter_reaches_the_row_over_it(self):
+        """The same reading the other way up: `b -> d` hangs from a segment drawn 4 px above the
+        base of gutter row 2, so the place over it spans -23.5 to -10.5 and reaches into row 1,
+        which ends with its tallest card. The card b covers that text across, so the label takes
+        the place under its segment — where the row under the gutter is the one out of reach."""
+        layout, warnings, at = self.up()
+        geo = inputs(layout, "widget")[0]
+        spots, took = self.places(layout, "widget", "b -> d", at)
+        over, under = spots[labels.OVER, 0], spots[labels.BENEATH, 1]
+        self.assertEqual((over.rects[0].y0, over.rects[0].y1), (-23.5, -10.5))
+        self.assertLess(over.rects[0].y0, -geo.row_gap / 2, "the text no longer leaves its gutter")
+        self.assertEqual([r.Y for r in over.rects], [2, 1], over.rects)
+        self.assertEqual([r.Y for r in under.rects], [2],
+                         "the place under that segment reaches nowhere, and is the one left")
+        self.assertEqual((took.cand.where, took.cand.rank), (labels.BENEATH, 1))
+        self.assertEqual(layout["edges"][at["b -> d"]]["la"],
+                         (1, "p", 0, -labels.LABEL_BEND, labels.LABEL_UNDER, "end"))
+        self.assertEqual([w for w in warnings if w.startswith("связь b -> d:")],
+                         ["связь b -> d: подпись 'да' под вторым отрезком ляжет на другую линию "
+                          "или подпись; переставьте узлы или уберите подпись в сноску"], warnings)
+
+    def test_a_segment_on_the_middle_of_its_gutter_keeps_every_place_it_has(self):
+        """And the segment drawn on the base of its own gutter row: LABEL_OVER, LABEL_DROP and
+        TEXT_HALF come to half a px less than half a widget's row gap, so all three places of the
+        table stand in that row and nowhere else, and the label keeps the one it prefers."""
+        layout, warnings, at = self.up()
+        geo = inputs(layout, "widget")[0]
+        spots, took = self.places(layout, "widget", "d -> b", at)
+        self.assertEqual(sorted(spots), sorted({(labels.OVER, 0), (labels.BENEATH, 1),
+                                                (labels.OVER, 2)}))
+        for key, spot in spots.items():
+            with self.subTest(place=key):
+                self.assertEqual([r.Y for r in spot.rects], [4], spot.rects)
+                self.assertEqual(labels.reached(geo, 4, spot.rects[0].y0, spot.rects[0].y1), ())
+        self.assertEqual(labels.LABEL_OVER + labels.LABEL_DROP + labels.TEXT_HALF,
+                         geo.row_gap / 2 - 0.5)
+        self.assertEqual((took.cand.where, took.cand.rank), (labels.OVER, 0))
+        self.assertEqual([w for w in warnings if w.startswith("связь d -> b:")], [], warnings)
+
+    def test_what_reached_says_of_each_kind_of_row(self):
+        """`reached` itself, over the rows of one geometry: a gutter between two rows of cards is
+        `row_gap` high about its base and an outer row margin `margin` deep, so a text that leaves
+        either stands in the row of cards it reaches. A row of cards states no height here and
+        neither does a row line beside an empty row, whose place `tracks()` invents, so a text of
+        one of those keeps the model's uncertainty inside its own row."""
+        geo = flow.Geometry(flow.mode_for("flow", "widget", None), 200.0, 3, rows=4, empty=(2,))
+        half, margin = geo.row_gap / 2, geo.margin
+        wide = (-half - 1, half + 1)
+        self.assertEqual(labels.reached(geo, 2, *wide), (1, 3))      # a plain gutter, both ways
+        self.assertEqual(labels.reached(geo, 2, -half, half), ())    # a text that fills it exactly
+        self.assertEqual(labels.reached(geo, 0, *wide), (1,))        # the top margin: cards below
+        self.assertEqual(labels.reached(geo, 0, -margin, margin), ())
+        self.assertEqual(labels.reached(geo, 8, *wide), (7,))        # the bottom margin: above
+        self.assertEqual(labels.reached(geo, 8, -margin, margin), ())
+        self.assertEqual(labels.reached(geo, 3, *wide), ())          # a row of cards
+        self.assertEqual(labels.reached(geo, 4, *wide), ())          # the gutter over the empty row
+        self.assertEqual(labels.reached(geo, 6, *wide), ())          # and the one under it
+        self.assertEqual(labels.reached(geo, 5, *wide), ())          # the empty row's own line
+        # the two margins are `margin` from the cards and not half a row gap, which is what tells
+        # this case from one that read every even row the same way
+        self.assertNotEqual(margin, half)
+        self.assertEqual(labels.reached(geo, 0, -half, half), (1,))
+
+    def test_every_place_of_the_corpus_stands_in_the_rows_its_text_reaches(self):
+        """The rectangles of every place on a horizontal second segment, over the whole corpus,
+        against `reached`: a place whose box leaves its row carries one rectangle per row it leaves
+        into and none otherwise, and the rows it reaches are read as whole rows, since what ends
+        them is a card height."""
+        stayed = left = 0
+        for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
+            geo = inputs(layout, mode)[0]
+            for i, cs in candidates(layout, mode)[1].items():
+                for c in (c for c in cs if c.where in labels.SECOND_RUN):
+                    text = c.rects[0]
+                    want = labels.reached(geo, text.Y, text.y0, text.y1)
+                    with self.subTest(model=name, edge=i, place=(c.where, c.rank)):
+                        self.assertEqual(tuple(r.Y for r in c.rects[1:]), want)
+                        self.assertEqual({(r.y0, r.y1) for r in c.rects[1:]},
+                                         {(-labels.INF, labels.INF)} if want else set())
+                    stayed, left = stayed + (not want), left + bool(want)
+        self.assertGreater(left, 100, f"harness: only {left} places of the corpus leave their row")
+        self.assertGreater(stayed, 100, f"harness: only {stayed} places stay inside it")
+
+    def test_a_text_is_measured_against_the_cards_alone_in_a_row_it_only_reaches(self):
+        """What a text meets in a row it only pokes into: the cards it shares px with, and nothing
+        else. It stands past the edge of that row, and everything else drawn there — the lines
+        along it, the texts standing on its base — is a card height away from that edge, which this
+        side does not know; a line that crosses the row passes the text's own row on its way and is
+        met there. So every run and every label of a reached row is the place's own `exempt`."""
+        checked = 0
+        for name, mode, layout, _ in planned(label_models() + seeded()):
+            paths = layout["paths"]
+            blind = set(labels.drawn_owners(paths))
+            for i, cs in candidates(layout, mode)[1].items():
+                for c in (c for c in cs if c.where in labels.SECOND_RUN and len(c.rects) > 1):
+                    checked += 1
+                    for rect in c.rects[1:]:
+                        with self.subTest(model=name, edge=i, row=rect.Y):
+                            self.assertEqual({o for o in blind if (rect.Y, o) not in c.exempt},
+                                             set())
+        self.assertGreater(checked, 100, f"harness: only {checked} places reach another row")
 
 
 class TheLabelsAlreadyPlacedAreConsulted(unittest.TestCase):
@@ -1377,19 +1619,37 @@ class TheNumbersComeFromThisModule(unittest.TestCase):
                                 ("dy", -labels.LABEL_ABOVE), ("dy", -labels.LABEL_OVER),
                                 ("dy", labels.LABEL_UNDER), ("dy", labels.LABEL_DROP)})
 
-    def test_the_offset_no_greedy_choice_emits_is_the_one_the_search_reaches(self):
+    def test_the_offset_under_a_segment_is_reached_two_ways_and_chosen_by_neither_alone(self):
         """LABEL_UNDER was the exception to the test above while `greedy` was the whole choice: the
-        place under a horizontal second segment has the same room as the one over it, so greedy
-        never reached it and no plan emitted the number it is drawn with. The search of spec 7.3
-        reaches it, which is why the test above now names it — and greedy, still the choice the
-        search starts from, still does not."""
-        offered, greedy_dy = set(), set()
+        place under a horizontal second segment has the same room as the one over it wherever both
+        stand in the gutter row, so greedy could never tell them apart and no plan emitted the
+        number it is drawn with. It is reached two ways now. The search of spec 7.3 prices the
+        lines through the place over the segment, which is what the test above rests on; and
+        `fits` drops the place over a segment drawn far enough above the base of its row, whose
+        text would stand on the card above it (spec 7.1 as amended a third time), so greedy is
+        handed the one under.
+
+        Which is which: wherever greedy emits the offset, the place over that segment was dropped
+        before it chose, and greedy never chose between two places that both had the room."""
+        offered, by_greedy = set(), []
         for _, mode, layout, _ in planned(label_models()):
-            for cs in candidates(layout, mode)[1].values():
+            order, cands, needs, cards, _, _ = candidates(layout, mode)
+            for cs in cands.values():
                 offered |= {("dy", c.la[4]) for c in cs}
-            greedy_dy |= {("dy", c.cand.la[4]) for c in greedily(layout, mode)}
+            keep = labels.fits(order, cands, needs, cards)[0]
+            for choice in greedily(layout, mode):
+                if choice.cand.la[4] != labels.LABEL_UNDER:
+                    continue
+                by_greedy.append(choice.edge)
+                self.assertEqual([c for c in keep[choice.edge]
+                                  if (c.where, c.rank) == (labels.OVER, 0)], [],
+                                 "greedy reached the place under a segment with the one over it "
+                                 "still standing")
         self.assertIn(("dy", labels.LABEL_UNDER), offered)
-        self.assertNotIn(("dy", labels.LABEL_UNDER), greedy_dy)
+        self.assertTrue(by_greedy, "no label case hands greedy the place under a segment")
+        # and the other way round, which `SEEDED_CROSSED` records instance by instance: there
+        # greedy stands the label over its segment and the search walks it onto the place under
+        self.assertTrue([r for r in SEEDED_CROSSED if r[2] == "U"], SEEDED_CROSSED)
 
     def test_there_is_one_copy_of_each_and_it_is_this_module_s(self):
         """diagrams/flow.py carries the names the tests that measure a drawn label reach for, and
