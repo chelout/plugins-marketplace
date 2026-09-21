@@ -111,6 +111,28 @@ OFFSETS = {"kind": "flow", "id": "offsets", "groups": GROUPS,
                     "otkaz    log  arhiv"],
            "edges": ["zayavka -> dub", "bot -> otkaz", "bot -> otvet", "dub -> otkaz",
                      "log -> arhiv", "dub -> arhiv", "bot -> log", "dub -> otvet"]}
+# The model the render's own overrides are read on (the plan gate's finding G2). It crosses three
+# times, and a width moves neither that count nor the capacity of a line: both are read off the
+# lattice, which the grid alone builds. What a width does move is the room a label has, and here the
+# two widths part company over one. At the default 680 one swap clears all three crossings; at
+# NARROW_WIDTH the cards are narrow enough that the very same swap leaves 'нет данных' nowhere to
+# stand beside the line it labels — a message the author's own grid does not carry — so the search
+# refuses it there and reaches zero by two other swaps.
+NARROW_WIDTH = 440
+NARROW_TITLES = {"arhiv": "Архив", "zayavka": "Заявка", "zvonok": "Звонок", "otkaz": "Отказ",
+                 "otvet": "Ответ", "oplata": "Оплата", "anketa": "Анкета",
+                 "proverka": "Проверка", "reshenie": "Решение"}
+NARROW_STEPS = ("zayavka", "zvonok", "anketa", "proverka", "reshenie")
+NARROW = {"kind": "flow", "id": "narrow", "groups": GROUPS,
+          "nodes": [{"id": nid, "group": "g", "title": title,
+                     "kind": "step" if nid in NARROW_STEPS else "terminal"}
+                    for nid, title in NARROW_TITLES.items()],
+          "grid": ["arhiv   zayavka   zvonok",
+                   "otkaz   otvet     oplata",
+                   "anketa  proverka  reshenie"],
+          "edges": ["zayavka -> oplata", "zayavka -> anketa : нет данных", "zvonok -> otvet",
+                    "anketa -> proverka", "proverka -> arhiv", "proverka -> reshenie",
+                    "reshenie -> arhiv", "reshenie -> otkaz"]}
 HEADLINE = re.compile(r"^совет: (?P<prefix>.*?)(?P<term>пересечений|лишних линий|длина линий) "
                       r"(?P<before>\d+) → (?P<after>\d+) за (?P<moves>\d+) ход(?:а|ов)? "
                       r"\(проверено трассировкой\)$")
@@ -618,6 +640,50 @@ class RenderCli(unittest.TestCase):
             stepped = move.apply(stepped)
         self.assertNotEqual(stepped["grid"], rows,
                             "harness: on this model the two ways of writing the map agree")
+
+    # The plan gate's finding G2: every verifying plan of the search is made in the geometry of the
+    # render, so the overrides `render.main` was given — `--width` here — travel with it. A label
+    # that fits at 680 px need not fit at 440, and a search that checked another geometry would
+    # offer a move whose picture this render will not draw.
+    def advice_lines(self, model, found):
+        """The block `advise` prints for a search result, built the way it builds it."""
+        return render.advice_block(found, render.advised_grid(model, found),
+                                   render.advised_lanes(found), "")
+
+    def test_the_advice_is_searched_at_the_width_the_render_was_given(self):
+        self.publish()
+        overrides = {"total": NARROW_WIDTH}
+        wide = advice.search(copy.deepcopy(NARROW), "widget", {})
+        thin = advice.search(copy.deepcopy(NARROW), "widget", overrides)
+        self.assertTrue(wide and thin, "harness: the search no longer improves this model")
+        path = self.model(NARROW)
+        code, out, err = self.run_cli(path)
+        self.assertEqual(code, 0, err)
+        code, out, narrow = self.run_cli(path, "--width", str(NARROW_WIDTH))
+        self.assertEqual(code, 0, narrow)
+        # the trigger is the same at both widths: the crossings are read off the lattice, which a
+        # width does not move, so what parts the two blocks is the geometry the moves were verified
+        # in and nothing else
+        for stderr in (err, narrow):
+            self.assertIn(f"предупреждение: пересечений линий: {render.MANY_CROSSINGS}", stderr)
+        head, steps, _, _ = self.read_block(err)
+        self.assertEqual((head["term"], head["after"]), ("пересечений", "0"), err)
+        self.assertEqual(len(steps), 1, err)
+        move = steps[0]["what"]
+        # the one move the author is offered at the default width is not offered at the narrow one
+        head, steps, _, _ = self.read_block(narrow)
+        self.assertEqual((head["term"], head["after"]), ("пересечений", "0"), narrow)
+        self.assertNotIn(move, [step["what"] for step in steps], narrow)
+        # and each block is the one the search finds under that render's own overrides
+        self.assertEqual(advice_blocks(err)[0], self.advice_lines(NARROW, wide), err)
+        self.assertEqual(advice_blocks(narrow)[0], self.advice_lines(NARROW, thin), narrow)
+        # the premise, read off the geometry rather than off the two blocks: at the narrow width
+        # that move brings a label message the author's own grid does not carry, which is what the
+        # search refuses it for, and at the default width it brings none
+        for ov, refused in ((overrides, True), ({}, False)):
+            brought = (advice.evaluate(wide[0][0].apply(NARROW), "widget", ov)[1]
+                       - advice.evaluate(copy.deepcopy(NARROW), "widget", ov)[1])
+            self.assertEqual(bool([m for m in brought if "подпись" in m]), refused, brought)
 
     # Spec 6 as amended, over the population the search is measured on: every step of a block names
     # the term of the score it moved, and a sequence never ends in a move that only shortened the
