@@ -895,7 +895,16 @@ class TheRendersOwnWidth(unittest.TestCase):
         self.assertLess(found[-1][2][:2], found[0][1][:2])
 
     def test_and_is_not_offered_under_the_narrow_override(self):
-        self.assertEqual([], advice.search(G2, "page", NARROW))
+        # What the width decides is that one move. The advice still has others to offer here: the
+        # author's own grid carries a warning of its own — `b -> c` runs through the text over the
+        # second segment of `a -> d`, which the occupancy model sees and the check before it, reading
+        # the whole segment instead of the text, missed — so the climb is weighed against one warning
+        # rather than none and reaches a move that takes the crossing out. The premise is asserted
+        # first: without that warning the moves below are refused and nothing at all is offered.
+        self.assertEqual(1, advice.evaluate(G2, "page", NARROW)[2])
+        found = advice.search(G2, "page", NARROW)
+        self.assertNotIn(("swap", "c", "d"), named([x[0] for x in found]))
+        self.assertLess(found[-1][2][:2], found[0][1][:2])
 
     def test_every_verifying_plan_gets_the_overrides(self):
         with counted() as calls:

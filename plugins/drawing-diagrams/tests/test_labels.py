@@ -1,17 +1,21 @@
-"""The occupancy model against the verdicts `flow.plan` gives now.
+"""Where `flow.plan` stands a label, and what it says about it.
 
-`diagrams/labels.py` states as rectangles what `flow.room_beside`, `flow.band_obstacles`,
-`flow.under_card`, `flow.label_spots` and the label loop of `flow.plan` state as branches. Nothing
-calls it yet, so the thing worth asserting is that it says the same: for the shipped examples, for
-the models of `tests/test_label_lines.py` and for a hundred seeded labelled instances, the walk
-below — today's order, today's first fit, today's messages, over `labels.today`, `labels.occupancy`
-and `labels.room` — produces the very messages `flow.plan` produces and puts every label in the
-very place it puts it.
+`diagrams/labels.py` places every label now: `flow.plan` hands `labels.place` the routed edges and
+their texts and gets a `Choice` each — the place it took, the warnings that place raises with their
+owners, or the room when the text fits nowhere — and writes the messages from them. The equivalence
+this file used to hold, the model walked beside `flow.room_beside`, `flow.band_obstacles`,
+`flow.under_card` and `flow.label_spots`, has nothing left to compare against: those functions are
+gone with the switch.
 
-The walk is today's policy, not the model's: which rectangles a place is measured against, and what
-is said about the answer, stay in `flow.plan` until the switch. Where the two differ the difference
-has a test of its own below, stating both sides; there is one such class, and it is the rows a
-vertical second segment ends in.
+What replaces it is a record. The whole corpus below — the shipped examples, the models of
+`tests/test_label_lines.py` and a hundred seeded labelled instances, 174 plans — was planned once
+with the tree before the switch and once with this one, and the only differences are the two
+readings the switch carries (spec 7.1 as amended on 2026-09-21): five seeded instances move a
+label, one message follows them, and the check of a label over a horizontal second segment answers
+41 times where it answered 149. Everything frozen here is what a reader can check without running
+that comparison again — every place of every label of the label cases with what was said about it,
+the tally of the seeded corpus, and the five instances that moved — and each of the two readings has
+a test that states the rule it replaced.
 """
 import copy
 import functools
@@ -22,59 +26,120 @@ import support
 import bench_routing
 import instances
 from diagrams import flow, labels, router
-from diagrams.common import ModelError, fit_prefix, label_width
+from diagrams.common import ModelError, label_width
 
 import test_label_lines as cases
 
 MODES = ("widget", "page")
 
-# The hundred seeded labelled instances of the equivalence, and the labels they carry: every third
-# edge, as the rest of the suite labels an instance (`tests/test_drawn_property.py`), with texts of
-# four widths so the room is read at more than one length.
+# The hundred seeded labelled instances, and the labels they carry: every third edge, as the rest of
+# the suite labels an instance (`tests/test_drawn_property.py`), with texts of four widths so the
+# room is read at more than one length.
 SEEDED = (20260921, 100)
 SEEDED_MODE = "page"
 TEXTS = ("да", "нет", "по ошибке", "ручная сверка данных")
 
-# The seeded instances where the two readings answer differently, and what moves in each. Every one
-# of them is the class `WhereTheModelReadsMoreThanTodayDoes` states: a row the second segment ends
-# in. They are named rather than counted, so a sixth one is a failure and not a number.
-SEEDED_DIFFER = {
-    "seeded #12": "n00 -> n03 keeps the middle place on the left instead of pinning to row 2",
-    "seeded #40": "n00 -> n04 keeps the middle place on the right instead of pinning to row 4",
-    "seeded #57": "n09 -> n03 keeps the middle place, and n00 -> n04 then meets it",
-    "seeded #61": "n05 -> n03 pins to row 6 instead of keeping the middle place",
-    "seeded #97": "n08 -> n06 keeps the middle place instead of pinning to row 6",
+LABEL_MESSAGE = re.compile(r"^(связь .*: подпись |связи .* и .*: подписи встанут )")
+
+# What each message of a label is, by the word that tells it from the others: it lies on a line or
+# on another label, it does not fit, a line runs through it where it stands over a horizontal second
+# segment, or another label took its place first.
+LIES, NO_FIT, CROSSES, SAME = "ляжет", "не помещается", "пересечёт", "одно место"
+
+# What a plan says about the labels of one model: the place of each, as `ls` and `ly` are emitted
+# (`R2` is the right side pinned to lattice row 2, `R` the side with no row of its own), and then
+# the messages by their word. One string per model, and one entry per model of
+# `tests/test_label_lines.py`; a pair where the two modes answer differently.
+LABEL_CASES = {
+    'a card alone in its row': 'a?->b R | a?->q R',
+    'a line into the next card under a short card':
+        ('a?->b R | a?->p R2 ; ляжет',
+         'a?->b R | a?->p R2'),
+    'a lone exit': 'a?->b R | a?->x R',
+    'along the gutter over an exit up':
+        ('a?->e R | a?->b R ; ляжет',
+         'a?->e R | a?->b R'),
+    'along the gutter, 4 away': 'a?->f R | a?->d R | a?->g R',
+    'along the gutter, 4 towards':
+        ('a?->d R | a?->c R ; ляжет',
+         'a?->d R | a?->c R'),
+    'along the gutter, 8 towards': 'a?->b R | a?->g R ; ляжет',
+    "along the row ['. b d', 'e . f', '. g .']": 'e->f R ; ляжет',
+    "along the row ['d b .', 'f . e', '. g .']": 'e->f R ; ляжет',
+    'an exit up that does not fit': 'a?->d R | a?->c R | b->d R | c->b R | d->b R | d->c R ; ляжет',
+    'beside a second segment, a banded row': 'd->b R2 ; ляжет',
+    'beside a second segment, a gutter row': 'a->c R | a->d L2 | e->c R',
+    'exit down': 'a?->b R | a?->c R ; ляжет',
+    'exit up': 'a?->d R | a?->c R | b->d R | c->b R | d->b R | d->c R ; ляжет',
+    "lines at the source card's own height, beside": 'a?->b R | a?->t R',
+    "lines at the source card's own height, into": 'a?->b R | a?->t R ; ляжет',
+    "loop ['. a', 'c b?', '. d'] c -> a": 'b?->c R | b?->d R ; ляжет',
+    "loop ['. a', 'c b?', '. d'] c -> d": 'b?->c R | b?->d R',
+    "loop ['a .', 'b? c', 'd .'] c -> a": 'b?->c R | b?->d R ; ляжет',
+    "loop ['a .', 'b? c', 'd .'] c -> d": 'b?->c R | b?->d R',
+    "loop back ['. a', 'c b?', '. d'] back": 'b?->c R | b?->d R ; ляжет',
+    "loop back ['. a', 'c b?', '. d'] last": 'b?->c R | b?->d R ; ляжет',
+    "loop back ['a .', 'b? c', 'd .'] back": 'b?->c R | b?->d R',
+    "loop back ['a .', 'b? c', 'd .'] last": 'b?->c R | b?->d R',
+    "loop below ['. a', 'c b?', 'e d']": 'b?->c R | b?->d R',
+    "loop below ['a .', 'b? c', 'd e']": 'b?->c R | b?->d R',
+    'past the right edge':
+        ('a?->b R | a?->r R ; не помещается',
+         'a?->b R | a?->r R'),
+    'the next card limits the room':
+        ('a?->b R | a?->t R ; не помещается',
+         'a?->b R | a?->t R'),
+    'through the gutter past the label': 'a?->c R4 | a?->b R ; ляжет',
+    'turning from the far side, down': 'a?->b R | a?->c R',
+    'turning from the far side, up': 'a?->c R | a?->b R',
+    'two labels in one place':
+        ('n00->n06 R | n01->n13 R2 | n04->n01 R | n07->n00 R2 | n09->n14 R | n11->n08 R | n14->n03 R4 | '
+         'n15->n06 R ; ляжет, не помещается, одно место, пересечёт, пересечёт, пересечёт, пересечёт',
+         'n00->n06 R | n01->n13 R | n04->n01 R | n07->n00 R | n09->n14 R | n11->n08 R | n14->n03 R4 | '
+         'n15->n06 R ; ляжет, ляжет, одно место, пересечёт, пересечёт, пересечёт, пересечёт, пересечёт'),
+    "under the row's own line": 'c->a R',
 }
 
-# What `flow.plan` says about a label, as it says it. The walk composes the same strings, so a
-# difference of place, of room — which the fit error carries as the prefix that still fits — or of
-# wording is one comparison and not three.
-WARN = ("связь {a} -> {b}: подпись {text!r} {where} ляжет на другую линию или подпись; "
-        "переставьте узлы или уберите подпись в сноску")
-FIT = ("связь {a} -> {b}: подпись {text!r} {n} симв. не помещается {where}, влезает ~{prefix}; "
-       "сократите, вынесите в сноску [n] или переставьте узлы так, чтобы линия уходила вниз")
-SAME = ("связи {first} и {a} -> {b}: подписи встанут в одно место и наложатся; "
-        "переставьте узлы или уберите одну подпись в сноску")
+# The 442 labels of the hundred seeded instances, by the place they take and by what is said about
+# them. Two labels never fall in one place across the hundred, which is why the label cases above
+# carry a model that does (the first instance of the same stream past the hundred).
+SEEDED_PLACES = {"над вторым отрезком": 171, "рядом со вторым отрезком": 161, "у выхода вбок": 62,
+                 "у выхода вниз": 34, "у выхода вверх": 14}
+SEEDED_SAID = {LIES: 50, NO_FIT: 24, CROSSES: 32}
 
-LABEL_MESSAGE = re.compile(r"^(связь .*: подпись |связи .* и .*: подписи встанут )")
-OVER = "над вторым отрезком"
-BESIDE = "рядом со вторым отрезком"
+# The five seeded instances the end-row reading moves, and what each moves: the label, where it
+# stood before the switch and where it stands now. Named rather than counted, so a sixth one is a
+# failure and not a number.
+SEEDED_MOVED = {
+    "seeded #12": ("n00 -> n03", ("R", 2), ("L", None)),
+    "seeded #40": ("n00 -> n04", ("L", 4), ("R", None)),
+    "seeded #57": ("n09 -> n03", ("R", 5), ("L", None)),
+    "seeded #61": ("n05 -> n03", ("L", None), ("L", 6)),
+    "seeded #97": ("n08 -> n06", ("L", 6), ("L", None)),
+}
 
 
-def label_messages(warnings):
-    """The messages `flow.plan` wrote about where a label stands, with the draft prefix taken off —
-    a draft plan reports its layout errors as warnings, and a fit error is a layout error. The
-    post-check that follows the label loop is not one of them: it has its own comparison below."""
+def said(warnings):
+    """What a plan said about its labels, by the word of each message, sorted. A draft plan reports
+    its layout errors as warnings and a fit error is a layout error, so the prefix comes off."""
     out = []
     for w in warnings:
         text = w[len(flow.DRAFT):] if w.startswith(flow.DRAFT) else w
-        if LABEL_MESSAGE.match(text) and "пересечёт" not in text:
-            out.append(text)
+        if LABEL_MESSAGE.match(text):
+            out.append(next(word for word in (SAME, NO_FIT, CROSSES, LIES) if word in text))
     return sorted(out)
 
 
+def digest(layout, warnings):
+    """A plan's labels as `LABEL_CASES` records them."""
+    spots = [f"{e['a']}->{e['b']} {e['ls']}{e.get('ly', '')}"
+             for e in layout["edges"] if e["label"]]
+    words = said(warnings)
+    return " | ".join(spots) + (" ; " + ", ".join(words) if words else "")
+
+
 def inputs(layout, mode_name):
-    """What `flow.plan` hands its label loop, read back off the layout it returns: the geometry, the
+    """What `flow.plan` hands `labels.place`, read back off the layout it returns: the geometry, the
     paths of the edges that routed, their offsets, the cells of the grid and the occupied ones."""
     geo = flow.Geometry(layout["mode"], layout["card_w"], layout["grid_cols"], layout["grid_rows"],
                         *flow.margin_room(layout["kind"], mode_name, layout["footnotes"]),
@@ -84,59 +149,36 @@ def inputs(layout, mode_name):
     return geo, layout["paths"], offsets, layout["cells"], occupied
 
 
-def walk(layout, mode_name):
-    """The labels of a layout placed the way `flow.plan` places them, over the model. Returns its
-    messages, the place it chose per edge as (`ls`, `ly`), the (label, path) pairs whose text a
-    line runs through — what the post-check of `flow.plan` looks for after the loop — and the
-    candidate each label was given."""
+def candidates(layout, mode_name):
+    """Today's places of every label of a layout, per edge, with what `greedy` measures them
+    against: the cards and the bounds, the lines, the widths and the vertical runs."""
     geo, paths, offsets, cells, occupied = inputs(layout, mode_name)
     edges, card_w = layout["edges"], layout["card_w"]
     rects = labels.occupancy(cells, paths, offsets, geo, occupied)
-    cards = [r for r in rects if r.kind in (labels.CARD, labels.BOUND)]
-    runs = [r for r in rects if r.kind == labels.LINE]
-    upright = {(j, k) for j, q in enumerate(paths) for k in range(len(q) - 1)
-               if q[k][0] == q[k + 1][0]}
-    # labels with a single place first, so that the ones choosing a row see them all
     order = sorted((i for i, e in enumerate(edges) if e["label"]),
                    key=lambda i: len(paths[i]) >= 3 and paths[i][2][1] != paths[i][1][1])
-    out, keys, placed, chosen, crossed, picked = [], {}, [], {}, [], {}
-    for i in order:
-        e, text = edges[i], edges[i]["label"]
-        need = label_width(text)
-        cands = labels.today(i, e, paths[i], need, paths, offsets, geo, cells, occupied, card_w)
-        # `room` counts the cards and the bounds, `line_room` the lines as well — and the labels
-        # already placed only beside a vertical second segment, which is where `flow.plan` consults
-        # them. A label over a horizontal second segment has no `line_room`: the lines that cross it
-        # are looked for once every label stands somewhere
-        wide = [labels.room(c, cards) for c in cands]
-        tight = [w if c.where == OVER else
-                 min(w, labels.room(c, runs + (placed if c.where == BESIDE else [])))
-                 for c, w in zip(cands, wide)]
-        spot = next((c for c, t in zip(cands, tight) if need <= t), None)
-        if spot is None:
-            spot = next((c for c, w in zip(cands, wide) if need <= w), None)
-            if spot is not None:
-                out.append(WARN.format(a=e["a"], b=e["b"], text=text, where=spot.where))
-        if spot is None:
-            at = max(range(len(cands)), key=lambda k: wide[k])
-            spot, room = cands[at], max(wide[at], 0)
-            out.append(FIT.format(a=e["a"], b=e["b"], text=text, n=len(text), where=spot.where,
-                                  prefix=fit_prefix(text, lambda s: label_width(s) <= room)))
-        chosen[i], picked[i] = (spot.ls, spot.ly), spot
-        placed += list(spot.rects)
-        if spot.key in keys:
-            out.append(SAME.format(first=keys[spot.key], a=e["a"], b=e["b"]))
-        keys[spot.key] = f"{e['a']} -> {e['b']}"
-        if spot.where == OVER:
-            crossed += [(i, run.owner[0]) for run in runs if run.owner in upright
-                        and any(labels.overlaps(r, run) for r in spot.rects)]
-    return sorted(out), chosen, sorted(crossed), picked
+    needs = {i: label_width(edges[i]["label"]) for i in order}
+    cands = {i: labels.today(i, edges[i], paths[i], needs[i], paths, offsets, geo, cells, occupied,
+                             card_w) for i in order}
+    return (order, cands, needs,
+            [r for r in rects if r.kind in (labels.CARD, labels.BOUND)],
+            [r for r in rects if r.kind == labels.LINE],
+            labels.uprights(paths))
+
+
+def chosen(layout, mode_name, exempt=True):
+    """The choices of a layout, by the road `labels.place` itself takes. `exempt=False` takes the
+    exemptions of spec 7.1 off every candidate, which is what the test of them needs."""
+    order, cands, needs, cards, runs, upright = candidates(layout, mode_name)
+    if not exempt:
+        cands = {i: [c._replace(exempt=frozenset()) for c in cs] for i, cs in cands.items()}
+    return labels.greedy(order, cands, needs, cards, runs, upright)
 
 
 def post_check(layout):
-    """The (label, path) pairs the post-check of `flow.plan` warns about: a line whose lattice
-    column lies strictly inside a horizontal second segment and which spans the row of that
-    segment."""
+    """The (label, path) pairs the check before the switch warned about: a line whose lattice column
+    lies strictly inside a horizontal second segment and which spans the row of that segment,
+    wherever along it the text stands and wherever the line stops."""
     paths = layout["paths"]
     segs = [router.segments(q) for q in paths]
     out = []
@@ -149,33 +191,12 @@ def post_check(layout):
     return sorted(out)
 
 
-def places(layout):
-    """The place `flow.plan` chose per labelled edge, as (`ls`, `ly`)."""
-    return {i: (e["ls"], e.get("ly")) for i, e in enumerate(layout["edges"]) if e["label"]}
-
-
 def planned(corpus):
     """Every model of a corpus planned as a draft — the only plan that answers for a model whose
-    label does not fit — with what today said and what the walk says."""
+    label does not fit — with its layout and what it said about its labels."""
     for name, model, mode in corpus:
         layout, warnings = flow.plan(copy.deepcopy(model), mode, draft=True)
-        yield name, mode, layout, label_messages(warnings), walk(layout, mode)
-
-
-def disagreements(corpus):
-    """The models where the messages or the places differ, as (name, today, the model)."""
-    out = []
-    for name, mode, layout, today, (said, chosen, _, _) in planned(corpus):
-        if said != today or chosen != places(layout):
-            out.append((name, (today, places(layout)), (said, chosen)))
-    return out
-
-
-def report(bad, total):
-    text = [f"{len(bad)} of {total} planned models answer differently:"]
-    for name, today, said in bad[:5]:
-        text += [f"  {name}", f"    flow.plan: {today}", f"    labels:    {said}"]
-    return "\n".join(text)
+        yield name, mode, layout, warnings
 
 
 @functools.lru_cache(maxsize=None)
@@ -264,9 +285,9 @@ def label_models():
              cases.exit_model(["e a b", "d . c"],
                               ["e -> d", "c -> d", "c -> b", "d -> b : да", "d -> a", "a -> c",
                                "e -> c"], terminals=("b",))),
-            # from the seeded stream past the hundred of the equivalence (instance 104 of
+            # from the seeded stream past the hundred of the record (instance 104 of
             # `instances.small(SEEDED[0], …)`), which is where two labels first take one place: no
-            # shipped example and no case of test_label_lines.py reaches that warning
+            # shipped example and none of the hundred reaches that warning
             ("two labels in one place",
              cases.exit_model(["n00 n01 n02 n03 n04 n05", "n06 n07 n08 n09 n10 n11",
                                "n12 n13 n14 n15 n16 n17"],
@@ -301,171 +322,212 @@ def seeded():
     return tuple(out)
 
 
-class TheModelSaysWhatTodaySays(unittest.TestCase):
-    """Criterion E2, first half: over today's candidates the occupancy model gives the verdict
-    `flow.plan` gives — fits, lies on a line or a label, does not fit, with the room the message
-    carries — and puts the label in the same place."""
+class WhatThePlansSay(unittest.TestCase):
+    """Criterion E2, second half: `flow.plan` places its labels through `labels.place`, and this is
+    what it then puts in the layout and in the warnings."""
 
-    def test_the_shipped_examples(self):
-        corpus = examples()
-        self.assertGreaterEqual(len(corpus), 8, "harness: the examples no longer reach the walk")
-        bad = disagreements(corpus)
-        self.assertEqual(bad, [], report(bad, len(corpus)))
+    def test_the_label_cases_stand_where_this_record_says(self):
+        for name, mode, layout, warnings in planned(label_models()):
+            case = name.rsplit(" ", 1)[0]
+            want = LABEL_CASES[case]
+            with self.subTest(case=case, mode=mode):
+                self.assertEqual(digest(layout, warnings),
+                                 want if isinstance(want, str) else want[MODES.index(mode)])
 
-    def test_the_models_of_the_label_cases(self):
-        corpus = label_models()
-        bad = disagreements(corpus)
-        self.assertEqual(bad, [], report(bad, len(corpus)))
-
-    def test_a_hundred_seeded_labelled_instances(self):
+    def test_the_seeded_corpus_comes_to_these_numbers(self):
         corpus = seeded()
         self.assertGreaterEqual(len(corpus), 90, "harness: too few seeded instances plan at all")
-        bad = disagreements(corpus)
-        self.assertEqual(sorted(name for name, *_ in bad), sorted(SEEDED_DIFFER),
-                         report(bad, len(corpus)))
+        places, words = {}, []
+        for name, mode, layout, warnings in planned(corpus):
+            for choice in chosen(layout, mode):
+                places[choice.cand.where] = places.get(choice.cand.where, 0) + 1
+            words += said(warnings)
+        self.assertEqual(places, SEEDED_PLACES)
+        self.assertEqual({w: words.count(w) for w in sorted(set(words))}, SEEDED_SAID)
+
+    def test_the_five_instances_the_end_row_reading_moves(self):
+        """The one class in which the switch places a label elsewhere (spec 7.1 as amended): a row
+        the vertical second segment ends in. Each of the five is named with the place it used to
+        take, and only the place it takes now is asserted — the other side of the pair is the tree
+        before the switch, which the differential of task 20 commit 1 read once."""
+        found = {}
+        for name, mode, layout, _ in planned(seeded()):
+            if name not in SEEDED_MOVED:
+                continue
+            edge, _, now = SEEDED_MOVED[name]
+            e = next(x for x in layout["edges"] if f"{x['a']} -> {x['b']}" == edge)
+            found[name] = (e["ls"], e.get("ly"))
+        self.assertEqual(found, {name: now for name, (_, _, now) in SEEDED_MOVED.items()})
 
     def test_the_corpus_exercises_every_place(self):
-        """What the cases above have to hold to read anything: every shape of route a label can hang
-        from is among them, a candidate that reaches into a second row is there too, and every kind
-        of message the walk composes is heard from `flow.plan` at least once."""
-        seen, said = set(), set()
-        for name, mode, layout, today, _ in planned(examples() + label_models() + seeded()):
+        """What the record above has to hold to read anything: every shape of route a label can hang
+        from is taken somewhere in the corpus, a place that reaches into more than one row is taken
+        too, and every kind of message is heard at least once."""
+        taken, rows, words = set(), set(), set()
+        for name, mode, layout, warnings in planned(examples() + label_models() + seeded()):
+            for choice in chosen(layout, mode):
+                taken.add(choice.cand.where)
+                rows.add(len(choice.cand.rects) > 1)
+            words |= set(said(warnings))
+        self.assertEqual(taken, {labels.DOWN, labels.UP, labels.SIDEWAYS, labels.OVER,
+                                 labels.BESIDE})
+        self.assertEqual(rows, {True, False})
+        self.assertEqual(words, {LIES, NO_FIT, CROSSES, SAME})
+
+    def test_place_is_greedy_over_todays_candidates(self):
+        """The interface of this commit: `labels.place` is `labels.greedy` over `labels.today` and
+        nothing else, so the road the tests above take is the one `flow.plan` takes."""
+        for name, mode, layout, _ in planned(label_models()):
             geo, paths, offsets, cells, occupied = inputs(layout, mode)
-            for i, e in enumerate(layout["edges"]):
-                if not e["label"]:
-                    continue
-                spot = labels.today(i, e, paths[i], label_width(e["label"]), paths, offsets, geo,
-                                    cells, occupied, layout["card_w"])[0]
-                seen.add(spot.where)
-                seen.add(len(spot.rects) > 1)
-            for m in today:
-                said.add("ляжет" if "ляжет" in m else
-                         "не помещается" if "не помещается" in m else "одно место")
-        self.assertEqual(seen, {"у выхода вниз", "у выхода вверх", "у выхода вбок", OVER, BESIDE,
-                                True, False})
-        self.assertEqual(said, {"ляжет", "не помещается", "одно место"},
-                         "a message the walk composes is never heard from flow.plan")
+            texts = [e["label"] for e in layout["edges"]]
+            with self.subTest(case=name):
+                self.assertEqual(labels.place(layout["edges"], texts, paths, offsets, geo, cells,
+                                              occupied, layout["card_w"]),
+                                 chosen(layout, mode))
+
+    def test_flow_plan_writes_one_message_per_clash_and_emits_the_place_it_was_given(self):
+        """Spec 7.3 as amended: a label raises one warning where it lies on a line or a label, one
+        per line that runs through a text over a horizontal second segment, and one where another
+        label took its place first — and a fit error where it fits nowhere. The advice of spec 6
+        counts those warnings, so a plan that wrote more or fewer of them than the choices carry
+        would change which moves it offers."""
+        for name, mode, layout, warnings in planned(examples() + label_models() + seeded()):
+            choices = chosen(layout, mode)
+            word = {labels.ON_LINE: LIES, labels.CROSSED: CROSSES, labels.SAME_PLACE: SAME}
+            want = [word[c.kind] for choice in choices for c in choice.clashes]
+            want += [NO_FIT for choice in choices if choice.room is not None]
+            with self.subTest(model=name):
+                self.assertEqual(said(warnings), sorted(want))
+                self.assertEqual({choice.edge: (choice.cand.ls, choice.cand.ly)
+                                  for choice in choices},
+                                 {i: (e["ls"], e.get("ly"))
+                                  for i, e in enumerate(layout["edges"]) if e["label"]})
 
 
-class WhereTheModelReadsMoreThanTodayDoes(unittest.TestCase):
-    """The differences the equivalence above is written around. Each is a check today's code makes
-    in one place and not in another; the model makes it everywhere, and each case states both
-    sides."""
+class TheTwoReadingsTheSwitchCarries(unittest.TestCase):
+    """Spec 7.1 as amended on 2026-09-21. Each is a check the code before the switch made one way in
+    one place and another way elsewhere; the model makes it everywhere, and each case states the
+    rule it replaced."""
 
-    def test_the_readings_differ_only_in_a_row_the_second_segment_ends_in(self):
-        """In a row a vertical second segment ends in, `flow.band_obstacles` keeps every line that
-        crosses the row and drops every line that runs along it, whatever either is drawn at. The
-        model keeps what lies past the bend drawn there, whichever way it runs: the text stands at
-        the middle of the segment, half a row of the lattice away from that bend.
-
-        Over the whole corpus this is the only place the two readings differ — the rows in between,
-        and every other shape of route, read alike."""
-        rows, differing = set(), 0
-        for name, mode, layout, today, _ in planned(examples() + label_models() + seeded()):
-            geo, paths, offsets, cells, occupied = inputs(layout, mode)
-            rects = labels.occupancy(cells, paths, offsets, geo, occupied)
-            runs = [r for r in rects if r.kind == labels.LINE]
-            for i, e in enumerate(layout["edges"]):
-                p = paths[i]
-                if not e["label"] or len(p) < 3 or p[2][1] == p[1][1]:
+    def test_a_row_a_vertical_second_segment_ends_in_is_read_past_its_bend(self):
+        """The code before the switch kept, in such a row, every line that crossed it wherever it
+        stopped and dropped every line that ran along it wherever it ran. The text stands at the
+        middle of the segment, half a lattice row from the bend drawn there, so the model gives it
+        the row past that bend and no more — which is what every unpinned candidate of the corpus
+        says here, and what moves the five instances of `SEEDED_MOVED`."""
+        ends = 0
+        for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
+            paths, offsets = inputs(layout, mode)[1:3]
+            cands = candidates(layout, mode)[1]
+            for i, cs in cands.items():
+                p, off = paths[i], offsets[i]
+                if len(p) < 3 or p[2][1] == p[1][1]:
                     continue
                 lo, hi = min(p[1][1], p[2][1]), max(p[1][1], p[2][1])
-                need = label_width(e["label"])
-                spots = flow.label_spots(i, e, p, paths, offsets, geo, cells, occupied,
-                                         layout["card_w"])
-                cands = labels.today(i, e, p, need, paths, offsets, geo, cells, occupied,
-                                     layout["card_w"])
-                for s, c in zip(spots, cands):
-                    for rect in c.rects:
-                        # a place pinned to a row reads the lines along it whatever they are
-                        # drawn at; the unpinned one reads them only in the rows in between
-                        along = s.get("ly") is not None or lo < rect.Y < hi
-                        _, lns = flow.band_obstacles(rect.Y, (i, 1), paths, offsets, geo, occupied,
-                                                     along)
-                        was = flow.room_beside(c.start, c.grow, lns, labels.INF)
-                        now = labels.room(c._replace(rects=(rect,), limit=labels.INF), runs)
-                        if abs(was - now) > 1e-9:
-                            differing += 1
-                            rows.add(rect.Y in (lo, hi) and s.get("ly") is None)
-        self.assertEqual(rows, {True},
-                         "a row that is neither an end of the second segment nor read without a "
-                         "pinned row now reads differently")
-        self.assertGreater(differing, 10, f"harness: only {differing} rows read differently at all")
+                bend = {p[1][1]: off[1][1], **({p[2][1]: off[2][1]} if len(p) >= 4 else {})}
+                for rect in (r for c in cs if c.ly is None for r in c.rects):
+                    if rect.Y not in bend or rect.Y not in (lo, hi):
+                        continue
+                    ends += 1
+                    want = ((bend[rect.Y] + 1, labels.INF) if rect.Y == lo
+                            else (-labels.INF, bend[rect.Y] - 1))
+                    self.assertEqual((rect.y0, rect.y1), want,
+                                     f"{name}: the text of edge {i} does not stay past the bend")
+        self.assertGreater(ends, 10, f"harness: only {ends} end rows are read at all")
 
-    def test_the_post_check_of_today_is_the_segment_and_the_model_is_the_text(self):
-        """A label over a horizontal second segment: `flow.plan` warns once per line whose lattice
-        column lies inside that segment and which spans its row, wherever the text stands along it;
-        the model warns once per line that runs through the text's own rectangle. So today's check
-        answers for lines the text never reaches, and misses the line that comes down into the row
-        and turns there, which stops on the text rather than passing it."""
-        only_today = only_model = both = 0
-        for name, mode, layout, today, (_, _, crossed, picked) in planned(
-                examples() + label_models() + seeded()):
+    def test_a_label_over_a_horizontal_second_segment_is_checked_by_its_text(self):
+        """The check before the switch warned once per line whose lattice column lay inside that
+        segment and which spanned its row, wherever along it the text stood; the model warns once
+        per line that runs through the text's own rectangle. So the old one answered for lines the
+        text never reaches, and missed the line that comes down into the row and turns there, which
+        stops on the text instead of passing it."""
+        only_before = only_now = both = 0
+        for name, mode, layout, _ in planned(examples() + label_models() + seeded()):
             geo, paths, offsets, cells, occupied = inputs(layout, mode)
             rects = labels.occupancy(cells, paths, offsets, geo, occupied)
-            was, now = set(post_check(layout)), set(crossed)
+            choices = chosen(layout, mode)
+            took = {choice.edge: choice.cand for choice in choices}
+            now = {(choice.edge, c.owner) for choice in choices
+                   for c in choice.clashes if c.kind == labels.CROSSED}
+            was = set(post_check(layout))
             both += len(was & now)
             for i, j in was - now:
-                only_today += 1
+                only_before += 1
                 met = [r for r in rects if r.kind == labels.LINE and r.owner[0] == j
-                       and any(labels.overlaps(t, r) for t in picked[i].rects)]
+                       and any(labels.overlaps(t, r) for t in took[i].rects)]
                 self.assertEqual(met, [], f"{name}: that line does run through the text")
             for i, j in now - was:
-                only_model += 1
+                only_now += 1
                 p = paths[i]
                 spans = [(lo, hi) for axis, line, lo, hi in router.segments(paths[j])
                          if axis == "v" and min(p[1][0], p[2][0]) < line < max(p[1][0], p[2][0])]
                 self.assertTrue(all(not (lo < p[1][1] < hi) for lo, hi in spans),
-                                f"{name}: {i} and {j} cross inside the segment, so today warns too")
+                                f"{name}: {i} and {j} cross inside the segment, so both warn")
         self.assertGreater(both, 0, "harness: the two checks never agree at all")
-        self.assertGreater(only_today, 0, "harness: today's check never reaches past the text")
-        self.assertGreater(only_model, 0, "harness: no line ever stops on a text today misses")
+        self.assertGreater(only_before, 0, "harness: the old check never reaches past the text")
+        self.assertGreater(only_now, 0, "harness: no line ever stops on a text the old check missed")
 
-    def test_a_label_placed_already_is_seen_only_beside_a_vertical_second_segment(self):
-        """`flow.plan` consults the labels it has placed only where a label has a row to choose —
-        beside a vertical second segment. Here the text hanging under a short card runs along the
-        row into the text of a line leaving the same card sideways, and nothing is said; the model's
-        two rectangles meet."""
-        model = cases.exit_model([". q . .", "a? t . .", "b . . ."],
-                                 ["a? -> b : ручная сверка", "a? -> t : нет", "q -> t"],
-                                 nodes=cases.TALL)
+
+class TheCardALabelHangsFromIsExempt(unittest.TestCase):
+    """Plan gate finding G4: a candidate hanging from its own source card is not measured against
+    that card, nor against the lines drawn within its height, and the exemption is by (row, owner)
+    rather than by a branch of the checking code. It carries the whole of `under_card`, so taking it
+    away is what shows what it holds."""
+
+    def test_without_it_the_labels_that_hang_from_a_card_have_no_room_at_all(self):
+        differ = 0
+        for name, mode, layout, _ in planned(label_models()):
+            if chosen(layout, mode) != chosen(layout, mode, exempt=False):
+                differ += 1
+        self.assertGreater(differ, 30, f"only {differ} of the label-case plans need the exemption")
+
+    def test_the_lines_at_the_source_cards_own_height_are_what_it_leaves_out(self):
+        """A line leaving the card sideways and one coming down the gutter into its side are drawn
+        within the card's height, above the text hanging under it: with the exemption the label
+        stands, without it the very same place offers no room at all."""
+        model = cases.exit_model(["p q . .", "a? . t .", "b . . ."],
+                                 ["a? -> b : ручная проверка", "a? -> t : нет", "p -> a?",
+                                  "q -> a?"], nodes=cases.TALL)
         layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
-        self.assertEqual(label_messages(warnings), [],
-                         "today's code no longer keeps quiet about these two labels")
-        geo, paths, offsets, cells, occupied = inputs(layout, "widget")
-        spots = [labels.today(i, e, paths[i], label_width(e["label"]), paths, offsets, geo, cells,
-                              occupied, layout["card_w"])[0]
-                 for i, e in enumerate(layout["edges"]) if e["label"]]
-        self.assertEqual([s.where for s in spots], ["у выхода вниз", "у выхода вбок"])
-        met = [(a, b) for a in spots[0].rects for b in spots[1].rects
-               if labels.overlaps(a, b, labels.CLEARANCE[labels.LABEL], 0)]
-        self.assertTrue(met, f"the model says these two texts stand clear: {spots[0]}, {spots[1]}")
+        self.assertEqual(said(warnings), [LIES], warnings)
+        under = next(c for c in chosen(layout, "widget") if c.cand.where == labels.DOWN)
+        self.assertIsNone(under.room, "the label under a? no longer stands where this case reads it")
+        bare = next(c for c in chosen(layout, "widget", exempt=False) if c.cand.where == labels.DOWN)
+        self.assertEqual(bare.room, 0)
 
 
 class TheNumbersComeFromTheScript(unittest.TestCase):
     SCRIPT = (support.SKILL / "template" / "js" / "flow.js").read_text(encoding="utf-8")
+    SOURCE = (support.SKILL / "diagrams" / "flow.py").read_text(encoding="utf-8")
+
+    # Every number diagrams/labels.py measures a place with, and the offset of the label code in
+    # template/js/flow.js it has to be.
+    OFFSETS = ((r"lx=rt\?p2\.x-(\d+):", "LABEL_BEND"),
+               (r"ly=base\(e\.path\[1\]\[1\]\)-(\d+)", "LABEL_OVER"),
+               (r"\(p1\.y\+p2\.y\)/2\)\+(\d+);", "LABEL_DROP"),
+               (r"e\.sa==='B'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
+               (r"e\.sa==='B'\)\{lx=a0\.x\+\d+;ly=a0\.y\+(\d+)\}", "LABEL_BELOW"),
+               (r"e\.sa==='T'\)\{lx=a0\.x\+\d+;ly=a0\.y-(\d+)\}", "LABEL_ABOVE"),
+               (r"e\.sa==='R'\)\{lx=a0\.x\+(\d+);", "LABEL_SIDE"))
 
     def test_every_offset_the_model_measures_with_is_the_script_s(self):
-        for pattern, name in ((r"lx=rt\?p2\.x-(\d+):", "LABEL_BEND"),
-                              (r"ly=base\(e\.path\[1\]\[1\]\)-(\d+)", "LABEL_OVER"),
-                              (r"\(p1\.y\+p2\.y\)/2\)\+(\d+);", "LABEL_DROP"),
-                              (r"e\.sa==='B'\)\{lx=a0\.x\+(\d+);", "LABEL_BESIDE"),
-                              (r"e\.sa==='B'\)\{lx=a0\.x\+\d+;ly=a0\.y\+(\d+)\}", "LABEL_BELOW"),
-                              (r"e\.sa==='T'\)\{lx=a0\.x\+\d+;ly=a0\.y-(\d+)\}", "LABEL_ABOVE"),
-                              (r"e\.sa==='R'\)\{lx=a0\.x\+(\d+);", "LABEL_SIDE")):
+        for pattern, name in self.OFFSETS:
             with self.subTest(constant=name):
                 found = re.findall(pattern, self.SCRIPT)
                 self.assertEqual(len(found), 1, f"{pattern!r} in template/js/flow.js")
                 self.assertEqual(int(found[0]), getattr(labels, name))
 
-    def test_the_two_copies_of_every_number_agree(self):
-        """Until the label loop moves over, `diagrams/flow.py` carries its own copy of every number
-        but LABEL_OVER, which it has no place for: one of them drifting would leave the model
-        measuring a place the planner does not."""
+    def test_there_is_one_copy_of_each_and_it_is_this_module_s(self):
+        """diagrams/flow.py carries the names the tests that hold the script to them reach for, and
+        carries them by import: a second definition there could drift from the model that measures
+        with it. LINE_CLEAR and the rest of the capacity numbers are flow.py's own and stay there."""
         for name in ("LABEL_BEND", "LABEL_SIDE", "LABEL_BESIDE", "LABEL_BELOW", "LABEL_ABOVE",
                      "LABEL_DROP", "LABEL_CLEAR", "LINE_REACH", "LABEL_WORD"):
             with self.subTest(constant=name):
-                self.assertEqual(getattr(labels, name), getattr(flow, name))
+                self.assertEqual(getattr(flow, name), getattr(labels, name))
+                self.assertIsNone(re.search(rf"^{name} = ", self.SOURCE, re.M),
+                                  f"diagrams/flow.py defines {name} again")
+        self.assertIsNotNone(re.search(r"^LINE_CLEAR = ", self.SOURCE, re.M))
 
 
 if __name__ == "__main__":
