@@ -9,7 +9,7 @@ grid and groups: `reference/common.md`.
 |---|---|---|
 | `nodes[].id` | yes | lowercase latin, digits, `_`; a trailing `?` makes a decision |
 | `nodes[].kind` | no | `step` (default in flow and swimlane), `decision`, `terminal`, `note`, `state` (default in state), `block` (default in blocks) |
-| `nodes[].title` | yes | one line; widget: 22 characters at 3 columns (decision 19), 15 at 4 (decision 12), 9 in a 5-lane swimlane; page: 28 at 4 columns, 16 at 6 |
+| `nodes[].title` | yes | one line; widget: 22 characters at 3 columns (decision 19), 15 at 4 (decision 12), 8 in a 5-lane swimlane; page: 28 at 4 columns, 16 at 6 |
 | `nodes[].text` | no | at most two lines, about twice the title budget; `[n]` at the end references a footnote; not shown on a terminal |
 | `nodes[].group` | no | a key of `groups`; in a swimlane the lane gives the colour and a different `group` is an error |
 | `nodes[].items` | no | `block` only: at most 5, each at most two lines (44 characters at 3 widget columns) |
@@ -61,16 +61,17 @@ An algorithm: steps, decisions, outcomes. The renderer routes the lines.
 
 ### Grid and routing
 
-Place nodes with the map. Put the main path down the first column and
-branches to the right, so that most lines are short; a node placed far from
-its neighbours produces long detours. Lines run along the gutters between
-columns and rows, including the outer margins, and across empty cells, never
-through a node. A line prefers to leave a node downward or sideways and to
-enter from above, so a back edge (a loop to an earlier step) is drawn along
-the margin. Parallel lines in one gutter are spread apart, and a gutter,
-margin or empty row holds only so many (an error, below). `--check` prints the
-map with the routed lines and the number of line crossings; three or more
-crossings are a warning.
+Place nodes with the map. Put the main path down the first column and branches
+to the right, so that most lines are short; a node placed far from its
+neighbours produces long detours. Any two cells can be connected: lines run
+along the gutters between columns and rows, including the outer margins, and
+across empty cells, never through a node. A line prefers to leave a node
+downward or sideways and to enter from above, so a back edge (a loop to an
+earlier step) is drawn round the side of the cards, along a gutter or a
+margin. Parallel lines in one gutter are spread apart, and a gutter, margin or
+empty row holds only so many (an error, below). `--check` prints the map with
+the routed lines and the number of line crossings; three or more crossings are
+a warning.
 
 Where a gutter holds more lines than fit or three lines cross, stderr also
 carries an advice: a headline with what the moves buy (extra lines, crossings
@@ -105,9 +106,10 @@ line or another label off it.
   ends it.
 - A straight sideways exit: from 3 px off the card edge, above its line and
   else below. Into an occupied neighbour the room is the gutter less 5 px:
-  23 px in a widget flow, state or blocks, 27 px on a page, 13 px in a widget
-  swimlane. "да", "нет", "RED" fit a flow, "нет ①" (32 px) fits none of them.
-  Into an empty neighbour: a gutter and a card width less 20 px.
+  23 px in a widget flow, state or blocks and in a page swimlane, 27 px in a
+  page flow, state or blocks, 13 px in a widget swimlane. "да", "нет", "RED"
+  fit a flow, "нет ①" (32 px) fits none of them. Into an empty neighbour: a
+  gutter and a card width less 20 px.
 - A horizontal second segment: over it, starting 6 px past the bend and
   running on away from the source, so a line that goes down and then sideways
   into its target has half a card and a gutter, not a whole cell; then under
@@ -139,15 +141,15 @@ reviewer will ask about ("проведи Марка по правилам").
 
 | kind, mode, columns | card | title, chars | text, chars (2 lines) | items, chars |
 |---|---|---|---|---|
-| flow, widget, 3 | 199 px | 22 (decision 19) | 48 | — |
-| flow, widget, 4 | 142 px | 15 (decision 12) | 32 | — |
-| swimlane, widget, 5 | 114 px | 9 | 24 | — |
-| state, widget, 2 | 312 px | 38 | 80 | — |
-| blocks, widget, 3 | 199 px | 22 | 48 | 44 each |
-| flow, page, 4 | 242 px | 28 | 60 | — |
-| flow, page, 6 | 151 px | 16 | 36 | — |
+| flow, widget, 3 | 196 px | 22 (decision 19) | 48 | — |
+| flow, widget, 4 | 140 px | 15 (decision 12) | 32 | — |
+| swimlane, widget, 5 | 114 px | 8 | 24 | — |
+| state, widget, 2 | 308 px | 37 | 80 | — |
+| blocks, widget, 3 | 196 px | 22 | 48 | 44 each |
+| flow, page, 4 | 239 px | 28 | 60 | — |
+| flow, page, 6 | 149 px | 16 | 36 | — |
 
-Counts assume Cyrillic; Latin fits about a fifth more. A title never wraps,
+Counts assume Cyrillic; Latin fits about 9% more. A title never wraps,
 text wraps by words, and a word wider than the box is refused: the card
 clips such a word instead of breaking it, so shorten it or spell it in
 words. A hub state or step
@@ -195,7 +197,7 @@ A flow whose columns are participants and whose rows are steps in time.
   comes from its lane; a `group` that disagrees with the lane is an error.
 - Rows are numbered automatically and the number appears in each node. Two
   nodes in one row read as simultaneous and raise a warning.
-- Up to 5 lanes in widget mode (cards about 114 px, titles up to about 9
+- Up to 5 lanes in widget mode (cards about 114 px, titles up to about 8
   characters), 7 in page mode. Merge minor participants into one lane rather
   than exceeding the limit.
 - Everything else (edges, labels, footnotes, routes, checks) is as in `flow`.
