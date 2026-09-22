@@ -778,6 +778,18 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   giving the second descent only half the budget
   (`WithinTheBudget.test_the_second_descent_gets_what_the_first_one_left`, same file), and releasing
   the first-row constraint (`tests/test_advice.py`, `TheFirstRow.test_the_one_move_the_rule_exists_to_refuse`).
+  Three additional scratch-only mutations bring the total to six. In `skills/drawing-diagrams/render.py`,
+  discarding width overrides in `advise()` failed
+  `RenderCli.test_the_advice_is_searched_at_the_width_the_render_was_given`
+  (`tests/test_render_cli.py`): the 440 px advice repeated the default-width move (`assertNotIn`).
+  Removing the overflow branch of `triggered()` failed
+  `RenderCli.test_a_group_over_its_capacity_is_advised_with_the_crossings_under_the_threshold`
+  (same file): `read_block()` found no advice block instead of one. Replacing each step's changed
+  metric with the headline metric in `advice_block()` failed
+  `RenderCli.test_no_step_of_the_seeded_populations_blocks_stands_still`
+  (same file): `assertNotEqual` rejected unchanged printed counts in four seeded instances.
+  For each additional mutation, baseline/mutant/restored exit statuses were 0/1/0; all mutant
+  failures were assertions in the named test, and the restored source matched the candidate.
   This is present-day confirmation, not historical approval: the original detailed reviewer and
   findings artifacts were unavailable. The earlier stage measurements, including E6, remain
   historical results; this maintenance does not change the label optimizer's documented limits.
