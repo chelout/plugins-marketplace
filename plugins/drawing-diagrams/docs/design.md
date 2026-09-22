@@ -863,8 +863,9 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - `schema.plan` and `timeline.plan` now have every validation check asserted by its exact message:
   `tests/test_schema_validation.py` covers `schema.plan` and the helpers it validates through —
   `parse_grid`, `check_placement`, `parse_edge` — and `tests/test_timeline_validation.py` covers
-  `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16); the
-  rest of its diagnostics — edge, route, footnote, label, routing and the layout-error raises — stay
+  `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16) and of
+  four sites their models reach in passing — the grid width, the empty-row and empty-column warnings,
+  and one of the model-error raises; the rest of its diagnostics — edge, route, footnote, label, routing and the layout-error raises — stay
   outside that set. Of its 52 validation sites, eleven are held by no test at all: the unknown node
   and the self link of an edge, an edge's undescribed footnote, an over-long label, an unused
   footnote, the three route checks, the unroutable edge, the warning that two labels land in one
@@ -889,5 +890,6 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   diagram; a `lanes` list whose items are unhashable raises `TypeError` instead of a model error; a
   moment, or a `states`, that is not a mapping raises `AttributeError`, as a node does in `flow.plan`;
   `timeline`'s entity label keeps the white-space hole the title had; and `reference/timeline.md`
-  calls a moment's rail mark "(t1, a date)" while a date-shaped label is refused in both modes —
-  `момент t1: метка '2026-09-22' шире рельса; укоротите`.
+  calls a moment's rail mark "(t1, a date)" and gives it about six characters, so a written-out date
+  does not fit the rail it is invited into: `2026-09-22` and `22.09.2026` are refused in both modes —
+  `момент t1: метка '2026-09-22' шире рельса; укоротите` — while `22.09` or `2026` plan.
