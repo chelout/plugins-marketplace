@@ -54,5 +54,16 @@ class AssetsTool(unittest.TestCase):
         self.assertIn("REF", err)
 
 
+class ShippedDist(unittest.TestCase):
+    """The shipped build, not a temporary one: template/dist is what jsDelivr serves, and a widget
+    links to it instead of carrying the fragments, so a change under template/css or template/js
+    that skips the rebuild publishes assets its sources no longer describe."""
+
+    def test_dist_matches_a_fresh_build(self):
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            code = tool.check()
+        self.assertEqual(code, 0, err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
