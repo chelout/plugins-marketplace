@@ -865,10 +865,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `parse_grid`, `check_placement`, `parse_edge` — and `tests/test_timeline_validation.py` covers
   `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16); the
   rest of its diagnostics — edge, route, footnote, label, routing and the layout-error raises — stay
-  outside that set. Of its 52 validation sites, ten are held by no test at all: the unknown node and
-  the self link of an edge, an edge's undescribed footnote, an over-long label, an unused footnote,
-  the three route checks, the unroutable edge and the shared-stretch warning. With all ten
-  neutralized the whole suite stays green. The schema set was enumerated by an AST
+  outside that set. Of its 52 validation sites, eleven are held by no test at all: the unknown node
+  and the self link of an edge, an edge's undescribed footnote, an over-long label, an unused
+  footnote, the three route checks, the unroutable edge, the warning that two labels land in one
+  place, and the first of the two layout-error raises — that one decides only when a refusal is
+  raised, not whether. The first ten neutralized together leave the whole suite green, and the
+  eleventh does so on its own. The schema set was enumerated by an AST
   sweep over `schema.py` and `grid.py` for every append to an error or warning list and every raise, so
   it is mechanical rather than read off by eye. Each kind's tests assert what its own `plan()` does:
   `flow` turns a layout or fit error into a `черновик: ` warning under `--draft`; `schema` refuses with
@@ -886,5 +888,6 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `--draft` and returns no `fit` list, so anything reading `ModelError.fit` gets nothing from a schema
   diagram; a `lanes` list whose items are unhashable raises `TypeError` instead of a model error; a
   moment, or a `states`, that is not a mapping raises `AttributeError`, as a node does in `flow.plan`;
-  `timeline`'s entity label keeps the white-space hole the title had; and `reference/timeline.md` shows
-  `{"label": "2026-09-22"}`, which the rail-width check refuses in both modes.
+  `timeline`'s entity label keeps the white-space hole the title had; and `reference/timeline.md`
+  calls a moment's rail mark "(t1, a date)" while a date-shaped label is refused in both modes —
+  `момент t1: метка '2026-09-22' шире рельса; укоротите`.
