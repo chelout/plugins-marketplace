@@ -66,7 +66,9 @@ def plan(model, mode_name, overrides=None, draft=False):
         label = m.get("label") or mid
         if text_width(label) > mode["rail"] - 18:
             layout_errors.append(f"момент {mid}: метка {label!r} шире рельса; укоротите")
-        if not m.get("title"):
+        # a title of white space alone draws a card with an empty heading, exactly as a missing one
+        # would, so it is no title at all — the reading flow.plan gives a node's title
+        if not str(m.get("title") or "").strip():
             errors.append(f"момент {mid}: нет title")
             continue
         tag = m.get("tag") or ""
