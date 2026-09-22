@@ -1,7 +1,7 @@
- function pt(t,c,s){var rr=grid.getBoundingClientRect(),card=grid.querySelector('[data-t="'+t+'"]'),cr=card.getBoundingClientRect(),x,y;
-  if(c){var r=card.querySelector('[data-c="'+c+'"]').getBoundingClientRect();y=r.top+r.height/2-rr.top}else{y=(s==='T'?cr.top:cr.bottom)-rr.top}
-  x=s==='L'?cr.left-rr.left:s==='R'?cr.right-rr.left:cr.left+cr.width/2-rr.left;return{x:x,y:y}}
- drawKind.schema=function(rr){var T=tracks();
+ function pt(t,c,s){var card=grid.querySelector('[data-t="'+t+'"]'),cr=box(card),x,y;
+  if(c){var r=box(card.querySelector('[data-c="'+c+'"]'));y=(r.top+r.bottom)/2}else{y=s==='T'?cr.top:cr.bottom}
+  x=s==='L'?cr.left:s==='R'?cr.right:(cr.left+cr.right)/2;return{x:x,y:y}}
+ drawKind.schema=function(){var T=tracks();
   var M=Math.max(8,(+getComputedStyle(sec).getPropertyValue('--dg-padl').replace('px','')||14)-6);
   function gx(c,side){if(side==='R')return c+1<T.C?(T.cols[c].r+T.cols[c+1].l)/2:T.cols[c].r+M;return c>0?(T.cols[c-1].r+T.cols[c].l)/2:T.cols[c].l-M}
   E.forEach(function(e){var A=pt.apply(null,e.a),B=pt.apply(null,e.b),g=document.createElementNS(NS,'g'),off=e.off||0,d;g.setAttribute('data-e',e.a[0]+' '+e.b[0]);

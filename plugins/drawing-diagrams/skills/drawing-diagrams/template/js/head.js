@@ -12,21 +12,21 @@ function init(sec){
  var grid=sec.querySelector('.dg-grid'),svg=sec.querySelector('.dg-svg'),all=sec.querySelector('.dg-all'),ej=sec.querySelector('.dg-edges');
  if(!grid||!svg||!ej)return;
  var E=JSON.parse(ej.textContent||'[]');
- var L=JSON.parse(sec.getAttribute('data-labels')||'{}');var active=null,drawKind={},ready=[];
+ var L=JSON.parse(sec.getAttribute('data-labels')||'{}');var active=null,drawKind={},ready=[],rr,k=1;
  function mark(g,P,s,kind,muted){var d=DIR[s],p=[d[1],d[0]];
   if(kind==='arrow'){var ax=P.x-d[0]*9,ay=P.y-d[1]*9,f2=document.createElementNS(NS,'path');
    f2.setAttribute('d','M'+P.x+' '+P.y+'L'+(ax+p[0]*4.5)+' '+(ay+p[1]*4.5)+'L'+(ax-p[0]*4.5)+' '+(ay-p[1]*4.5)+'Z');f2.setAttribute('class','arrow'+(muted?' m':''));g.appendChild(f2);return}
   if(kind==='one'){var c=document.createElementNS(NS,'circle');c.setAttribute('cx',P.x+d[0]*3);c.setAttribute('cy',P.y+d[1]*3);c.setAttribute('r',3.2);if(muted)c.setAttribute('class','m');g.appendChild(c)}
   else if(kind==='many'){var qx=P.x+d[0]*11,qy=P.y+d[1]*11,f=document.createElementNS(NS,'path');
    f.setAttribute('d','M'+qx+' '+qy+'L'+(P.x+p[0]*6)+' '+(P.y+p[1]*6)+'M'+qx+' '+qy+'L'+P.x+' '+P.y+'M'+qx+' '+qy+'L'+(P.x-p[0]*6)+' '+(P.y-p[1]*6));if(muted)f.setAttribute('class','m');g.appendChild(f)}}
- function tracks(){var rr=grid.getBoundingClientRect(),cols={},rows={};
-  grid.querySelectorAll('.dg-c[data-r]').forEach(function(c){var r=c.getBoundingClientRect(),ci=+c.getAttribute('data-c'),ri=+c.getAttribute('data-r');
-   var l=r.left-rr.left,rt=r.right-rr.left,t=r.top-rr.top,b=r.bottom-rr.top;
+ function box(el){var r=el.getBoundingClientRect();return{left:(r.left-rr.left)/k,right:(r.right-rr.left)/k,top:(r.top-rr.top)/k,bottom:(r.bottom-rr.top)/k}}
+ function tracks(){var cols={},rows={};
+  grid.querySelectorAll('.dg-c[data-r]').forEach(function(c){var r=box(c),ci=+c.getAttribute('data-c'),ri=+c.getAttribute('data-r');
+   var l=r.left,rt=r.right,t=r.top,b=r.bottom;
    cols[ci]=cols[ci]?{l:Math.min(cols[ci].l,l),r:Math.max(cols[ci].r,rt)}:{l:l,r:rt};
    rows[ri]=rows[ri]?{t:Math.min(rows[ri].t,t),b:Math.max(rows[ri].b,b)}:{t:t,b:b}});
-  var C=+getComputedStyle(sec).getPropertyValue('--dg-cols'),R=0;Object.keys(rows).forEach(function(k){R=Math.max(R,+k+1)});
+  var C=+getComputedStyle(sec).getPropertyValue('--dg-cols'),R=0;Object.keys(rows).forEach(function(n){R=Math.max(R,+n+1)});
   for(var r=0;r<R;r++)if(!rows[r]){var up=r-1,dn=r+1;while(up>=0&&!rows[up])up--;while(dn<R&&!rows[dn])dn++;var y=(up>=0&&dn<R)?(rows[up].b+rows[dn].t)/2:(up>=0?rows[up].b+20:rows[dn].t-20);rows[r]={t:y,b:y}}
-  // Empty columns still occupy explicit CSS tracks, even before the first card.
   var gs=getComputedStyle(grid),widths=gs.gridTemplateColumns.split(/\s+/).map(parseFloat),gap=parseFloat(gs.columnGap),x=parseFloat(gs.paddingLeft);
   for(var c=0;c<C;c++){var w=widths[c];if(!cols[c])cols[c]={l:x,r:x+w};x+=w+gap}
   return{cols:cols,rows:rows,C:C,R:R}}
