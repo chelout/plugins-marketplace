@@ -2012,7 +2012,8 @@ class FindChrome(unittest.TestCase):
 
 class RunChromeRetry(unittest.TestCase):
     """run_chrome with the browser replaced: a run that times out or prints no probe is run once
-    more, and a second such failure raises the HarnessError a single run raises."""
+    more, and a second such failure raises the HarnessError a single run raises, as a HarnessError
+    and nothing else; any other error of a run propagates after that one run."""
 
     PAGE = Path("/nonexistent/retry.html")
     PROBED = subprocess.CompletedProcess([], 0, stdout='<pre id="probe">{"lines": []}</pre>', stderr="")
@@ -2034,15 +2035,32 @@ class RunChromeRetry(unittest.TestCase):
         self.assertEqual(self.run_with(self.SILENT, self.PROBED), {"lines": []})
         self.assertEqual(self.calls, 2)
 
+    def raised_by(self, *outcomes):
+        """What run_chrome raises on `outcomes`, whatever its class: caught here, a SkipTest or any
+        other error fails the assertion on its class instead of ending the test skipped."""
+        try:
+            self.run_with(*outcomes)
+        except Exception as exc:
+            return exc
+        self.fail("run_chrome returned instead of raising")
+
     def test_retry_that_times_out_again_raises(self):
-        with self.assertRaisesRegex(HarnessError, rf"^retry\.html: browser did not finish in {BROWSER_TIMEOUT} s$"):
-            self.run_with(self.SILENT, self.TIMEOUT)
+        exc = self.raised_by(self.SILENT, self.TIMEOUT)
+        self.assertIs(type(exc), HarnessError, repr(exc))
+        self.assertRegex(str(exc), rf"^retry\.html: browser did not finish in {BROWSER_TIMEOUT} s$")
         self.assertEqual(self.calls, 2)
 
     def test_retry_without_probe_again_raises(self):
-        with self.assertRaisesRegex(HarnessError, r"^retry\.html: no probe output \(exit 1\); stderr tail: 'crashed'$"):
-            self.run_with(self.TIMEOUT, self.SILENT)
+        exc = self.raised_by(self.TIMEOUT, self.SILENT)
+        self.assertIs(type(exc), HarnessError, repr(exc))
+        self.assertRegex(str(exc), r"^retry\.html: no probe output \(exit 1\); stderr tail: 'crashed'$")
         self.assertEqual(self.calls, 2)
+
+    def test_an_error_other_than_a_silent_run_is_not_retried(self):
+        # subprocess.run itself failing (the binary cannot be executed) is not a silent run
+        exc = self.raised_by(OSError(8, "Exec format error"), self.PROBED)
+        self.assertIs(type(exc), OSError, repr(exc))
+        self.assertEqual(self.calls, 1)
 
     def test_no_retry_after_a_first_run_that_answers(self):
         self.assertEqual(self.run_with(self.PROBED), {"lines": []})
