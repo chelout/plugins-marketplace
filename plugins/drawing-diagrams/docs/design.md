@@ -836,9 +836,11 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   fragments, which ship verbatim; the one PR #15 added is removed. `run_chrome` runs a page whose
   headless run timed out or printed no probe once more before failing (`RunChromeRetry`).
   `NodeValidation` (`tests/test_node_validation.py`) now asserts every group, lane and node check of
-  `flow.plan` by its exact message: fourteen more, among them duplicate and malformed ids, an
-  undescribed node footnote, items on a non-block, more than five items, terminal text and the lane
-  checks.
+  `flow.plan` — 33 checks — by its whole message in widget and page, with draft off and on: an error
+  as an error, a warning as a warning, a layout or fit error as fatal without draft and a draft
+  warning with it, a fit error with its per-mode numbers and advice. Grid, edge, route,
+  footnote-collection and routing diagnostics are outside that set. `schema.plan` and `timeline.plan`
+  have analogous checks that are not held this way; holding some of them would change behaviour.
 - Left as it was: the `tracks()` harness gives `columnGap` and `--dg-gap` the same value. The page
   cannot tell them apart either — `--dg-gap` is always written in px and `column-gap` is
   `var(--dg-gap)` — so a test separating them would hold a state no page reaches.
