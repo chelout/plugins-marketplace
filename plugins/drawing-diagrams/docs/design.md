@@ -819,8 +819,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   derives the scale `k = rect width / offsetWidth` (1 when either is 0); the `viewBox` is the grid's
   layout size, `rect / k`; one helper, `box()` in `template/js/head.js`, turns every other measured
   rectangle into layout pixels as `(r - rect) / k`. Computed-style lengths — track widths, column gap,
-  left padding, `--dg-padl` — are used as they are. `getBoundingClientRect` appears only in `draw()`
-  and `box()`, so a new measurement cannot skip the conversion without adding a third call.
+  left padding, `--dg-padl` — are used as they are. Only `draw()` and `box()` measure a rectangle; a
+  test fails on any other use of `getBoundingClientRect`, `getClientRects`, `getBoxQuads` or
+  `getScreenCTM` in `template/js`. A method name assembled at run time is beyond that scan; the scaled
+  drawings below hold it where they reach.
 - Under a transform the whole drawing now scales with the cards: the path data and text positions are
   the same as in the unscaled page, a label is 6 px high and an arrowhead 4.5 by 4.5 px at scale 0.5.
   At `k = 1` nothing moves: a differential over 161 diagrams on 21 pages (every shipped example in
@@ -831,13 +833,14 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   an empty column beside the tables an edge leaves from, unscaled and scaled; the scaled page must draw
   the unscaled drawing, and every box on screen must be `k` times its unscaled size. Before the change
   it failed only in the scaled configurations. An atlas page of 18 flow and schema diagrams — shipped
-  examples, browser-suite models and constructed ones — is drawn at 1, 0.5 and 1.5 under the same
-  comparison, and a test asserts that together they reach every place where a measurement, a
-  computed length or a drawing constant enters a coordinate: the row-overlap band and its clamp,
-  vertical and side exits, slot offsets, labels, markers, the outer margin and schema's routes. One
-  such place is not held under scale: the 16 px threshold of `base()` in `flow.js`, because every
-  band a real card makes is taller than 16 x 1.5 px. A test holds `getBoundingClientRect` in
-  `template/js` to `draw()` and `box()`. The `tracks()` harness (`tests/test_tracks.py`) runs
+  examples, browser-suite models and constructed ones — is drawn at 1, 0.5, 1.5 and 2 under the same
+  comparison, and a test asserts that together they reach each place on its list where a
+  measurement, a computed length or a drawing constant enters a coordinate: the row-overlap band, its
+  thresholds and clamp, vertical and side exits, slot offsets, labels, markers, the outer margin and
+  schema's routes. It counts a margin, an empty row or a slot offset only where the drawn point keeps
+  that coordinate, not where an endpoint clamp replaces it. What a scale comparison cannot see is a
+  drawing constant changed the same way at every scale; for this change the one-off differential
+  above holds that. The `tracks()` harness (`tests/test_tracks.py`) runs
   `draw()` with scaled rectangles and reads only the functions it runs, no longer `head.js` to the end
   of the file. `ShippedSource` (`tests/test_assets.py`) keeps comments out of the `template/js`
   fragments, which ship verbatim; the one PR #15 added is removed. `run_chrome` runs a page whose
