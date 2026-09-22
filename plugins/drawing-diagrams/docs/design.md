@@ -899,9 +899,10 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - The eleven validation sites of `flow.plan` that section 17 found held by no test each have a test in
   `tests/test_node_validation.py` now, asserting its exact message: the unknown node and the self link
   of an edge, an edge's undescribed footnote, an over-long label, an unused footnote, the three route
-  checks, the unroutable edge, two labels in one place, and the refusal raised before routing. Each of
-  the eleven, neutralized alone, fails its own test and no other; before these tests, all eleven
-  survived that file.
+  checks, the unroutable edge, two labels in one place, and the refusal raised after routing and before
+  the lines are placed. Each of the eleven, neutralized alone, fails its own test and no other; before
+  these tests, all eleven survived that file. The lower bound of the footnote check, an edge footnote
+  `[0]`, is held as well.
 - With them every one of the 52 validation sites of `flow.plan` fails a test when neutralized alone.
   `tests/test_node_validation.py` kills 48 of them; the other four are killed elsewhere — the
   overfull-group error by `tests/test_capacity.py`, the warning that a label will cross a line by
@@ -910,8 +911,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - No model reaches the unroutable-edge refusal: a card blocks only its own lattice point, and every
   card keeps a free gutter on each of its four sides, so the router always finds a path. Its test
   answers the edge with no route through a stubbed router.
-- The refusal raised before routing is held by what it keeps out: without `--draft` the model is
-  refused with the error found before routing alone, while with `--draft` the same model also carries
-  the label fit error that placement adds later.
+- The refusal raised after routing and before the lines are placed is held by what it keeps out:
+  without `--draft` a model is refused with the error found up to that point alone, while with
+  `--draft` the same model also carries what placement adds later — a label's fit error in one test, a
+  group past its line's capacity in another. No test can tell whether it comes before or after routing
+  itself: the only error routing adds is the unroutable edge, which no model reaches.
 - Left as found: an edge or a route that names a list escapes `flow.plan` as a `TypeError` instead of
   a model error.
+- The full suite at the tests' final state (commit `162d3ae`) runs 577 tests, all passing, none
+  skipped.
