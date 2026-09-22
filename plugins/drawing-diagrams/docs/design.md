@@ -802,4 +802,46 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   fixture.
 - The rebuilt assets are pinned by `template/dist/REF` to local commit
   `e8df5f7030e6461ac1db00ddea97f5946817687a`. Live CDN verification remains pending publication and
-  merge, following the release sequence in section 13.
+  merge, following the release sequence in section 13. (It passed after the merge; see section 16.)
+
+## 16. The drawing's coordinate system (amendment, 2026-09-22)
+
+- The live CDN verification that section 15 left pending passed after PR #15 was merged:
+  `tools/assets.py verify-cdn` found `dg.js` and `dg.css` served byte for byte at `e8df5f7`.
+- The review of PR #15 found the drawing layer mixing two coordinate systems. `draw()` set the SVG
+  `viewBox` to the grid's bounding rectangle, in screen pixels, although the SVG sits inside the grid
+  and an ancestor transform already scales it; PR #15 then took empty-column bounds from computed
+  style, in layout pixels. Under `transform: scale(0.5)` a line through an empty column overshot its
+  target and came back, and labels, arrowheads, the outer margin and the side-exit insets kept their
+  full size while the cards halved (a label 13 px high, an arrowhead 9 by 9 px, a card title 26.6 to
+  13.3 px).
+- The drawing now works in the grid's own layout coordinates. `draw()` measures the grid once and
+  derives the scale `k = rect width / offsetWidth` (1 when either is 0); the `viewBox` is the grid's
+  layout size, `rect / k`; one helper, `box()` in `template/js/head.js`, turns every other measured
+  rectangle into layout pixels as `(r - rect) / k`. Computed-style lengths — track widths, column gap,
+  left padding, `--dg-padl` — are used as they are. `getBoundingClientRect` appears only in `draw()`
+  and `box()`, so a new measurement cannot skip the conversion without adding a third call.
+- Under a transform the whole drawing now scales with the cards: the path data and text positions are
+  the same as in the unscaled page, a label is 6 px high and an arrowhead 4.5 by 4.5 px at scale 0.5.
+  At `k = 1` nothing moves: a differential over 161 diagrams on 21 pages (every shipped example in
+  both modes and the empty-column pages) compared 5 687 drawn numbers with the previous script and
+  found no difference.
+- Tests. `EmptyColumnsBrowser` (`tests/test_empty_columns.py`) also renders its cases inside
+  `scale(0.5)` — flow and swimlane in page mode at the default width — and adds schema diagrams with
+  an empty column beside the tables an edge leaves from, unscaled and scaled; the scaled page must draw
+  the unscaled drawing, and every box on screen must be `k` times its unscaled size. Before the change
+  it failed only in the scaled configurations. The `tracks()` harness (`tests/test_tracks.py`) runs
+  `draw()` with scaled rectangles and reads only the functions it runs, no longer `head.js` to the end
+  of the file. `ShippedSource` (`tests/test_assets.py`) keeps comments out of the `template/js`
+  fragments, which ship verbatim; the one PR #15 added is removed. `run_chrome` runs a page whose
+  headless run timed out or printed no probe once more before failing (`RunChromeRetry`).
+  `NodeValidation` (`tests/test_node_validation.py`) now asserts every group, lane and node check of
+  `flow.plan` by its exact message: fourteen more, among them duplicate and malformed ids, an
+  undescribed node footnote, items on a non-block, more than five items, terminal text and the lane
+  checks.
+- Left as it was: the `tracks()` harness gives `columnGap` and `--dg-gap` the same value. The page
+  cannot tell them apart either — `--dg-gap` is always written in px and `column-gap` is
+  `var(--dg-gap)` — so a test separating them would hold a state no page reaches.
+- `dg.js` shrinks from 10 083 to 9 909 bytes. `template/dist/REF` names
+  `e9c17343c56f506f94b8afbca60be9a677518ea5`; the live CDN verification follows the merge, per
+  section 13.
