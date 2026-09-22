@@ -830,7 +830,14 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `scale(0.5)` — flow and swimlane in page mode at the default width — and adds schema diagrams with
   an empty column beside the tables an edge leaves from, unscaled and scaled; the scaled page must draw
   the unscaled drawing, and every box on screen must be `k` times its unscaled size. Before the change
-  it failed only in the scaled configurations. The `tracks()` harness (`tests/test_tracks.py`) runs
+  it failed only in the scaled configurations. An atlas page of 18 flow and schema diagrams — shipped
+  examples, browser-suite models and constructed ones — is drawn at 1, 0.5 and 1.5 under the same
+  comparison, and a test asserts that together they reach every place where a measurement, a
+  computed length or a drawing constant enters a coordinate: the row-overlap band and its clamp,
+  vertical and side exits, slot offsets, labels, markers, the outer margin and schema's routes. One
+  such place is not held under scale: the 16 px threshold of `base()` in `flow.js`, because every
+  band a real card makes is taller than 16 x 1.5 px. A test holds `getBoundingClientRect` in
+  `template/js` to `draw()` and `box()`. The `tracks()` harness (`tests/test_tracks.py`) runs
   `draw()` with scaled rectangles and reads only the functions it runs, no longer `head.js` to the end
   of the file. `ShippedSource` (`tests/test_assets.py`) keeps comments out of the `template/js`
   fragments, which ship verbatim; the one PR #15 added is removed. `run_chrome` runs a page whose
