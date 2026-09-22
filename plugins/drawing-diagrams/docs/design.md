@@ -866,7 +866,7 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16) and of
   four sites their models reach in passing — the grid width, the empty-row and empty-column warnings,
   and one of the model-error raises; the rest of its diagnostics — edge, route, footnote, label, routing and the layout-error raises — stay
-  outside that set. Of its 52 validation sites, eleven are held by no test at all: the unknown node
+  outside that set. Of its 52 validation sites, eleven are held by no test at all (closed in section 18): the unknown node
   and the self link of an edge, an edge's undescribed footnote, an over-long label, an unused
   footnote, the three route checks, the unroutable edge, the warning that two labels land in one
   place, and the first of the two layout-error raises — that one decides only when a refusal is
@@ -893,3 +893,25 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   calls a moment's rail mark "(t1, a date)" and gives it about six characters, so a written-out date
   does not fit the rail it is invited into: `2026-09-22` and `22.09.2026` are refused in both modes —
   `момент t1: метка '2026-09-22' шире рельса; укоротите` — while `22.09` or `2026` plan.
+
+## 18. The last eleven checks of `flow.plan` (amendment, 2026-09-22)
+
+- The eleven validation sites of `flow.plan` that section 17 found held by no test each have a test in
+  `tests/test_node_validation.py` now, asserting its exact message: the unknown node and the self link
+  of an edge, an edge's undescribed footnote, an over-long label, an unused footnote, the three route
+  checks, the unroutable edge, two labels in one place, and the refusal raised before routing. Each of
+  the eleven, neutralized alone, fails its own test and no other; before these tests, all eleven
+  survived that file.
+- With them every one of the 52 validation sites of `flow.plan` fails a test when neutralized alone.
+  `tests/test_node_validation.py` kills 48 of them; the other four are killed elsewhere — the
+  overfull-group error by `tests/test_capacity.py`, the warning that a label will cross a line by
+  `tests/test_labels.py`, the second layout-error raise by `tests/test_fit_messages.py`, and the
+  crossings warning by `tests/test_render_cli.py`.
+- No model reaches the unroutable-edge refusal: a card blocks only its own lattice point, and every
+  card keeps a free gutter on each of its four sides, so the router always finds a path. Its test
+  answers the edge with no route through a stubbed router.
+- The refusal raised before routing is held by what it keeps out: without `--draft` the model is
+  refused with the error found before routing alone, while with `--draft` the same model also carries
+  the label fit error that placement adds later.
+- Left as found: an edge or a route that names a list escapes `flow.plan` as a `TypeError` instead of
+  a model error.
