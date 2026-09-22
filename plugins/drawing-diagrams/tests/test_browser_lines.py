@@ -692,7 +692,20 @@ def run_chrome(chrome, page):
     """The probe output of `page` after it has drawn, as {"lines": [(data-e, d), ...], "texts":
     [[x, y, text-anchor] or None, ...], "labels": [[x, y, width, height] or None, ...], "cards":
     {id: [left, top, right, bottom]}}. No --user-data-dir:
-    on macOS a fresh profile directory keeps headless Chrome from exiting after --dump-dom."""
+    on macOS a fresh profile directory keeps headless Chrome from exiting after --dump-dom.
+
+    An occasional headless run on macOS exits or hangs without the page's output, so a run that
+    times out or prints no probe is run once more; a second such failure raises its HarnessError.
+    Anything else a run raises is not retried."""
+    try:
+        return chrome_once(chrome, page)
+    except HarnessError:
+        return chrome_once(chrome, page)
+
+
+def chrome_once(chrome, page):
+    """One headless run of `page`: its probe output, or HarnessError when the run times out or
+    prints no probe."""
     cmd = [chrome, "--headless=new", "--disable-gpu", "--window-size=1300,1200",
            "--virtual-time-budget=3000", "--dump-dom", page.as_uri()]
     try:
@@ -1995,6 +2008,63 @@ class FindChrome(unittest.TestCase):
         with mock.patch.dict(os.environ, {"DG_CHROME": "/nonexistent/chrome"}):
             with self.assertRaisesRegex(RuntimeError, "DG_CHROME"):
                 find_chrome()
+
+
+class RunChromeRetry(unittest.TestCase):
+    """run_chrome with the browser replaced: a run that times out or prints no probe is run once
+    more, and a second such failure raises the HarnessError a single run raises, as a HarnessError
+    and nothing else; any other error of a run propagates after that one run."""
+
+    PAGE = Path("/nonexistent/retry.html")
+    PROBED = subprocess.CompletedProcess([], 0, stdout='<pre id="probe">{"lines": []}</pre>', stderr="")
+    SILENT = subprocess.CompletedProcess([], 1, stdout="<html></html>", stderr="crashed")
+    TIMEOUT = subprocess.TimeoutExpired("chrome", BROWSER_TIMEOUT)
+
+    def run_with(self, *outcomes):
+        with mock.patch("subprocess.run", side_effect=list(outcomes)) as run:
+            try:
+                return run_chrome("chrome", self.PAGE)
+            finally:
+                self.calls = run.call_count
+
+    def test_retry_answers_after_a_timed_out_first_run(self):
+        self.assertEqual(self.run_with(self.TIMEOUT, self.PROBED), {"lines": []})
+        self.assertEqual(self.calls, 2)
+
+    def test_retry_answers_after_a_first_run_without_probe(self):
+        self.assertEqual(self.run_with(self.SILENT, self.PROBED), {"lines": []})
+        self.assertEqual(self.calls, 2)
+
+    def raised_by(self, *outcomes):
+        """What run_chrome raises on `outcomes`, whatever its class: caught here, a SkipTest or any
+        other error fails the assertion on its class instead of ending the test skipped."""
+        try:
+            self.run_with(*outcomes)
+        except Exception as exc:
+            return exc
+        self.fail("run_chrome returned instead of raising")
+
+    def test_retry_that_times_out_again_raises(self):
+        exc = self.raised_by(self.SILENT, self.TIMEOUT)
+        self.assertIs(type(exc), HarnessError, repr(exc))
+        self.assertRegex(str(exc), rf"^retry\.html: browser did not finish in {BROWSER_TIMEOUT} s$")
+        self.assertEqual(self.calls, 2)
+
+    def test_retry_without_probe_again_raises(self):
+        exc = self.raised_by(self.TIMEOUT, self.SILENT)
+        self.assertIs(type(exc), HarnessError, repr(exc))
+        self.assertRegex(str(exc), r"^retry\.html: no probe output \(exit 1\); stderr tail: 'crashed'$")
+        self.assertEqual(self.calls, 2)
+
+    def test_an_error_other_than_a_silent_run_is_not_retried(self):
+        # subprocess.run itself failing (the binary cannot be executed) is not a silent run
+        exc = self.raised_by(OSError(8, "Exec format error"), self.PROBED)
+        self.assertIs(type(exc), OSError, repr(exc))
+        self.assertEqual(self.calls, 1)
+
+    def test_no_retry_after_a_first_run_that_answers(self):
+        self.assertEqual(self.run_with(self.PROBED), {"lines": []})
+        self.assertEqual(self.calls, 1)
 
 
 if __name__ == "__main__":

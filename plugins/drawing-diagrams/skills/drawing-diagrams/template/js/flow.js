@@ -1,17 +1,17 @@
- drawKind.flow=function(rr){var T=tracks();
+ drawKind.flow=function(){var T=tracks();
   var M=Math.max(8,(+getComputedStyle(sec).getPropertyValue('--dg-padl').replace('px','')||14)-6);
   function bx(X){if(X%2===1)return (T.cols[(X-1)/2].l+T.cols[(X-1)/2].r)/2;var g=X/2;if(g===0)return T.cols[0].l-M;if(g===T.C)return T.cols[T.C-1].r+M;return (T.cols[g-1].r+T.cols[g].l)/2}
   function by(Y){if(Y%2===1)return (T.rows[(Y-1)/2].t+T.rows[(Y-1)/2].b)/2;var g=Y/2;if(g===0)return T.rows[0].t-M;if(g===T.R)return T.rows[T.R-1].b+M;return (T.rows[g-1].b+T.rows[g].t)/2}
-  var ov={};E.forEach(function(e){var q=e.path;[[e.sa,e.a,q[0][1]],[e.sb,e.b,q[q.length-1][1]]].forEach(function(s){if(s[0]!=='L'&&s[0]!=='R')return;var c=grid.querySelector('[data-t="'+s[1]+'"]').getBoundingClientRect(),t=c.top-rr.top,b=c.bottom-rr.top,o=ov[s[2]];ov[s[2]]=o?{t:Math.max(o.t,t),b:Math.min(o.b,b)}:{t:t,b:b}})});
+  var ov={};E.forEach(function(e){var q=e.path;[[e.sa,e.a,q[0][1]],[e.sb,e.b,q[q.length-1][1]]].forEach(function(s){if(s[0]!=='L'&&s[0]!=='R')return;var c=box(grid.querySelector('[data-t="'+s[1]+'"]')),t=c.top,b=c.bottom,o=ov[s[2]];ov[s[2]]=o?{t:Math.max(o.t,t),b:Math.min(o.b,b)}:{t:t,b:b}})});
   function base(Y){var o=Y%2===1&&ov[Y];return o&&o.b-o.t>16?(o.t+o.b)/2:by(Y)}
   function rowY(Y,oy){var o=Y%2===1&&ov[Y],y=base(Y)+oy;return o&&o.b-o.t>=20?Math.min(Math.max(y,o.t+10),o.b-10):y}
   E.forEach(function(e){var g=document.createElementNS(NS,'g');g.setAttribute('data-e',e.a+' '+e.b);
    var pts=e.path.map(function(p){return{x:bx(p[0])+p[2],y:rowY(p[1],p[3])}});
-   var ca=grid.querySelector('[data-t="'+e.a+'"]').getBoundingClientRect(),cb=grid.querySelector('[data-t="'+e.b+'"]').getBoundingClientRect();
-   function anchor(cr,side,nb){var l=cr.left-rr.left,r=cr.right-rr.left,t=cr.top-rr.top,b=cr.bottom-rr.top;
+   var ca=box(grid.querySelector('[data-t="'+e.a+'"]')),cb=box(grid.querySelector('[data-t="'+e.b+'"]'));
+   function anchor(cr,side,nb){var l=cr.left,r=cr.right,t=cr.top,b=cr.bottom;
     if(side==='B')return{x:nb.x,y:b};if(side==='T')return{x:nb.x,y:t};if(side==='L')return{x:l,y:nb.y};return{x:r,y:nb.y}}
-   function clampY(cr,y){var t=cr.top-rr.top+10,b=cr.bottom-rr.top-10;return Math.min(Math.max(y,t),b)}
-   function clampX(cr,x){var l=cr.left-rr.left+12,r=cr.right-rr.left-12;return Math.min(Math.max(x,l),r)}
+   function clampY(cr,y){var t=cr.top+10,b=cr.bottom-10;return Math.min(Math.max(y,t),b)}
+   function clampX(cr,x){var l=cr.left+12,r=cr.right-12;return Math.min(Math.max(x,l),r)}
    var n=pts.length,hA=(e.sa==='L'||e.sa==='R'),hB=(e.sb==='L'||e.sb==='R');
    if(hA)pts[1].y=clampY(ca,pts[1].y);else pts[1].x=clampX(ca,pts[1].x);
    if(hB)pts[n-2].y=clampY(cb,pts[n-2].y);else pts[n-2].x=clampX(cb,pts[n-2].x);
