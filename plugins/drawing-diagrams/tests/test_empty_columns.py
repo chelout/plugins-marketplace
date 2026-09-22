@@ -37,9 +37,10 @@
    gutters, adjacent and vertical routes, each with a slot offset. ATLAS names what each diagram is
    there for and the unscaled page is asserted to reach it -- from the payload the page was given
    and the cards it measured -- so a model edit that drops a member fails instead of leaving it
-   undrawn. A margin, an empty row or a slot offset counts only where the drawing keeps the
-   coordinate it sets: never at a line's ends, whose coordinates anchor() replaces, and next to them
-   not in the y of a side exit or the x of a straight exit that clampY or clampX took to its bound.
+   undrawn. A margin, an empty row or a slot offset is not counted where an endpoint replaces the
+   coordinate it sets: at a line's ends, whose coordinates anchor() replaces, and next to them in the
+   y of a side exit or the x of a straight exit that clampY or clampX took to its bound. The row
+   band's own clamp in rowY() is not read, so a slot y it bounded still counts.
    Every line is drawn with its arrowhead or end markers and its label at every scale.
    clamp-x, clamp-y, row-clamp-threshold and schema-vertical are drawing-layer payloads, not plans:
    on these pages a planned side exit's row band, never taller than its card, already holds it 10 px
@@ -347,11 +348,11 @@ def margin_member(kind, got):
 
 
 def kept(e, points, cards):
-    """(x, y) of each point of a flow line's path: whether the drawn point keeps the coordinate its
-    lattice line and slot offset set. flow.js replaces both coordinates of either end (anchor()), and
-    next to an end it bounds the y beside a side exit (clampY) and the x beside a straight exit
-    (clampX): that coordinate is kept only where the drawn point lies strictly inside the bound, so
-    that the clamp returned it unchanged."""
+    """(x, y) of each point of a flow line's path: whether no endpoint replaced the coordinate its
+    lattice line and slot offset set (rowY()'s band clamp is not read). flow.js replaces both
+    coordinates of either end (anchor()), and next to an end it bounds the y beside a side exit
+    (clampY) and the x beside a straight exit (clampX): that coordinate is kept only where the drawn
+    point lies strictly inside the bound, so that the clamp returned it unchanged."""
     path = e["path"]
     n = len(path)
     flags = [[0 < i < n - 1] * 2 for i in range(n)]

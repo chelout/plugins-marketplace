@@ -837,8 +837,8 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   comparison, and a test asserts that together they reach each place on its list where a
   measurement, a computed length or a drawing constant enters a coordinate: the row-overlap band, its
   thresholds and clamp, vertical and side exits, slot offsets, labels, markers, the outer margin and
-  schema's routes. It counts a margin, an empty row or a slot offset only where the drawn point keeps
-  that coordinate, not where an endpoint clamp replaces it. What a scale comparison cannot see is a
+  schema's routes. It does not count a margin, an empty row or a slot offset where an endpoint's
+  anchor or clamp replaces that coordinate. What a scale comparison cannot see is a
   drawing constant changed the same way at every scale; for this change the one-off differential
   above holds that. The `tracks()` harness (`tests/test_tracks.py`) runs
   `draw()` with scaled rectangles and reads only the functions it runs, no longer `head.js` to the end
