@@ -13,7 +13,11 @@ EDGE = [{"a": "a", "b": "b"}]
 CDN = "https://cdn.jsdelivr.net/gh/chelout/plugins-marketplace@{}/plugins/drawing-diagrams/skills/drawing-diagrams/template/dist/"
 REGEX_AFTER = "(,=:[!&|?{};+-*%<>~^"  # a `/` after one of these (or at the start) opens a regex literal
 FUNCTION = re.compile(r"function\s*([A-Za-z_$][\w$]*)?\s*\(")
-MEASURE = "getBoundingClientRect"
+# The screen-space rectangle APIs, as a set: every name holding ClientRect (getBoundingClientRect,
+# getClientRects), getBoxQuads and getScreenCTM.
+RECT_API = "ClientRect|getBoxQuads|getScreenCTM"
+RECT = re.compile(RECT_API)
+RECT_MEMBER = re.compile(r"\.[\w$]*(?:" + RECT_API + ")")
 
 
 def js_comments(source):
@@ -49,9 +53,10 @@ def js_comments(source):
 
 
 def measurements(source):
-    """(function, receiver) of every `.getBoundingClientRect(` call in `source`: the innermost
-    function around it, by its name or, for a function without one, by what it is assigned to, and
-    the expression the call is made on. Braces inside string literals open nothing."""
+    """(function, receiver) of every member access to a rectangle API of RECT in `source`, called or
+    not: the innermost function around it, by its name or, for a function without one, by what it is
+    assigned to, and the expression the access is made on. Braces inside string literals open
+    nothing."""
     found, stack, pending, i, n = [], [], None, 0, len(source)
     while i < n:
         ch = source[i]
@@ -71,7 +76,7 @@ def measurements(source):
             pending = None
         elif ch == "}":
             stack.pop()
-        elif source.startswith("." + MEASURE + "(", i):
+        elif RECT_MEMBER.match(source, i):
             owner = next((name for name in reversed(stack) if name), None)
             found.append((owner, re.search(r"([\w$.]*)$", source[:i]).group(1)))
         i += 1
@@ -88,12 +93,14 @@ class ShippedSource(unittest.TestCase):
     def test_only_draw_and_box_measure_a_rectangle(self):
         # The drawing works in the grid's own layout px: draw() measures the grid once per drawing and
         # box() takes every other rectangle back to it through that measurement. A rectangle measured
-        # anywhere else is in screen px, which differ from the grid's under a scaled ancestor.
+        # anywhere else is in screen px, which differ from the grid's under a scaled ancestor. The count
+        # takes every occurrence of a RECT name in a fragment, inside string literals too; a name put
+        # together at run time from pieces that hold none of them is beyond a static scan.
         self.assertEqual(sorted(measurements(assets.js_text())), [("box", "el"), ("draw", "grid")])
         for path in sorted((assets.TPL / "js").glob("*.js")):
             with self.subTest(fragment=path.name):
                 expected = {"head.js": [("box", "el")], "draw.js": [("draw", "grid")]}.get(path.name, [])
-                self.assertEqual(path.read_text().count(MEASURE), len(expected))
+                self.assertEqual(len(RECT.findall(path.read_text())), len(expected))
 
     def test_the_measurement_scanner_names_the_innermost_function(self):
         self.assertEqual(measurements("function f(a){var s='{',t=\"}\";a.getBoundingClientRect()}"),
@@ -103,6 +110,12 @@ class ShippedSource(unittest.TestCase):
         self.assertEqual(measurements("function f(){if(x){g(function(){e.getBoundingClientRect()})}}"),
                          [("?", "e")])
         self.assertEqual(measurements("x.getBoundingClientRect();function h(){}"), [(None, "x")])
+
+    def test_the_measurement_scanner_finds_every_rectangle_api(self):
+        self.assertEqual(measurements("function f(a){var c=a.getClientRects()[0],q=a.b.getBoxQuads();"
+                                      "g.getScreenCTM;a.getRect();a.offsetWidth;'.getClientRects()'}"),
+                         [("f", "a"), ("f", "a.b"), ("f", "g")])
+        self.assertEqual(len(RECT.findall("a['getBounding'+'ClientRect']();b.getBoxQuads()")), 2)
 
     def test_the_comment_scanner_skips_literals_and_finds_both_forms(self):
         self.assertEqual(js_comments("var a='http://x',b=\"/*\",c=`//`,d=/\\/\\//g,e=a.split(/\\s+/);"), [])

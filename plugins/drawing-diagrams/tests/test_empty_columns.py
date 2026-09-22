@@ -23,26 +23,32 @@
    the gutter between them (schema.plan via GL/GR). The gutter is drawn at the middle of the CSS
    track edges on either side, unscaled and inside the same transform. route right/left run
    outside the outermost column, which then holds both tables, so they never border an empty column.
-7. The atlas: one page of flow and schema diagrams, drawn unscaled and inside `transform:scale(0.5)`
-   and `scale(1.5)`, held by the comparison of case 5. Between them its diagrams reach every place of
-   template/js where a measured rectangle, a computed-style length or a drawing constant enters a
-   drawn coordinate, each where it changes that coordinate: slot offsets across and down, straight
-   exits up and down, the three label references, all four outer margins with M taken from the
-   padding, from its floor and from its fallback, the row line of a leading and of an interior empty
-   row, a row band taller than 16 px whose middle is not its row's, lines held by a band's 10 px inset
-   (among them a run between two bends on a band under 30 px, where a 20 px threshold taken in screen
-   px at scale 1.5 would not hold it; next to a line's ends clampY holds the same range), both
+7. The atlas: one page of flow and schema diagrams, drawn unscaled and inside `transform:scale(0.5)`,
+   `scale(1.5)` and `scale(2)`, held by the comparison of case 5. Between them its diagrams reach
+   every place of template/js where a measured rectangle, a computed-style length or a drawing
+   constant enters a drawn coordinate, each where it changes that coordinate: slot offsets across
+   and down, straight exits up and down, the three label references, all four outer margins with M
+   taken from the padding, from its floor and from its fallback, the row line of a leading and of an
+   interior empty row, a row band taller than 16 px whose middle is not its row's, lines held by a
+   band's 10 px inset (among them a run between two bends on a band under 30 px, which a 20 px
+   threshold multiplied by k would leave unclamped at 1.5 and 2; next to a line's ends clampY holds
+   the same range), both
    endpoint clamps bound on either side at either end, and schema's outer routes, inner and outer
    gutters, adjacent and vertical routes, each with a slot offset. ATLAS names what each diagram is
    there for and the unscaled page is asserted to reach it -- from the payload the page was given
    and the cards it measured -- so a model edit that drops a member fails instead of leaving it
-   undrawn; every line is drawn with its arrowhead or end markers and its label at every scale.
+   undrawn. A margin, an empty row or a slot offset counts only where the drawing keeps the
+   coordinate it sets: never at a line's ends, whose coordinates anchor() replaces, and next to them
+   not in the y of a side exit or the x of a straight exit that clampY or clampX took to its bound.
+   Every line is drawn with its arrowhead or end markers and its label at every scale.
    clamp-x, clamp-y, row-clamp-threshold and schema-vertical are drawing-layer payloads, not plans:
    on these pages a planned side exit's row band, never taller than its card, already holds it 10 px
    inside the card, a straight exit leaves its column's centre by a slot offset of a few px, no
    planned run between bends lies off a band under 30 px, and schema.plan attaches no line to a
-   table's top or bottom. The row band's 16 px threshold is compared in no scaled test:
-   every band these pages measure is a whole card high, 28.6 px or more, over 16 px at either scale.
+   table's top or bottom. A threshold taken in screen px is one of 20 / k or 16 / k layout px, and
+   scale 0.5 fails it: on row-clamp-threshold's band for rowY, on the bands of reported and
+   two-point-side-miss for base(). Those two bands, a whole card high, are over 16 px x 1.5 and
+   under 16 px x 2, so scale 2 fails base()'s threshold multiplied by k.
 """
 import json
 import re
@@ -171,7 +177,7 @@ def schema_fixture(case):
 
 
 # Case 7 (docstring): the atlas, one page drawn at each of ATLAS_SCALES.
-ATLAS_SCALES = (1, SCALE, 1.5)
+ATLAS_SCALES = (1, SCALE, 1.5, 2)
 ATLAS_CONFIGS = tuple(("atlas", "page", None, scale) for scale in ATLAS_SCALES)
 FAR = 1000  # px: a slot offset past any card, so that the endpoint clamp of the line has to bind
 EDGES_RE = re.compile(r'(<script type="application/json" class="dg-edges">)(.*?)(</script>)', re.S)
@@ -340,6 +346,25 @@ def margin_member(kind, got):
     return f"{kind} M " + ("fallback" if padl == 0 else "floor" if padl - 6 < 8 else "padding")
 
 
+def kept(e, points, cards):
+    """(x, y) of each point of a flow line's path: whether the drawn point keeps the coordinate its
+    lattice line and slot offset set. flow.js replaces both coordinates of either end (anchor()), and
+    next to an end it bounds the y beside a side exit (clampY) and the x beside a straight exit
+    (clampX): that coordinate is kept only where the drawn point lies strictly inside the bound, so
+    that the clamp returned it unchanged."""
+    path = e["path"]
+    n = len(path)
+    flags = [[0 < i < n - 1] * 2 for i in range(n)]
+    for i, nid, side in ((1, e["a"], e["sa"]), (n - 2, e["b"], e["sb"])):
+        if not 0 < i < n - 1:
+            continue
+        left, top, right, bottom = cards[nid]
+        axis, low, high = ((1, top + SIDE_IN, bottom - SIDE_IN) if side in ("L", "R")
+                           else (0, left + END_IN, right - END_IN))
+        flags[i][axis] = flags[i][axis] and len(points) == n and low + TOL < points[i][axis] < high - TOL
+    return flags
+
+
 def flow_reach(layout, edges, got):
     """The members of case 7 a flow diagram reaches, from the payload it was drawn from and the cards
     and lines of its unscaled page, whose px are the grid's own."""
@@ -356,15 +381,17 @@ def flow_reach(layout, edges, got):
                 bands[Y] = (max(top, bands[Y][0]), min(bottom, bands[Y][1])) if Y in bands else (top, bottom)
     R, C, found = max(rows) + 1, layout["grid_cols"], set()
     for e, points in zip(edges, lines):
-        path = e["path"]
-        found |= {"slot x"} if any(p[2] for p in path[1:-1]) else set()
-        found |= {"slot y"} if any(p[3] for p in path[1:-1]) else set()
+        path, keeps = e["path"], kept(e, points, cards)
+        found |= {"slot x"} if any(p[2] and kx for p, (kx, _) in zip(path, keeps)) else set()
+        found |= {"slot y"} if any(p[3] and ky for p, (_, ky) in zip(path, keeps)) else set()
         found |= {"exit up/down"} if {e["sa"], e["sb"]} & {"T", "B"} else set()
         found |= {f"label {e['la'][1]}"} if e.get("la") else set()
-        for i, (X, Y, _, oy) in enumerate(path):
-            found |= {m for m, hit in (("margin left", X == 0), ("margin right", X == 2 * C),
-                                       ("margin top", Y == 0), ("margin bottom", Y == 2 * R)) if hit}
-            if Y % 2 == 1 and (Y - 1) // 2 not in rows:
+        for i, ((X, Y, _, oy), (kx, ky)) in enumerate(zip(path, keeps)):
+            found |= {m for m, hit in (("margin left", kx and X == 0),
+                                       ("margin right", kx and X == 2 * C),
+                                       ("margin top", ky and Y == 0),
+                                       ("margin bottom", ky and Y == 2 * R)) if hit}
+            if ky and Y % 2 == 1 and (Y - 1) // 2 not in rows:
                 found.add("empty row between" if min(rows) < (Y - 1) // 2 else "empty row leading")
             band = bands.get(Y) if Y % 2 == 1 else None
             if band is None:
@@ -376,8 +403,8 @@ def flow_reach(layout, edges, got):
             y = (middle if bottom - top > BAND_MID else row) + oy
             if bottom - top >= BAND_CLAMP and not top + ROW_IN - 1 < y < bottom - ROW_IN + 1:
                 found.add("row clamp")
-                # a run between the bends, which only rowY holds, on a band a threshold of 20 screen
-                # px at the largest scale would leave unclamped
+                # a run between the bends, which only rowY holds, on a band that 20 px multiplied by
+                # the largest scale would leave unclamped
                 if 1 < i < len(path) - 2 and bottom - top < BAND_CLAMP * max(ATLAS_SCALES):
                     found.add("row clamp threshold")
         if len(points) != len(path):
