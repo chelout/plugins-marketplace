@@ -860,17 +860,20 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 
 ## 17. Plan validation and the shipped build (amendment, 2026-09-22)
 
-- Every validation check of the three planners is now asserted by its exact message:
-  `tests/test_node_validation.py` for `flow.plan` (section 16), `tests/test_schema_validation.py` for
-  `schema.plan` and the helpers it validates through — `parse_grid`, `check_placement`, `parse_edge` —
-  and `tests/test_timeline_validation.py` for `timeline.plan`. The schema set was enumerated by an AST
+- `schema.plan` and `timeline.plan` now have every validation check asserted by its exact message:
+  `tests/test_schema_validation.py` covers `schema.plan` and the helpers it validates through —
+  `parse_grid`, `check_placement`, `parse_edge` — and `tests/test_timeline_validation.py` covers
+  `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16); its
+  edge, route and footnote checks stay outside that set, and 17 of its 52 validation sites are held
+  by no test — six of them survive the whole suite. The schema set was enumerated by an AST
   sweep over `schema.py` and `grid.py` for every append to an error or warning list and every raise, so
   it is mechanical rather than read off by eye. Each kind's tests assert what its own `plan()` does:
   `flow` turns a layout or fit error into a `черновик: ` warning under `--draft`; `schema` refuses with
   `--draft` exactly as without it and builds no `fit` list; `timeline` follows `flow`.
 - Two readings are aligned with `flow.plan`. A swimlane `lanes` that is not a list is refused with the
   message the empty case already uses and normalized to an empty list — a string was iterated by
-  characters and a mapping by keys, each passing as a lane id, and a number crashed on `len()`. A moment
+  characters and planned as lanes, a mapping passed the lane-id check and then crashed with a
+  `KeyError` while laying out, and a number crashed on `len()`. A moment
   titled with white space alone is no title, which is the reading `flow.plan` gives a node's title.
 - The check of `tools/assets.py` runs in the suite (`tests/test_assets_tool.py`) against the shipped
   `template/dist`, so a change under `template/css` or `template/js` lands with its rebuild in the same
