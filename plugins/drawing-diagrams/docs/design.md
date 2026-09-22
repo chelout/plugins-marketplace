@@ -863,9 +863,12 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - `schema.plan` and `timeline.plan` now have every validation check asserted by its exact message:
   `tests/test_schema_validation.py` covers `schema.plan` and the helpers it validates through —
   `parse_grid`, `check_placement`, `parse_edge` — and `tests/test_timeline_validation.py` covers
-  `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16); its
-  edge, route and footnote checks stay outside that set, and 17 of its 52 validation sites are held
-  by no test — six of them survive the whole suite. The schema set was enumerated by an AST
+  `timeline.plan`. For `flow.plan` that holds of its group, lane and node checks (section 16); the
+  rest of its diagnostics — edge, route, footnote, label, routing and the layout-error raises — stay
+  outside that set. Of its 52 validation sites, ten are held by no test at all: the unknown node and
+  the self link of an edge, an edge's undescribed footnote, an over-long label, an unused footnote,
+  the three route checks, the unroutable edge and the shared-stretch warning. With all ten
+  neutralized the whole suite stays green. The schema set was enumerated by an AST
   sweep over `schema.py` and `grid.py` for every append to an error or warning list and every raise, so
   it is mechanical rather than read off by eye. Each kind's tests assert what its own `plan()` does:
   `flow` turns a layout or fit error into a `черновик: ` warning under `--draft`; `schema` refuses with
