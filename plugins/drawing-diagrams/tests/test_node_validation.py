@@ -521,6 +521,15 @@ class NodeValidation(unittest.TestCase):
         past["edges"] = ["s -> a : да [2]"]
         self.assertInvalid(past, "связь s -> a: сноска [2] не описана в footnotes")
 
+    def test_edge_footnote_zero_is_not_described(self):
+        # footnotes are numbered from one, so [0] names none of them however many there are; the one
+        # there is, left unused, is a warning, not an error
+        valid = edge_model(edges=["s -> a : да [1]"], footnotes=["Пояснение"])
+        self.assertValid(valid)
+        zero = copy.deepcopy(valid)
+        zero["edges"] = ["s -> a : да [0]"]
+        self.assertInvalid(zero, "связь s -> a: сноска [0] не описана в footnotes")
+
     def test_edge_label_length(self):
         # three words and 24 characters are the limits; one past either is refused
         self.assertValid(edge_model(edges=["s -> a : раз два три"]))
@@ -619,6 +628,39 @@ class NodeValidation(unittest.TestCase):
                 self.assertEqual(ctx.exception.errors, [title_error])
                 self.assertEqual(ctx.exception.layout, [title_error])
                 self.assertEqual(ctx.exception.fit, [title_error])
+
+    def test_a_layout_error_is_refused_before_the_lines_are_placed(self):
+        # Two layout errors of different stages: b's title does not fit its card, which the node
+        # loop finds before routing, and the gutter between the first two lanes is drawn with four
+        # lines where three fit, which only placing the routed lines finds. As a draft both are told,
+        # so the second is there to find; without draft the plan is refused with the first alone,
+        # before the lines are placed, and a group past its line's capacity takes no part in it.
+        # Widget alone: in page mode no group of this grid is past its capacity.
+        model = {"kind": "swimlane",
+                 "groups": {"x": {"label": "X", "ramp": "pink"}, "y": {"label": "Y", "ramp": "teal"},
+                            "z": {"label": "Z", "ramp": "coral"}},
+                 "lanes": ["x", "y", "z"],
+                 "nodes": [{"id": "a", "title": "A"}, {"id": "b", "kind": "terminal", "title": "B" * 80},
+                           {"id": "c", "title": "C"}, {"id": "d", "title": "D"},
+                           {"id": "e", "kind": "terminal", "title": "E"},
+                           {"id": "f", "kind": "terminal", "title": "F"}, {"id": "g", "title": "G"}],
+                 "grid": ["a b .", "c d e", "f . g"],
+                 "edges": ["a -> d", "a -> f", "a -> g", "c -> b", "c -> e",
+                           "d -> e", "d -> a", "g -> b", "g -> c"]}
+        title_error = "узел b: заголовок 80 симв., влезает 17; сократите заголовок или сузьте grid"
+        overfull_error = ("между столбцами 0 и 1 линий 4, помещается 3: c -> b, c -> e, d -> a, g -> c; "
+                          "освободите ячейку рядом или переставьте узлы")
+        with self.subTest(draft=True):
+            layout, warnings = flow.plan(copy.deepcopy(model), "widget", draft=True)
+            self.assertTrue(layout["draft"])
+            self.assertCountEqual([w for w in warnings if w.startswith(DRAFT)],
+                                  [DRAFT + title_error, DRAFT + overfull_error])
+        with self.subTest(draft=False):
+            with self.assertRaises(ModelError) as ctx:
+                flow.plan(copy.deepcopy(model), "widget")
+            self.assertEqual(ctx.exception.errors, [title_error])
+            self.assertEqual(ctx.exception.layout, [title_error])
+            self.assertEqual(ctx.exception.fit, [title_error])
 
 
 if __name__ == "__main__":
