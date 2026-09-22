@@ -453,7 +453,10 @@ def plan(model, mode_name, overrides=None, draft=False):
 
     lanes = model.get("lanes") or []
     if lanes_mode:
-        if not lanes:
+        # a string or a mapping is iterable too: every reader below would take a character or a key
+        # for a lane id, so a lanes that is not a list is refused and the readers keep a list
+        if not lanes or not isinstance(lanes, list):
+            lanes = []
             errors.append("swimlane: нужен список lanes с id групп, по одной на столбец")
         elif len(lanes) != grid_cols:
             errors.append(f"swimlane: дорожек {len(lanes)}, а столбцов в grid {grid_cols}; каждая дорожка это столбец")

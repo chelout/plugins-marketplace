@@ -316,6 +316,17 @@ class NodeValidation(unittest.TestCase):
                 invalid["lanes"] = lanes
                 self.assertInvalid(invalid, "swimlane: нужен список lanes с id групп, по одной на столбец")
 
+    def test_swimlane_lanes_not_a_list(self):
+        valid = swimlane_model()
+        self.assertValid(valid)
+        # a string and a mapping are iterable, so each would pass as two lanes named by a character
+        # or a key; a number has no length at all
+        for lanes in ("gh", {"g": 0, "h": 1}, 2):
+            with self.subTest(lanes=lanes):
+                invalid = copy.deepcopy(valid)
+                invalid["lanes"] = lanes
+                self.assertInvalid(invalid, "swimlane: нужен список lanes с id групп, по одной на столбец")
+
     def test_swimlane_group_count_warns(self):
         # a swimlane's colour limit is its lane limit, 5 in widget and 7 in page, not the 4 of flow
         self.assertValid(lane_groups_model(5))
