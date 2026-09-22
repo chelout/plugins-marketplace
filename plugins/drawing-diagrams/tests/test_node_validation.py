@@ -8,6 +8,7 @@ it: where each node stands in the grid (placement, empty rows and columns, a swi
 edges a node needs (a decision's exits and their labels, a step's way out and way in)."""
 import copy
 import unittest
+from unittest import mock
 
 import support  # noqa: F401
 from diagrams import flow
@@ -93,6 +94,20 @@ def lane_groups_model(count):
 def terminals_model(grid):
     return {"kind": "flow", "nodes": [{"id": "a", "title": "A", "kind": "terminal"},
                                       {"id": "b", "title": "B", "kind": "terminal"}], "grid": grid}
+
+
+def edge_model(**fields):
+    """A step over a terminal and the one edge between them; `fields` replace or add model keys."""
+    m = {"kind": "flow", "nodes": [{"id": "s", "title": "S"}, {"id": "a", "title": "A", "kind": "terminal"}],
+         "grid": ["s", "a"], "edges": ["s -> a"]}
+    m.update(fields)
+    return m
+
+
+def fan_model():
+    """Six notes: c leaves four of them by labelled edges, and d stands in the grid with none."""
+    return {"kind": "flow", "nodes": [{"id": nid, "title": nid.upper(), "kind": "note"} for nid in "abcdef"],
+            "grid": ["f b d", "e a c"], "edges": ["c -> a : нет", "c -> b : нет", "c -> e : да", "c -> f : ок"]}
 
 
 class NodeValidation(unittest.TestCase):
@@ -472,6 +487,138 @@ class NodeValidation(unittest.TestCase):
         self.assertValid(reach(["s b", ". a"], ["s -> a", "b -> a"]))
         self.assertValid(reach(["s", "b", "a"], ["s -> a", "b -> a"], b_kind="note"))
         self.assertWarning(reach(["s", "b", "a"], ["s -> a", "b -> a"]), "узел b: нет входящих связей, недостижим")
+
+    # Edge and route checks: what plan() says of an edge while it reads the edges, of the footnotes
+    # once every edge and node has had its say, of a named route, and of an edge the router and the
+    # labels answer for.
+
+    def test_edge_to_unknown_node(self):
+        valid = edge_model()
+        self.assertValid(valid)
+        # either end undescribed; the edge is dropped, so it takes no part in the checks after it
+        for raw, message in (("s -> x", "связь s -> x: неизвестный узел"),
+                             ("x -> a", "связь x -> a: неизвестный узел")):
+            with self.subTest(edge=raw):
+                invalid = copy.deepcopy(valid)
+                invalid["edges"].append(raw)
+                self.assertInvalid(invalid, message)
+
+    def test_edge_to_itself(self):
+        valid = edge_model()
+        self.assertValid(valid)
+        invalid = copy.deepcopy(valid)
+        invalid["edges"].append("s -> s")
+        self.assertInvalid(invalid, "связь s -> s: связь узла с собой не рисуется")
+
+    def test_edge_footnote_must_be_described(self):
+        valid = edge_model(edges=["s -> a : да [1]"], footnotes=["Пояснение"])
+        self.assertValid(valid)
+        undescribed = copy.deepcopy(valid)
+        del undescribed["footnotes"]
+        self.assertInvalid(undescribed, "связь s -> a: сноска [1] не описана в footnotes")
+        # one past the footnotes there are; the first of them, left unused, is a warning, not an error
+        past = copy.deepcopy(valid)
+        past["edges"] = ["s -> a : да [2]"]
+        self.assertInvalid(past, "связь s -> a: сноска [2] не описана в footnotes")
+
+    def test_edge_label_length(self):
+        # three words and 24 characters are the limits; one past either is refused
+        self.assertValid(edge_model(edges=["s -> a : раз два три"]))
+        self.assertValid(edge_model(edges=["s -> a : " + "Ж" * 24]))
+        for label in ("раз два три четыре", "Ж" * 25):
+            with self.subTest(label=label):
+                self.assertInvalid(edge_model(edges=[f"s -> a : {label}"]),
+                                   f"связь s -> a: подпись '{label}' длиннее 3 слов или 24 символов; "
+                                   "оставьте короткую и вынесите текст в footnotes со ссылкой [n]")
+
+    def test_unused_footnote_warns(self):
+        valid = edge_model(edges=["s -> a : да [1]"], footnotes=["Пояснение"])
+        self.assertValid(valid)
+        self.assertWarning(edge_model(footnotes=["Пояснение"]), "сноска [1] не используется")
+        second = copy.deepcopy(valid)
+        second["footnotes"].append("Второе")
+        self.assertWarning(second, "сноска [2] не используется")
+
+    def test_route_needs_two_nodes(self):
+        valid = edge_model(routes={"main": ["s", "a"]})
+        self.assertValid(valid)
+        # a string is a sequence too, and is no list of nodes
+        for seq in (["s"], [], "s a", None):
+            with self.subTest(seq=seq):
+                invalid = copy.deepcopy(valid)
+                invalid["routes"]["main"] = seq
+                self.assertInvalid(invalid, "маршрут 'main': нужен список хотя бы из двух узлов")
+
+    def test_route_unknown_node(self):
+        valid = edge_model(routes={"main": ["s", "a"]})
+        self.assertValid(valid)
+        for seq in (["s", "x"], ["x", "a"]):
+            with self.subTest(seq=seq):
+                invalid = copy.deepcopy(valid)
+                invalid["routes"]["main"] = seq
+                self.assertInvalid(invalid, "маршрут 'main': неизвестный узел x")
+
+    def test_route_step_needs_an_edge(self):
+        valid = edge_model(routes={"main": ["s", "a"]})
+        self.assertValid(valid)
+        invalid = copy.deepcopy(valid)
+        # the edge runs from s to a, and a route follows edges in their direction
+        invalid["routes"]["main"] = ["a", "s"]
+        self.assertInvalid(invalid, "маршрут 'main': между a и s нет связи")
+
+    def test_edge_without_route(self):
+        # No model reaches this error: in the lattice the router walks a card blocks its own point
+        # alone, never a point of a gutter, and gutters border every card on four sides, so an edge
+        # between two placed nodes always has a route. route_all answers None for an edge it cannot
+        # route, and is stubbed here to answer so for the one edge of the model.
+        real = flow.router.route_all
+
+        def no_route(lat, ends, labelled, **kwargs):
+            return [None] + real(lat, ends, labelled, **kwargs)[1:]
+
+        valid = edge_model()
+        self.assertValid(valid)
+        message = ("связь s -> a: нет маршрута, не проходящего сквозь узлы; "
+                   "освободите ячейку между ними или переставьте узлы")
+        with mock.patch.object(flow.router, "route_all", no_route):
+            self.assertLayout(valid, widget=[message], page=[message])
+
+    def test_two_labels_in_one_place_warn(self):
+        # Of the four labels c sends out, those of c -> b and c -> f take the same place, beside
+        # their second segments. Each of the two also lies on the lines there, a warning of its own,
+        # and the pair is told once, on the later of the two in the model's order.
+        lie = "подпись {} рядом со вторым отрезком ляжет на другую линию или подпись; " \
+              "переставьте узлы или уберите подпись в сноску"
+        expected = ["связь c -> b: " + lie.format("'нет'"),
+                    "связь c -> f: " + lie.format("'ок'"),
+                    "связи c -> b и c -> f: подписи встанут в одно место и наложатся; "
+                    "переставьте узлы или уберите одну подпись в сноску"]
+        self.assertWarning(fan_model(), widget=expected, page=expected)
+
+    def test_a_layout_error_is_refused_before_the_labels_are_placed(self):
+        # Two layout errors of different stages: b's title does not fit its card, which the node
+        # loop finds before routing, and the label of a? -> b does not fit beside the exit, which
+        # only placing the labels finds. As a draft both are told, so the second is there to find;
+        # without draft the plan is refused with the first alone, before the labels are placed.
+        model = {"kind": "flow", "nodes": [{"id": "a?", "title": "Да?"},
+                                           {"id": "b", "kind": "terminal", "title": "B" * 80},
+                                           {"id": "c", "kind": "terminal", "title": "C"}],
+                 "grid": ["a? b", "c ."], "edges": ["a? -> b : вправо идём", "a? -> c : вниз"]}
+        for mode, title, label in (("widget", 33, 3), ("page", 56, 4)):
+            title_error = f"узел b: заголовок 80 симв., влезает {title}; сократите заголовок или сузьте grid"
+            label_error = (f"связь a? -> b: подпись 'вправо идём' 11 симв. не помещается у выхода вбок, "
+                           f"влезает ~{label}, мешает карточка b; сократите, вынесите в сноску [n] "
+                           f"или переставьте узлы так, чтобы линия уходила вниз")
+            with self.subTest(mode=mode, draft=True):
+                layout, warnings = flow.plan(copy.deepcopy(model), mode, draft=True)
+                self.assertTrue(layout["draft"])
+                self.assertCountEqual(warnings, [DRAFT + title_error, DRAFT + label_error])
+            with self.subTest(mode=mode, draft=False):
+                with self.assertRaises(ModelError) as ctx:
+                    flow.plan(copy.deepcopy(model), mode)
+                self.assertEqual(ctx.exception.errors, [title_error])
+                self.assertEqual(ctx.exception.layout, [title_error])
+                self.assertEqual(ctx.exception.fit, [title_error])
 
 
 if __name__ == "__main__":
