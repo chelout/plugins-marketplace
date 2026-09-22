@@ -26,7 +26,9 @@ function init(sec){
    rows[ri]=rows[ri]?{t:Math.min(rows[ri].t,t),b:Math.max(rows[ri].b,b)}:{t:t,b:b}});
   var C=+getComputedStyle(sec).getPropertyValue('--dg-cols'),R=0;Object.keys(rows).forEach(function(k){R=Math.max(R,+k+1)});
   for(var r=0;r<R;r++)if(!rows[r]){var up=r-1,dn=r+1;while(up>=0&&!rows[up])up--;while(dn<R&&!rows[dn])dn++;var y=(up>=0&&dn<R)?(rows[up].b+rows[dn].t)/2:(up>=0?rows[up].b+20:rows[dn].t-20);rows[r]={t:y,b:y}}
-  for(var c=0;c<C;c++)if(!cols[c]){var w=cols[0]?cols[0].r-cols[0].l:100,g=+getComputedStyle(sec).getPropertyValue('--dg-gap').replace('px','');var x0=cols[0]?cols[0].l+c*(w+g):0;cols[c]={l:x0,r:x0+w}}
+  // Empty columns still occupy explicit CSS tracks, even before the first card.
+  var gs=getComputedStyle(grid),widths=gs.gridTemplateColumns.split(/\s+/).map(parseFloat),gap=parseFloat(gs.columnGap),x=parseFloat(gs.paddingLeft);
+  for(var c=0;c<C;c++){var w=widths[c];if(!cols[c])cols[c]={l:x,r:x+w};x+=w+gap}
   return{cols:cols,rows:rows,C:C,R:R}}
  drawKind.flow=function(rr){var T=tracks();
   var M=Math.max(8,(+getComputedStyle(sec).getPropertyValue('--dg-padl').replace('px','')||14)-6);

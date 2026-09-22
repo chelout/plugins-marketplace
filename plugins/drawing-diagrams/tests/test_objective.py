@@ -11,10 +11,11 @@ count. `delta` is held against the difference of two whole Phi — which is what
 12 will trust it for — and the `overflow` it restricts to the lattice lines the old and the new path
 lie on against the difference of two whole-routing ones.
 
-The states with room are planned the way `flow.plan` plans a model: the geometry comes from
-`tests/test_drawn_property.py`, whose second population already builds one per configuration, and
-only the lattice and the ends are built here, because a case has to reroute one edge against the
-rest and that needs both.
+The arithmetic states with room use the geometry and capacity-bearing lattice of `flow.plan`:
+the geometry comes from `tests/test_drawn_property.py`, whose second population already builds
+one per configuration. Their initial routing omits `room` from `route_all`; room is supplied
+afterwards when measuring Phi and delta. Production planning and the descent tests below pass
+room into the search as well.
 
 The last classes are the search that spends the arithmetic (spec 5.3, criterion C3): the routing
 `route_all` returns is held against the loop of `tests/reference.py`, which is the routing the
@@ -245,8 +246,8 @@ def planned_instances():
 
 
 def planned_states():
-    """The states with room: every sampled instance under every configuration, routed against the
-    capacities and offset against the rooms the planner really states."""
+    """Arithmetic states on capacity-bearing lattices, routed without the search's room argument;
+    Phi and delta then measure overflow against the rooms the planner states."""
     out = []
     for name, (cols, _, cells, edges) in planned_instances():
         for config in CONFIGS:

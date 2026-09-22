@@ -762,3 +762,44 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - Found on the way and left alone: a grid column that holds no card is placed by `Geometry` and by
   `tracks()` differently, about 217 px apart on a two-column grid; the renderer warns about such a
   grid today and nothing more.
+
+## 15. Maintenance follow-ups (amendment, 2026-09-22)
+
+- The empty-column defect recorded above is fixed: `tracks()` in `template/js/head.js` derives
+  missing columns from resolved CSS track widths, column gap and left padding. Occupied-column
+  bounds remain measured from cards, and row interpolation and the drawn row extent are unchanged.
+  `EmptyColumnsBrowser` in `tests/test_empty_columns.py` verifies CSS tracks, card bounds, routed
+  gutter centrelines and label anchors across 144 diagrams: flow and swimlane, widget and page,
+  default width and 913 px, with leading, internal and trailing empty columns, occupied controls
+  and empty rows. The original source failed this check; the fixed source passed without skips.
+- Fresh verification of stages C and D passed 157 targeted tests. Three isolated mutations were
+  rejected by the existing assertions: removing the label from the canonical key
+  (`tests/test_route_all.py`, `CanonicalOrder.test_five_shuffles_route_parallel_edges_the_way_the_model_order_did`),
+  giving the second descent only half the budget
+  (`WithinTheBudget.test_the_second_descent_gets_what_the_first_one_left`, same file), and releasing
+  the first-row constraint (`tests/test_advice.py`, `TheFirstRow.test_the_one_move_the_rule_exists_to_refuse`).
+  Three additional scratch-only mutations bring the total to six. In `skills/drawing-diagrams/render.py`,
+  discarding width overrides in `advise()` failed
+  `RenderCli.test_the_advice_is_searched_at_the_width_the_render_was_given`
+  (`tests/test_render_cli.py`): the 440 px advice repeated the default-width move (`assertNotIn`).
+  Removing the overflow branch of `triggered()` failed
+  `RenderCli.test_a_group_over_its_capacity_is_advised_with_the_crossings_under_the_threshold`
+  (same file): `read_block()` found no advice block instead of one. Replacing each step's changed
+  metric with the headline metric in `advice_block()` failed
+  `RenderCli.test_no_step_of_the_seeded_populations_blocks_stands_still`
+  (same file): `assertNotEqual` rejected unchanged printed counts in four seeded instances.
+  For each additional mutation, baseline/mutant/restored exit statuses were 0/1/0; all mutant
+  failures were assertions in the named test, and the restored source matched the candidate.
+  This is present-day confirmation, not historical approval: the original detailed reviewer and
+  findings artifacts were unavailable. The earlier stage measurements, including E6, remain
+  historical results; this maintenance does not change the label optimizer's documented limits.
+- `NodeValidation` in `tests/test_node_validation.py` covers invalid node kinds, decision id/kind
+  mismatches, unknown groups and swimlane group/lane mismatches, with valid controls in both modes
+  and with draft on and off. `ShippedExamples.test_exact_cli_outputs` in `tests/test_examples.py`
+  compares exit status and SHA-256 of raw stdout/stderr against `tests/models/shipped-examples.json`
+  for every shipped example in both modes, with assets excluded. All 14 asset-free renders stayed
+  byte-identical in stdout and stderr during this maintenance; normal test runs never update the
+  fixture.
+- The rebuilt assets are pinned by `template/dist/REF` to local commit
+  `e8df5f7030e6461ac1db00ddea97f5946817687a`. Live CDN verification remains pending publication and
+  merge, following the release sequence in section 13.

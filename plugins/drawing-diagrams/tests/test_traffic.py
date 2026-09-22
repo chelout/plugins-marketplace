@@ -42,8 +42,8 @@ def labels_of(n):
 
 
 def routed(instance):
-    """One instance routed as `flow.plan` routes a model: the lattice and the paths that have a
-    route, which are the paths a traffic is ever asked to hold."""
+    """One instance routed without lattice capacities or a search room argument, retaining the
+    paths a traffic can hold. Production `flow.plan` supplies both forms of capacity information."""
     cols, rows, cells, edges = instance
     lat = router.Lattice(cols, rows, cells)
     ends = ends_of(cells, edges)
