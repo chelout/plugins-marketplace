@@ -917,8 +917,7 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   without `--draft` a model is refused with the error found up to that point alone, while with
   `--draft` the same model also carries what placement adds later — a label's fit error in one test, a
   group past its line's capacity in another. No test in the suite tells whether it comes before or
-  after routing itself: the only error routing adds is the unroutable edge, which no model reaches, so
-  only a test that stubs the router could tell the two apart.
+  after routing itself: the only error routing adds is the unroutable edge, which no model reaches.
 - Left as found: an edge or a route that names a list escapes `flow.plan` as a `TypeError` instead of
   a model error.
 - The full suite at the tests' final state (commit `162d3ae`) runs 577 tests, all passing, none
