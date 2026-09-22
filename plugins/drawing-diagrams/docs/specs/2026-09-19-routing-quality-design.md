@@ -483,6 +483,63 @@ row for overlap with a clearance. `half`, `reach`, `horizontal`, `under_card` an
 a label over a horizontal second segment become values of `y0`, `y1`, not branches of the checking
 code.
 
+Amended 2026-09-21, after stages A to D. The lines of the model are the offsets `router.place`
+answers (§5.4), so they stand at the pitch of their group: 8, 6 or 5 px (§4.2). At the two tighter
+pitches the neighbour of a label's own line lies inside `LINE_REACH` of the middle of the text, and
+the model says so as today's check does since stage B; what takes a label out of such a group is
+the choice of §7.3, not a shorter reach. A row of the grid that holds no card has, inside the drawn
+extent, a band of invented tracks (`design.md` §14, stage B): its rectangles are relative to the
+same `base()`, and the lattice the model covers ends with the last occupied row, as the paths do.
+`BOUND` is what today's code keeps a text inside: the left edge and `Geometry.total` across, and
+the side of a line in an outermost lattice column that faces out of the grid box.
+
+Amended 2026-09-21, with the model built (task 19) and read against the browser. Three readings
+the sentences above left open are settled as the model has them.
+
+- The clamp tolerance sits on the text, not on the line. The script clamps the lines of a banded
+  row and a text drawn from a point of that row together, so only their order survives: a text on
+  the base of a banded row covers the whole row, and a text above its own line at a sideways exit
+  covers everything above that line's top edge. Both answer as today's code does.
+- In a row a vertical second segment ends in, the text at the middle of the segment lies past the
+  bend drawn there, half a lattice row away, and covers the row past that line and no more. Today's
+  code reads such a row the other way round — every line that crosses it counts wherever it stops,
+  no line along it counts wherever it runs. This is the one class in which the fit verdicts of the
+  two differ: 5 of 100 seeded instances move a label, the examples and the label cases none. The
+  model's reading is the stage's.
+- The check of a label over a horizontal second segment tests the text's own rectangle. Today's
+  tests the whole segment, and the browser says what that is worth: over the 171 such labels of
+  the seeded corpus it warns of 133 lines of which 7 run through the drawn text, and misses 35 of
+  the 42 that do; the rectangle warns of 36, of which 32 do. Over all 442 labels today's code
+  raises 58 false alarms and misses 20 struck labels; the model 11 and 10.
+- Amended again the same day, after the second round of the branch gate: a vertical run that ends
+  at a bend ends where the bend is drawn — the offset of that point — and not at the base of the
+  row. "Half a row at its ends" read a run turning 12 px above the middle of a gutter as reaching
+  the middle, which invents a line through a text standing there and hides one from a text standing
+  past the base; 634 of the 1 168 such ends of the seeded corpus are drawn off the base. Where the
+  row is banded, or the run ends on a card, the height is unknown and the half row stays.
+- Amended a third time that day, after the third round of the gate: a text stands in every row it
+  reaches, not only in the row of the line it hangs from. A gutter is `row_gap` high about its
+  base; a place over or under a horizontal second segment that is drawn off that base can leave
+  the gutter — under a segment 4 px below the middle of a 40 px gutter the text spans 10.5 to 23.5
+  and its baseline stands inside the card below. Cards align to the top of their row, so the row
+  under a gutter begins with its cards and a text reaching into it lies on the card it shares px
+  with; the row over a gutter ends with its tallest card, whose height is unknown, so a text
+  reaching into it is read as lying on whatever card it shares px with as well. 58 of the 164
+  places taken on a horizontal second segment over the seeded hundred reach out of their gutter.
+- Amended a fourth time that day, after the class ask the fourth round of the gate opened (the rows
+  a text reaches, found member by member in rounds 3 and 4). The model reads every object in one
+  frame wherever the page's geometry is known to Python: an interior gutter, an outer margin, and
+  every line of an empty-row band — its gutters and the odd line of each empty row — whose bases
+  `tracks()` and `by()` place at distances from the cards around them that `Geometry` states from
+  the same construction `_band` prices the band with. A text on one line of such a frame is
+  compared with the lines, the labels and the cards of every line it reaches, and a card row it
+  reaches drops the place. Where the page's y depends on a card height — a row of cards, a banded
+  row, a line clamped into a card, the drawn middle of a vertical second segment — the
+  representation contains every position the object can be drawn at. Unknown never means reaches
+  nothing. No place other than one on a horizontal second segment is exempt from this: a pinned
+  place beside a vertical second segment, a straight exit into a band and the text of a sideways
+  exit reaching out of its clamped row are read the same way.
+
 ### 7.2 Candidates
 
 All of today's places stay candidates, in today's order of preference, and new ones are added:
@@ -497,6 +554,13 @@ All of today's places stay candidates, in today's order of preference, and new o
 "Just after the bend": the text starts `LABEL_BEND` px past the bend and grows away from the source.
 It moves the label of every horizontal second segment, short or long (Q4).
 
+Amended 2026-09-21: "above" and "below" a horizontal second segment are read from the segment as it
+is drawn, not from the base of its row. Today's script hangs the text 9 px over `base(Y)` whatever
+the segment's own offset, so a segment drawn 9 px or more above the base runs through its own
+label: 8 of the 171 such labels of the seeded corpus, read off the browser, and 15 more have the
+line on their baseline. With the new places of this table every place over or under a horizontal second segment
+is anchored to the drawn `y` of the segment (`ref` `"p"`, §7.4), today's far end among them.
+
 ### 7.3 Choice
 
 A candidate that overlaps a card or the bounds is dropped; if none is left, the error names the room
@@ -509,6 +573,26 @@ is today's greedy choice over the same candidates under the same cost, which is 
 search has 20 000 nodes per plan, spent on components in model order, and returns the best complete
 choice found, so the result is never worse than greedy and is deterministic. Warnings keep their
 wording.
+
+Amended 2026-09-21, after stage D: and their number. `advice.evaluate` (§6) counts the warnings of
+a plan and drops a move that leaves the author with more of them, so a label raises what it raises
+today: one warning when it lies on a line or on a label, one per line that crosses a label over a
+horizontal second segment, one per pair of labels in one place. A new place follows the family it
+belongs to — after the bend is over a horizontal second segment, the other new places are beside a
+line. A model that warned once per owner overlapped would change which moves the advice offers.
+
+Amended 2026-09-21, before the search (task 20 commit 3), on what the browser showed after the
+candidates landed. The cost reads every place against every rectangle it shares a row with; the
+families of today's code differ in how a warning is worded, not in what is looked at. Today a label
+on a horizontal second segment is measured against no line along its row and against no label, and
+only a label beside a vertical second segment against the labels placed before it: of the 9 labels
+of the seeded hundred a line or a label runs through while the plan says nothing, 8 are of that
+family. So a label on a horizontal second segment that lies on a line along its row or on another
+label raises the one "ляжет на другую линию или подпись" it would raise anywhere else, beside one
+"пересечёт" per line that crosses it; a pair of labels that overlap in the choice the search
+returns is told about once, on the later of the two in the model's order, as the same place when
+it is the same place. The count of warnings can therefore grow where today's code looked away,
+and criterion E6 is where each such instance is named.
 
 ### 7.4 Python emits the anchor, the script draws it
 
@@ -642,7 +726,17 @@ Stage E
   node allowance is one: tests.
 - E5. `flow.js` holds no `LABEL_*` number; the browser harness finds every label box inside the
   rectangle Python chose, within 2 px, for every anchor form: `tests/test_browser_lines.py`. Size
-  budgets of the slots hold: command output.
+  budgets of the slots hold: command output. Amended 2026-09-21, after the branch gate: "inside"
+  is both ways — across, and down the page wherever Python's bounds are finite, in the browser's
+  own frame — and the far edge of the text is allowed 5 % of its width on top of the 2 px. Python's
+  width is the glyph table's estimate (E1 measures it 2.3 % off on the one example it reads), so
+  2 px cannot hold at the far end of a long text; the near edge and both bounds down the page keep
+  the 2 px.
+- E6 (added 2026-09-21, after the D4 experiment, whose dearest sessions went to label warnings and
+  to nothing else). Over the seeded labelled instances of E4 the number of label warnings and of
+  labels that do not fit, today's code against the stage's: a table in the stage report and in
+  `design.md` §14. An instance where either number grew is traced to a check today's code does not
+  make — `placed` is consulted only beside a vertical second segment — or is a defect.
 
 Every stage: `python3 -m unittest discover -s tests` green, `claude plugin validate` clean, the
 amendment to `design.md` §14 written, the performance budgets of the slots measured and recorded.

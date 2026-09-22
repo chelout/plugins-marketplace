@@ -895,7 +895,22 @@ class TheRendersOwnWidth(unittest.TestCase):
         self.assertLess(found[-1][2][:2], found[0][1][:2])
 
     def test_and_is_not_offered_under_the_narrow_override(self):
-        self.assertEqual([], advice.search(G2, "page", NARROW))
+        # What the width decides is that one move: at the narrow width the swap of c and d carries
+        # the fit error of the case above, so the search refuses it and climbs by other moves.
+        #
+        # It used to decide the whole block here. The author's own grid then carried no label
+        # warning — `b -> c` ran through the text over the second segment of `a -> d` until that
+        # text moved to just after the bend (spec 7.2) — so the climb was weighed against none,
+        # every move that brought a label message was refused and nothing at all was offered. Since
+        # spec 7.1 as amended a third time that segment is drawn far enough above the base of its
+        # gutter row that a text over it would stand on the card above, so the label goes under the
+        # segment, where `b -> c` crosses it: the grid starts with two warnings of its own and a
+        # move that leaves the author no more of them is offered as any other is. The premise is
+        # asserted first, and then that the one move the width refuses is not among them.
+        self.assertEqual(2, advice.evaluate(G2, "page", NARROW)[2])
+        found = named([x[0] for x in advice.search(G2, "page", NARROW)])
+        self.assertNotIn(("swap", "c", "d"), found)
+        self.assertEqual([("swap", "c", "e"), ("swap", "a", "b")], found)
 
     def test_every_verifying_plan_gets_the_overrides(self):
         with counted() as calls:

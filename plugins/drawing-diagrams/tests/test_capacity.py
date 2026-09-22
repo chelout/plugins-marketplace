@@ -470,6 +470,49 @@ class EmptyRowRoom(unittest.TestCase):
                         self.assertEqual(got, {line: ((topward if lo == TOPWARD else lo), hi)
                                                for line, (lo, hi) in want.items()})
 
+    # The room of every line of a band of three empty rows, leading the grid and between two rows
+    # of cards, as stage B prices it: the frame the label model reads the same bands in
+    # (`Geometry.frame`) is built from the construction `_band` prices them with, and that
+    # construction must go on answering exactly this. mode: {leading: {line: room}, interior: ...}.
+    THREE = {"widget": ({0: (-5, 3.5), 1: (3.5, 0.0), 2: (0.0, 0.0), 3: (0.0, -1.25),
+                         4: (-1.25, -1.25), 5: (-1.25, -1.25), 6: (-1.25, -1.5), 8: (8, 7)},
+                        {0: (-5, 8), 2: (36.0, 17.5), 3: (17.5, 7.5), 4: (7.5, 7.5), 5: (7.5, 2.5),
+                         6: (2.5, 2.5), 7: (2.5, 2.5), 8: (2.5, 6.0), 10: (8, 7)}),
+             "page": ({0: (-11, 6.5), 1: (6.5, 0.0), 2: (0.0, 0.0), 3: (0.0, -1.25),
+                       4: (-1.25, -1.25), 5: (-1.25, -1.25), 6: (-1.25, -1.5), 8: (14, 1)},
+                      {0: (-11, 14), 2: (40.0, 19.5), 3: (19.5, 8.5), 4: (8.5, 8.5), 5: (8.5, 3.0),
+                       6: (3.0, 3.0), 7: (3.0, 3.0), 8: (3.0, 7.0), 10: (14, 1)})}
+
+    def test_a_band_of_three_rows_keeps_the_room_stage_b_gave_it(self):
+        for mode, (leading, interior) in sorted(self.THREE.items()):
+            for rows, empty, want in ((4, (0, 1, 2), leading), (5, (1, 2, 3), interior)):
+                with self.subTest(mode=mode, empty=empty):
+                    geo = self.geo("flow", mode, rows, empty)
+                    got = {line: geo.room("h", line) for line in range(2 * rows + 1)}
+                    self.assertEqual({k: v for k, v in got.items() if v is not None}, want)
+
+    def test_the_room_of_a_band_is_read_off_the_frame_of_its_lines(self):
+        """One construction, two readers: every side of a band line faces either the cards, and
+        keeps LINE_CLEAR off the distance `Geometry.frame` states to them, or the next line of the
+        band, and shares the distance between the two bases (`shared_room`). The top margin's side
+        away from the cards is the browser's measurement, which neither derives."""
+        for mode in ("widget", "page"):
+            for k in (1, 2, 3):
+                for rows, empty, first in ((k + 1, range(k), 0), (k + 2, range(1, k + 1), 2)):
+                    geo = self.geo("flow", mode, rows, empty)
+                    lines = range(first, first + 2 * k + 1)
+                    at = {Y: geo.frame(Y).at for Y in lines}
+                    frame = geo.frame(first)
+                    for Y in lines:
+                        lo = (frame.top - at[Y] if Y == first else at[Y - 1] - at[Y])
+                        hi = (frame.bottom - at[Y] if Y == lines[-1] else at[Y + 1] - at[Y])
+                        want = (-lo - flow.LINE_CLEAR if Y == first else flow.shared_room(-lo),
+                                hi - flow.LINE_CLEAR if Y == lines[-1] else flow.shared_room(hi))
+                        if Y == first == 0:
+                            want = (geo.room("h", 0)[0], want[1])
+                        with self.subTest(mode=mode, k=k, first=first, line=Y):
+                            self.assertEqual(geo.room("h", Y), want)
+
     def test_a_row_of_cards_states_no_room_for_its_own_line(self):
         for shape, (rows, empty, _) in sorted(EMPTY_BAND.items()):
             with self.subTest(shape=shape):

@@ -36,6 +36,20 @@ class FitMessages(unittest.TestCase):
         self.assertIn(msg, exc.fit)
         self.assertIn(msg, exc.layout)
 
+    def test_blank_title(self):
+        # a title of white space alone draws a card lower than the least height the label model of
+        # diagrams/labels.py reads every card at (CARD_LEAST), so it is refused as a missing one
+        for title in (None, "", " ", "\t \n"):
+            with self.subTest(title=title):
+                nodes = [{"id": n, "title": n.upper()} for n in "abc"]
+                if title is None:
+                    del nodes[0]["title"]
+                else:
+                    nodes[0]["title"] = title
+                exc = self.failure(flow, flow_model(nodes, ["a b c"]))
+                self.assertEqual([e for e in exc.errors if e.startswith("узел a:")],
+                                 ["узел a: нет title"])
+
     def test_text(self):
         text = "Длинное описание шага, которое никак не помещается в две строки узкой карточки на четыре колонки"
         nodes = [{"id": n, "title": n.upper(), **({"text": text} if n == "a" else {})} for n in "abcd"]

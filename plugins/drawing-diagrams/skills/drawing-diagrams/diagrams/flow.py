@@ -1,12 +1,19 @@
 """Kinds `flow` (algorithm with decisions) and `swimlane` (steps by participant)."""
+import collections
 import json
 import math
 import re
 
-from . import assets, router
+from . import assets, labels, router
 from .common import (BASE_MODES, ID_RE, RAMPS, ModelError, esc, fit_prefix, label_width, labels_for, text_width,
                      too_wide_word, wrap_lines)
 from .grid import check_placement, empty_lines, parse_grid
+# The label offsets, in one copy, beside the model that measures with them. Nothing here reads them
+# any more — diagrams/labels.py places every label and emits the anchor that carries them to the
+# script — but the tests that measure a drawn label reach them under this name.
+from .labels import (LABEL_ABOVE, LABEL_BELOW, LABEL_BEND, LABEL_BESIDE, LABEL_CLEAR, LABEL_DROP,
+                     LABEL_LIFT, LABEL_OVER, LABEL_SIDE, LABEL_SINK, LABEL_UNDER, LABEL_WORD,
+                     LINE_REACH)
 
 MODES = {
     "state": {
@@ -50,18 +57,6 @@ CROSSINGS = "пересечений линий: "
 # it back, and a production value other than router.BUDGET would mean the page is drawn by a routing
 # nothing was measured against.
 _ROUTE_BUDGET = router.BUDGET
-
-# Where drawFlow in template/js/flow.js puts a label, in px; keep the two in step
-# (tests/test_label_lines.py reads the script's numbers).
-LABEL_BEND = 6    # from a bend: beside a vertical second segment, before the end of a horizontal one
-LABEL_SIDE = 3    # from the card edge at a straight sideways exit
-LABEL_BESIDE = 5  # from the line at a straight exit down or up
-LABEL_BELOW = 14  # from the card's bottom edge to the baseline at a straight exit down
-LABEL_ABOVE = 6   # from the baseline to the card's top edge at a straight exit up
-LABEL_DROP = 4    # from the middle of the text down to its baseline
-LABEL_CLEAR = 2   # the text box keeps this far from a card edge or a line
-LINE_REACH = 7.5  # a horizontal line nearer than this to the middle of the text runs through it
-LABEL_WORD = 8    # two labels in one row keep this much more apart, or they read as one phrase
 
 # What a line on an even lattice line keeps clear, in px, and so cannot spend on the lines beside
 # it: LINE_CLEAR from the nearest card edge, EDGE_CLEAR from the bound on the other side — the edge
@@ -130,6 +125,15 @@ def margin_room(kind, mode_name, footnotes):
     return TOP_ROOM[key], BOTTOM_ROOM[(*key, bool(footnotes))]
 
 
+# Where the base of a row line stands against the cards around it (`Geometry.frame`). A frame is
+# the run of row lines between two rows of cards — one gutter, an outer margin, or every line of a
+# band of empty rows — and its lines are read in the px of its lowest one, `row`: `at` is the base
+# of the line asked about from the base of `row`, `top` and `bottom` the card edges over and under
+# the frame from that same base, infinite where no row of cards stands on that side, and `first` the
+# frame's highest line.
+Frame = collections.namedtuple("Frame", "row at top bottom first")
+
+
 class Geometry:
     """Pixel x of cards and lattice lines, relative to the grid box, as template/js/flow.js derives
     them (tracks, bx, clampX). Card heights are unknown here, so there is no y, only the gutter
@@ -152,7 +156,9 @@ class Geometry:
         self.margin = max(8, mode["pad_l"] - 6)
         self.top_room, self.bottom_room = top, bottom
         self.empty = sorted(r for r in empty if 0 <= r < rows - 1)
+        self.tracks = self._tracks()
         self.band = self._band()
+        self.frames = {}
 
     def left(self, c):
         return self.pad_l + c * (self.w + self.gap)
@@ -173,32 +179,30 @@ class Geometry:
     def clamp(self, c, x):
         return min(max(x, self.left(c) + 12), self.right(c) - 12)
 
-    def _band(self):
-        """The room of every lattice row line an empty row governs: {line: (lower side, higher side)},
-        with MEASURED in place of the top margin's away-from-the-cards side, which only the browser
-        measurement states.
+    def _tracks(self):
+        """Every run of empty rows of the drawn extent as tracks() of template/js/head.js lays it
+        out: [(a, b, above, {lattice line: px of its base})], `a`..`b` the empty rows of the run and
+        `above` the card edge over it, None over a leading run, which the top margin bounds.
 
-        tracks() of template/js/head.js gives an empty row of the drawn extent a track at one y and
-        fills the empty rows in ascending order, so each of them sees the tracks already invented
-        above it: the first row of the grid lands TRACK_LEAD px above the first cards, and every other
-        empty row halfway between the row above it and the top of the next row of cards. So a run of
-        k empty rows halves what is left of the span below it, k times. An empty implicit grid row is
-        0 px high and both of its row gaps stay, so that span is (k + 1) row gaps between two rows of
-        cards. by() then puts a row line in the middle of its own track, a gutter in the middle
-        between two tracks, and the top margin `margin` above the first track.
+        tracks() gives an empty row of the drawn extent a track at one y and fills the empty rows in
+        ascending order, so each of them sees the tracks already invented above it: the first row of
+        the grid lands TRACK_LEAD px above the first cards, and every other empty row halfway
+        between the row above it and the top of the next row of cards. So a run of k empty rows
+        halves what is left of the span below it, k times. An empty implicit grid row is 0 px high
+        and both of its row gaps stay, so that span is (k + 1) row gaps between two rows of cards.
+        by() then puts a row line in the middle of its own track, a gutter in the middle between two
+        tracks, and the top margin `margin` above the first track.
 
         Each run is measured in px from the card edge that ends it, downwards, so its own lines are
-        negative and the cards below it are at 0. A side facing a card edge keeps LINE_CLEAR off the
-        distance to it; a side facing another lattice line takes `shared_room` of the distance — the
-        two groups share it, less one smallest pitch kept between them, which is what stops the
-        outermost lines of two neighbouring groups being drawn on one y."""
+        negative and the cards below it are at 0. `_band` prices the lines of a run from these px
+        and `frame` states them; neither reads the other."""
         runs = []
         for r in self.empty:
             if runs and runs[-1][-1] == r - 1:
                 runs[-1].append(r)
             else:
                 runs.append([r])
-        out = {}
+        out = []
         for run in runs:
             a, b = run[0], run[-1]
             if a == 0:
@@ -211,14 +215,61 @@ class Geometry:
                 above, first = -span, (-span + ys[0]) / 2
             # gutters[k] is the lattice line 2 * (a + k), the one above the empty row a + k
             gutters = [first] + [(ys[j - 1] + ys[j]) / 2 for j in range(1, len(ys))] + [ys[-1] / 2]
-            for j, y in enumerate(ys):
-                out[2 * (a + j) + 1] = (shared_room(y - gutters[j]), shared_room(gutters[j + 1] - y))
-            out[2 * a] = (MEASURED if above is None else first - above - LINE_CLEAR,
-                          shared_room(ys[0] - first))
-            for k in range(1, len(run)):
-                out[2 * (a + k)] = (shared_room(gutters[k] - ys[k - 1]), shared_room(ys[k] - gutters[k]))
-            out[2 * (b + 1)] = (shared_room(gutters[-1] - ys[-1]), -gutters[-1] - LINE_CLEAR)
+            at = {2 * (a + j): y for j, y in enumerate(gutters)}
+            at.update({2 * (a + j) + 1: y for j, y in enumerate(ys)})
+            out.append((a, b, above, at))
         return out
+
+    def _band(self):
+        """The room of every lattice row line an empty row governs: {line: (lower side, higher side)},
+        with MEASURED in place of the top margin's away-from-the-cards side, which only the browser
+        measurement states. The px of the lines are `_tracks`'.
+
+        A side facing a card edge keeps LINE_CLEAR off the distance to it; a side facing another
+        lattice line takes `shared_room` of the distance — the two groups share it, less one
+        smallest pitch kept between them, which is what stops the outermost lines of two
+        neighbouring groups being drawn on one y."""
+        out = {}
+        for a, b, above, at in self.tracks:
+            for r in range(a, b + 1):
+                y = at[2 * r + 1]
+                out[2 * r + 1] = (shared_room(y - at[2 * r]), shared_room(at[2 * r + 2] - y))
+            out[2 * a] = (MEASURED if above is None else at[2 * a] - above - LINE_CLEAR,
+                          shared_room(at[2 * a + 1] - at[2 * a]))
+            for r in range(a + 1, b + 1):
+                out[2 * r] = (shared_room(at[2 * r] - at[2 * r - 1]),
+                              shared_room(at[2 * r + 1] - at[2 * r]))
+            out[2 * (b + 1)] = (shared_room(at[2 * b + 2] - at[2 * b + 1]), -at[2 * b + 2] - LINE_CLEAR)
+        return out
+
+    def frame(self, line):
+        """Where the base of row line `line` stands against the cards around it, as a Frame, or None
+        where this side cannot say: a row of cards, whose base template/js/flow.js puts in the middle
+        of its tallest card, or of the band its sideways lines are clamped into.
+
+        Every other row line stands at px this side knows from the same construction the room of
+        stage B is priced with: a gutter in the middle of the `row_gap` between two rows of cards, an
+        outer row margin `margin` outside them, and every line of a band of empty rows where
+        `_tracks` puts it. The lines between the same two rows of cards are one frame, read in the px
+        of its lowest line, so that what stands on one of them is measured against what stands on
+        the others (spec 7.1 as amended a fourth time)."""
+        found = self.frames.get(line)
+        if found is None:
+            found = self.frames[line] = self._frame(line)
+        return found
+
+    def _frame(self, line):
+        for a, b, above, at in self.tracks:
+            if 2 * a <= line <= 2 * (b + 1):
+                row = 2 * (b + 1)
+                return Frame(row, at[line] - at[row], -math.inf if above is None else above - at[row],
+                             -at[row], 2 * a)
+        if line % 2:
+            return None
+        g = line // 2
+        top = -math.inf if g == 0 else -(self.margin if g == self.rows else self.row_gap / 2)
+        bottom = math.inf if g == self.rows else (self.margin if g == 0 else self.row_gap / 2)
+        return Frame(line, 0.0, top, bottom, line)
 
     def room(self, axis, line):
         """The px the lines of one group on this lattice line may spread over, on each side of it,
@@ -310,182 +361,24 @@ def overfull_error(group, edges, cols, rows):
     return f"{line_name(axis, line, cols, rows)} линий {width}, помещается {cap}: {shown}; {advice}"
 
 
-def room_beside(start, side, obstacles, limit):
-    """Free px from a label's near edge `start` outwards (R: rightwards, L: leftwards)
-    to the first obstacle interval, keeping LABEL_CLEAR; at most `limit`. Negative
-    when an obstacle already covers the start."""
-    room = limit
-    for a, b in obstacles:
-        if side == "R" and b > start - LABEL_CLEAR:
-            room = min(room, a - start - LABEL_CLEAR)
-        elif side == "L" and a < start + LABEL_CLEAR:
-            room = min(room, start - b - LABEL_CLEAR)
-    return room
+def in_the_way(blocked, routed):
+    """What the error of a label that fits nowhere calls the nearest thing in its way, ready to
+    follow the room it names (criterion E3), or the empty string where nothing stands there.
 
-
-def band_obstacles(Y, own, paths, offsets, geo, occupied, horizontal=True, half=0, reach=0):
-    """Cards and lines in lattice row Y (a row of cards when odd, a gutter when even), as
-    px intervals across. `own` = (path index, segment index) is the segment the label
-    stands beside and does not count; `horizontal=False` leaves out lines along the row.
-    `half` = -1 or 1 is for a label standing wholly above or below a height in the row: it keeps
-    the verticals that come into the row from that side or pass it, and the lines along the row
-    whose offset lies more than `reach` px into that half from the row's base (a negative `reach`
-    takes in lines on the other side of the base, up to that far). A vertical line ending in the
-    row from the other half turns there and runs along the row, so it counts as that line.
-    template/js/flow.js draws every point on a lattice row line from one base plus its offset:
-    the middle of a gutter; on a row of cards the middle of the overlap of the cards that lines
-    enter or leave sideways there, or the row's middle when there are none or they overlap by
-    16 px or less. Beside a straight sideways line (-1, minus that line's offset) the text stands
-    above that line, so a line along the row with a smaller offset runs through it, a straight
-    line between the same two cards included; one with the same offset or a larger one passes
-    under it.
-    On a row of cards where a line enters or leaves a card sideways, template/js/flow.js then
-    clamps every point into one band, 10 px inside the lowest top and the highest bottom of those
-    cards: the clamp is monotonic, so the order the rule above compares holds, but a line far from
-    the base is drawn nearer it, a few px off it when those cards are one title line high. Card
-    heights are unknown here, so beside a vertical second segment (`half` 0) every line along such
-    a row counts, whatever its offset; along any other row, one whose offset is under LINE_REACH."""
-    cards = [(geo.left(c), geo.right(c)) for r, c in occupied if Y % 2 and r == Y // 2]
-    # a path's ends are its cards' points: an end whose segment runs along Y enters or leaves a card
-    # sideways there
-    banded = any(q[0][1] == q[1][1] == Y or q[-1][1] == q[-2][1] == Y for q in paths)
-    lines = []
-    for j, (q, off) in enumerate(zip(paths, offsets)):
-        for k in range(len(q) - 1):
-            if (j, k) == own:
-                continue
-            (x1, y1), (x2, y2) = q[k], q[k + 1]
-            lo, hi = min(y1, y2), max(y1, y2)
-            if x1 == x2 and lo <= Y <= hi and not (half and (lo if half < 0 else hi) == Y):
-                x = geo.x(x1) + off[k][0]
-                lines.append((x - 1, x + 1))
-            elif half and y1 == y2 == Y and off[k][1] * half > reach:
-                xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
-                lines.append((min(xa, xb), max(xa, xb)))
-            elif not half and horizontal and y1 == y2 == Y and (banded or abs(off[k][1]) < LINE_REACH):
-                xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
-                lines.append((min(xa, xb), max(xa, xb)))
-    return cards, lines
-
-
-def under_card(node, paths, offsets, geo, occupied):
-    """Cards and lines, as px intervals across, that a label hanging under the card at lattice
-    point `node` meets when that card is shorter than its row: template/js/flow.js hangs the text
-    from the card's own bottom edge, and cards align to the top of the row, so the text stands
-    inside the row. The row's other cards count, and the lines drawn at their height: a line along
-    the row, and a vertical coming down to the row to turn along it. A line leaving or entering
-    `node` there is drawn within that card's height, above the text; a line reaching the gutter
-    below is the gutter's."""
-    X, R = node
-    cards = [(geo.left(c), geo.right(c)) for r, c in occupied if r == R // 2 and c != X // 2]
-    lines = []
-    for q, off in zip(paths, offsets):
-        for k in range(len(q) - 1):
-            (x1, y1), (x2, y2) = q[k], q[k + 1]
-            if y1 == y2 == R and node not in (q[k], q[k + 1]):
-                xa, xb = geo.x(x1) + off[k][0], geo.x(x2) + off[k + 1][0]
-                lines.append((min(xa, xb), max(xa, xb)))
-            elif x1 == x2 and min(y1, y2) < max(y1, y2) == R:
-                # where the line goes on along the row; none when it ends on a card's top edge here
-                on = k + 2 if y2 == R else k - 1
-                if 0 <= on < len(q) and q[on] != node:
-                    x = geo.x(x1) + off[k][0]
-                    lines.append((x - 1, x + 1))
-    return cards, lines
-
-
-def label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, labels=()):
-    """Places template/js/flow.js can give the label of routed edge i, each with its room in px:
-    `room` counts cards, `line_room` other lines too (and, beside a vertical second segment, the
-    `labels` already placed). A label above a horizontal second segment has no `line_room`:
-    plan() checks its lines after placing it.
-    Only a label beside a vertical second segment has a choice (its row `ly` and side);
-    every other shape has one place. A spot also says where its text lies: the lattice rows
-    it can fall in, `band` = (first, last), its near edge `start` and the direction `grow`
-    the text runs from there."""
-    off = offsets[i]
-    r, c = cells[e["a"]]
-    tc = cells[e["b"]][1]
-    sa = router.side_of(p[0], p[1])
-    if len(p) >= 3 and p[2][1] == p[1][1]:
-        # above the horizontal second segment, ending LABEL_BEND before its far end; the cells
-        # under the segment are empty, so the only limit is the line's own bend at p1
-        x1 = geo.clamp(c, geo.x(p[1][0]) + off[1][0])
-        if len(p) == 3:
-            x2 = geo.left(tc) if p[2][0] > p[1][0] else geo.right(tc)
-        else:
-            x2 = geo.x(p[2][0]) + off[2][0]
-            if len(p) == 4:
-                x2 = geo.clamp(tc, x2)
-        rt = x2 > x1
-        return [{"where": "над вторым отрезком", "room": abs(x2 - x1) - LABEL_BEND - LABEL_CLEAR,
-                 "band": (p[1][1], p[1][1]), "start": x2 - LABEL_BEND if rt else x2 + LABEL_BEND, "grow": "L" if rt else "R",
-                 "key": ("h", p[1][1], p[2][0], p[2][0] > p[1][0])}]
-    if len(p) >= 3:
-        # beside the vertical second segment. Without `ly` template/js/flow.js centres the label on the
-        # segment, at a pixel row that depends on card heights: that place is kept when the side
-        # is clear in every row the middle can fall in. Otherwise the label is pinned to one row
-        # the segment passes, gutters included: the middle first, the rows of its ends last.
-        X, Y1, Y2 = p[1][0], p[1][1], p[2][1]
-        x = geo.x(X) + off[1][0]
-        if len(p) == 3:
-            x = geo.clamp(tc, x)
-        lo, hi = min(Y1, Y2), max(Y1, Y2)
-        mid = (Y1 + Y2) / 2
-        # the middle stays at least half a row off the ends: clear of the lines turning there and
-        # of the target card the segment ends on, not of the cards beside the line at its start
-        middle = [(Y, lo < Y < hi) for Y in range(lo, hi + 1) if not (len(p) == 3 and Y == Y2)]
-        pinned = sorted(range(lo, hi + 1), key=lambda Y: (Y in (Y1, Y2), abs(Y - mid), abs(Y - Y1)))
-        places = [(None, lo, hi, middle)] + [(Y, Y, Y, [(Y, True)]) for Y in pinned]
-        spots = []
-        for ly, blo, bhi, rows in places:
-            cards, lines = [], []
-            for Y, horizontal in rows:
-                cs, ls = band_obstacles(Y, (i, 1), paths, offsets, geo, occupied, horizontal)
-                cards += cs
-                lines += ls
-            lines += [(a - LABEL_WORD, b + LABEL_WORD) for l_lo, l_hi, a, b in labels if l_lo <= bhi and blo <= l_hi]
-            for side in ("R", "L"):
-                if (side == "R" and X == 2 * geo.cols) or (side == "L" and X == 0):
-                    continue  # outside the grid box the section clips the text
-                start = x + LABEL_BEND if side == "R" else x - LABEL_BEND
-                limit = min(card_w - 20, geo.total - start if side == "R" else start)
-                room = room_beside(start, side, cards, limit)
-                spot = {"where": "рядом со вторым отрезком", "room": room, "side": side,
-                        "line_room": room_beside(start, side, lines, room),
-                        "band": (blo, bhi), "start": start, "grow": side, "key": ("v", X, blo, bhi, side)}
-                if ly is not None:
-                    spot["ly"] = ly
-                spots.append(spot)
-        return spots
-    if sa in ("L", "R"):
-        # straight sideways: from the card edge towards the next card in the row, which is the target,
-        # above the label's own line; another line along the row above that line, where the text
-        # stands, runs through it, and so does a vertical coming into the row from above or passing it
-        cards = [(geo.left(cc), geo.right(cc)) for rr, cc in occupied if rr == r and cc != c]
-        _, lines = band_obstacles(p[0][1], (i, 0), paths, offsets, geo, occupied, half=-1, reach=-off[0][1])
-        start = geo.right(c) + LABEL_SIDE if sa == "R" else geo.left(c) - LABEL_SIDE
-        room = room_beside(start, sa, cards, geo.gap + card_w - 20)
-        return [{"where": "у выхода вбок", "room": room, "line_room": room_beside(start, sa, lines, room),
-                 "band": (p[0][1], p[0][1]), "start": start, "grow": sa, "key": (e["a"], sa)}]
-    # straight down or up: the text stands in the gutter under or over the card, clear of cards and
-    # inside the section, between the card and the middle of the gutter. A line from the card's
-    # side to that middle runs through it, and so does a line along the gutter less than
-    # LINE_REACH from the text's middle, or nearer the card: under a card shorter than its row the
-    # text stands higher, never lower, and when the row holds other cards it may stand in the row
-    Y, half = (p[0][1] + 1, -1) if sa == "B" else (p[0][1] - 1, 1)
-    middle = LABEL_BELOW - LABEL_DROP if sa == "B" else LABEL_ABOVE + LABEL_DROP  # off the card edge
-    _, lines = band_obstacles(Y, (i, 0), paths, offsets, geo, occupied, half=half,
-                              reach=geo.row_gap / 2 - middle - LINE_REACH)
-    start = geo.clamp(c, geo.x(p[1][0]) + off[1][0]) + LABEL_BESIDE
-    room = min(card_w, geo.total - start)
-    if sa == "B" and any(rr == r and cc != c for rr, cc in occupied):
-        cards, row_lines = under_card(p[0], paths, offsets, geo, occupied)
-        room = room_beside(start, "R", cards, room)
-        lines += row_lines
-    return [{"where": "у выхода вниз" if sa == "B" else "у выхода вверх", "room": room,
-             "line_room": room_beside(start, "R", lines, room), "band": (Y, Y), "start": start, "grow": "R",
-             "key": (e["a"], sa)}]
+    `blocked` is the Clash `labels.place` answers with: a card by the id of the node standing on it,
+    a line by the (path, segment) of the run, which names the routed edge it belongs to, another
+    label by the edge it belongs to, and a bound by the side of the drawn area it is."""
+    if blocked is None:
+        return ""
+    if blocked.kind == labels.CARD:
+        return f", мешает карточка {blocked.owner}"
+    if blocked.kind == labels.LINE:
+        other = routed[blocked.owner[0]]
+        return f", мешает линия {other['a']} -> {other['b']}"
+    if blocked.kind == labels.LABEL:
+        other = routed[blocked.owner]
+        return f", мешает подпись связи {other['a']} -> {other['b']}"
+    return ", мешает край диаграммы"
 
 
 def mode_for(kind, mode_name, overrides):
@@ -588,7 +481,9 @@ def plan(model, mode_name, overrides=None, draft=False):
             errors.append(f"узел {nid}: kind {k!r} не из {NODE_KINDS}")
         if nid.endswith("?") and k != "decision":
             errors.append(f"узел {nid}: id с ? на конце это развилка, а kind = {k}")
-        if not n.get("title"):
+        # a title of white space alone draws a card lower than labels.CARD_LEAST, the least height
+        # the label model reads every card at, so it is no title at all
+        if not str(n.get("title") or "").strip():
             errors.append(f"узел {nid}: нет title")
             continue
         if n.get("group") and n["group"] not in groups:
@@ -784,60 +679,43 @@ def plan(model, mode_name, overrides=None, draft=False):
         layout_errors.append(overfull_error(group, routed, grid_cols, drawn_rows))
     occupied = set(placed.values())
 
-    # where a label goes and how much room it has, from the shape of the route and the
-    # pixels template/js/flow.js will use: straight line: at the exit; horizontal second segment: above
-    # it, near its end; vertical second segment: beside its middle when that is clear whatever
-    # the card heights, else pinned to the first row it passes where the text is clear
-    label_keys = {}
-    placed = []  # (first lattice row, last lattice row, x0, x1) of the labels placed so far
-    for e in routed:
-        e["lside"] = "R"
-    # labels with a single place first, so that the ones choosing a row see them all
-    order = sorted((i for i, e in enumerate(routed) if e["label"] or e["note"]),
-                   key=lambda i: len(paths[i]) >= 3 and paths[i][2][1] != paths[i][1][1])
-    for i in order:
-        e, p = routed[i], paths[i]
-        text = (e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip()
-        need = label_width(text)
-        spots = label_spots(i, e, p, paths, offsets, geo, cells, occupied, card_w, placed)
-        spot = next((s for s in spots if need <= s.get("line_room", s["room"])), None)
-        if spot is None:
-            spot = next((s for s in spots if need <= s["room"]), None)
-            if spot is not None:
-                warnings.append(f"связь {e['a']} -> {e['b']}: подпись {text!r} {spot['where']} ляжет на другую линию "
-                                f"или подпись; переставьте узлы или уберите подпись в сноску")
-        if spot is None:
-            spot = max(spots, key=lambda s: s["room"])
-            room = max(spot["room"], 0)
-            def label_fits(s, room=room):
+    # where every label goes: diagrams/labels.py searches the places of all the labels together for
+    # the cheapest arrangement, answers with the place each one took and with what stands in its way
+    # there, as rectangles of the lattice row they share, and the messages are written here. A label
+    # raises one warning where it lies on a line along its rows or on another label, one per line
+    # crossing a text on a horizontal second segment, and one per pair of labels that land in one
+    # place, on the later of the two — the numbers the advice of spec 6 counts
+    texts = [(e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip()
+             if e["label"] or e["note"] else "" for e in routed]
+    choices = labels.place(routed, texts, paths, offsets, geo, cells, occupied, card_w)
+    for choice in choices:
+        e, text, spot = routed[choice.edge], texts[choice.edge], choice.cand
+        if any(c.kind == labels.ON_LINE for c in choice.clashes):
+            warnings.append(f"связь {e['a']} -> {e['b']}: подпись {text!r} {spot.where} ляжет на другую линию "
+                            f"или подпись; переставьте узлы или уберите подпись в сноску")
+        if choice.room is not None:
+            def label_fits(s, room=choice.room):
                 return label_width(s) <= room
-            fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot['where']}, "
-                      f"влезает ~{fit_prefix(text, label_fits)}; сократите, вынесите в сноску [n] "
+            fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot.where}, "
+                      f"влезает ~{fit_prefix(text, label_fits)}{in_the_way(choice.blocked, routed)}; "
+                      f"сократите, вынесите в сноску [n] "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
-        e["lside"] = spot.get("side", "R")
-        if "ly" in spot:
-            e["ly"] = spot["ly"]
-        x0 = spot["start"] if spot["grow"] == "R" else spot["start"] - need
-        placed.append((*spot["band"], x0, x0 + need))
-        key = spot["key"]
-        if key in label_keys:
-            warnings.append(f"связи {label_keys[key]} и {e['a']} -> {e['b']}: подписи встанут в одно место и наложатся; "
-                            f"переставьте узлы или уберите одну подпись в сноску")
-        label_keys[key] = f"{e['a']} -> {e['b']}"
+        e["la"] = spot.la
+        for clash in choice.clashes:
+            if clash.kind == labels.SAME_PLACE:
+                first = routed[clash.owner]
+                warnings.append(f"связи {first['a']} -> {first['b']} и {e['a']} -> {e['b']}: подписи встанут "
+                                f"в одно место и наложатся; переставьте узлы или уберите одну подпись в сноску")
 
-    # a label above a horizontal second segment collides with any other line crossing that segment
-    segs = [router.segments(q) for q in paths]
-    for i, (e, p) in enumerate(zip(routed, paths)):
-        if not (e["label"] or e["note"]) or len(p) < 3 or p[2][1] != p[1][1]:
-            continue
-        y, x1, x2 = p[1][1], min(p[1][0], p[2][0]), max(p[1][0], p[2][0])
-        for j, other in enumerate(segs):
-            if j == i:
-                continue
-            for axis, line, lo, hi in other:
-                if axis == "v" and x1 < line < x2 and lo < y < hi:
-                    warnings.append(f"связь {e['a']} -> {e['b']}: подпись {e['label']!r} пересечёт линию "
-                                    f"{routed[j]['a']} -> {routed[j]['b']}; переставьте узлы или уберите подпись в сноску")
+    # the lines that run through a label over a horizontal second segment, by edge: the labels above
+    # are answered for in the order they were placed, which is not the order of the model
+    for choice in sorted(choices, key=lambda c: c.edge):
+        e = routed[choice.edge]
+        for clash in choice.clashes:
+            if clash.kind == labels.CROSSED:
+                other = routed[clash.owner]
+                warnings.append(f"связь {e['a']} -> {e['b']}: подпись {e['label']!r} пересечёт линию "
+                                f"{other['a']} -> {other['b']}; переставьте узлы или уберите подпись в сноску")
 
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
@@ -857,10 +735,10 @@ def plan(model, mode_name, overrides=None, draft=False):
             "path": [[x, y, ox, oy] for (x, y), (ox, oy) in zip(p, off)],
             "d": 1 if e["dashed"] else 0,
             "label": (e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip(),
-            "ls": e.get("lside", "R"),
         }
-        if "ly" in e:
-            out["ly"] = e["ly"]  # lattice row of a label beside a vertical second segment
+        if out["label"]:
+            # where the script draws that label: (pt, ref, Y, dx, dy, anchor) of spec 7.4
+            out["la"] = e["la"]
         out_edges.append(out)
 
     # grid_rows is the drawn count: a swimlane's lane background, which render() spans from it, ends
