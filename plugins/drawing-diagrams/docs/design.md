@@ -857,3 +857,28 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
 - `dg.js` shrinks from 10 083 to 9 909 bytes. `template/dist/REF` names
   `e9c17343c56f506f94b8afbca60be9a677518ea5`; the live CDN verification follows the merge, per
   section 13.
+
+## 17. Plan validation and the shipped build (amendment, 2026-09-22)
+
+- Every validation check of the three planners is now asserted by its exact message:
+  `tests/test_node_validation.py` for `flow.plan` (section 16), `tests/test_schema_validation.py` for
+  `schema.plan` and the helpers it validates through — `parse_grid`, `check_placement`, `parse_edge` —
+  and `tests/test_timeline_validation.py` for `timeline.plan`. The schema set was enumerated by an AST
+  sweep over `schema.py` and `grid.py` for every append to an error or warning list and every raise, so
+  it is mechanical rather than read off by eye. Each kind's tests assert what its own `plan()` does:
+  `flow` turns a layout or fit error into a `черновик: ` warning under `--draft`; `schema` refuses with
+  `--draft` exactly as without it and builds no `fit` list; `timeline` follows `flow`.
+- Two readings are aligned with `flow.plan`. A swimlane `lanes` that is not a list is refused with the
+  message the empty case already uses and normalized to an empty list — a string was iterated by
+  characters and a mapping by keys, each passing as a lane id, and a number crashed on `len()`. A moment
+  titled with white space alone is no title, which is the reading `flow.plan` gives a node's title.
+- The check of `tools/assets.py` runs in the suite (`tests/test_assets_tool.py`) against the shipped
+  `template/dist`, so a change under `template/css` or `template/js` lands with its rebuild in the same
+  commit. The release sequence of section 13 is unchanged; the suite now holds the same invariant
+  continuously rather than at release alone.
+- Divergences found by the enumeration and left as they are, for a later decision: `schema.plan` ignores
+  `--draft` and returns no `fit` list, so anything reading `ModelError.fit` gets nothing from a schema
+  diagram; a `lanes` list whose items are unhashable raises `TypeError` instead of a model error; a
+  moment, or a `states`, that is not a mapping raises `AttributeError`, as a node does in `flow.plan`;
+  `timeline`'s entity label keeps the white-space hole the title had; and `reference/timeline.md` shows
+  `{"label": "2026-09-22"}`, which the rail-width check refuses in both modes.
