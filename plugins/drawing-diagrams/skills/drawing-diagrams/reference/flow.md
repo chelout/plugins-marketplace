@@ -91,7 +91,9 @@ off.
 next to the source node or, where the line turns, on its second segment. It
 is at most three words or 24 characters; longer text goes to `footnotes` and
 is referenced with `[n]` (a circled number appears on the line, the list
-appears under the diagram). `dashed` marks an asynchronous or optional
+appears under the diagram). A footnote explains a line or a node and never
+replaces one: every outcome, state or case the task asks to show gets its own
+node or branch label. `dashed` marks an asynchronous or optional
 transition. The object form `{"from", "to", "label", "dashed"}` is accepted.
 
 The check measures a label in pixels where the page draws it; a footnote
