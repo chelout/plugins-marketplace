@@ -597,11 +597,11 @@ class NodeValidation(unittest.TestCase):
         # their second segments. Each of the two also lies on the lines there, a warning of its own,
         # and the pair is told once, on the later of the two in the model's order.
         lie = "подпись {} рядом со вторым отрезком ляжет на другую линию или подпись; " \
-              "переставьте узлы или уберите подпись в сноску"
+              "переставьте узлы или сократите подпись, а остальное вынесите в сноску"
         expected = ["связь c -> b: " + lie.format("'нет'"),
                     "связь c -> f: " + lie.format("'ок'"),
                     "связи c -> b и c -> f: подписи встанут в одно место и наложатся; "
-                    "переставьте узлы или уберите одну подпись в сноску"]
+                    "переставьте узлы или сократите одну подпись, а остальное вынесите в сноску"]
         self.assertWarning(fan_model(), widget=expected, page=expected)
 
     def test_a_layout_error_is_refused_before_the_labels_are_placed(self):
@@ -616,8 +616,8 @@ class NodeValidation(unittest.TestCase):
         for mode, title, label in (("widget", 33, 3), ("page", 56, 4)):
             title_error = f"узел b: заголовок 80 симв., влезает {title}; сократите заголовок или сузьте grid"
             label_error = (f"связь a? -> b: подпись 'вправо идём' 11 симв. не помещается у выхода вбок, "
-                           f"влезает ~{label}, мешает карточка b; сократите, вынесите в сноску [n] "
-                           f"или переставьте узлы так, чтобы линия уходила вниз")
+                           f"влезает ~{label}, мешает карточка b; сократите подпись, а остальное "
+                           f"вынесите в сноску [n], или переставьте узлы так, чтобы линия уходила вниз")
             with self.subTest(mode=mode, draft=True):
                 layout, warnings = flow.plan(copy.deepcopy(model), mode, draft=True)
                 self.assertTrue(layout["draft"])

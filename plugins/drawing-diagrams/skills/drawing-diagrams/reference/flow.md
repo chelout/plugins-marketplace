@@ -128,9 +128,10 @@ room is what the cards and the edge leave, so a line named there can still run
 through a text cut to that length. The check warns once when the place a label
 takes lies on another line or label, once per line that runs through a label
 on a horizontal segment, and once for a pair of labels that land in one place
-— on the later of the two. The fixes are a shorter label, a footnote, or
-moving the target so the line leaves downward. A reference to a footnote also
-works at the end of a node's `text` ("… [2]"), for a note that needs one.
+— on the later of the two. The fixes are a shorter label with the rest in a
+footnote, or moving the target so the line leaves downward. A reference to a
+footnote also works at the end of a node's `text` ("… [2]"), for a note that
+needs one.
 
 ### Routes
 

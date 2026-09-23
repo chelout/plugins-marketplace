@@ -988,3 +988,39 @@ about how the renderer computes, where this file did not already hold it, is kep
   term they name (`render.SCORE_TERMS`, `render.moved_term`), the trimmed cosmetic tail, the rule
   that a warning may change its kind while their number never grows, and what the search costs on a
   dozen cards, all of which that stage holds.
+
+## 20. The label advice keeps the label (amendment, 2026-09-23)
+
+Four messages of `flow.plan` tell the author what to do about a label: the warnings that a label
+lies on another line or label (`labels.ON_LINE`), that two labels land in one place
+(`labels.SAME_PLACE`) and that a line runs through a label (`labels.CROSSED`), and the error that a
+label fits none of its places. Their advice was «уберите подпись в сноску», «уберите одну подпись в
+сноску» and «сократите, вынесите в сноску [n]». Each now advises a shorter label with the rest in a
+footnote, besides moving the nodes as before: «сократите подпись, а остальное вынесите в сноску» in
+the warnings of `labels.ON_LINE` and `labels.CROSSED`, «сократите одну подпись, а остальное
+вынесите в сноску» in that of `labels.SAME_PLACE`, and «сократите подпись, а остальное вынесите в
+сноску [n], или переставьте узлы так, чтобы линия уходила вниз» in the error. What each message
+says before its advice is unchanged, and so is every other message.
+
+- Why: read literally, the old advice moves the whole label into a footnote. Only a decision exit
+  refuses a label that is a footnote marker alone (`flow.plan`, «развилка …: ветка в … без
+  подписи»); on any other line the marker is then all the line says, and the outcome it stood for
+  is read only in the list under the diagram. `reference/flow.md` "Edges" rules that out — a
+  footnote explains a line or a node and never replaces one — and `SKILL.md` "Common mistakes"
+  already prescribes a short label at the exit with the rest in footnotes, as does the error for a
+  label over `LABEL_MAX_WORDS` = 3 words or `LABEL_MAX_CHARS` = 24 characters («оставьте короткую и
+  вынесите текст в footnotes со ссылкой [n]»). The change is preventive: it takes away a literal
+  reading of the advice.
+- Left as it was: the error for a node's text past two lines, «сократите или вынесите в сноску». A
+  node cannot lose its name that way, since every node has a title (`flow.plan`, «узел …: нет
+  title»).
+- `reference/flow.md` "Edges" names the same fixes: a shorter label with the rest in a footnote, or
+  moving the target so the line leaves downward.
+- The tests that assert these messages by their exact text assert the new advice: in
+  `tests/test_labels.py`, `TheTableOfPlaces.test_a_line_met_in_several_rows_of_one_place_is_one_warning`,
+  two tests of `TheRowsATextReaches` and
+  `TheEndOfAVerticalRun.test_an_end_off_the_base_no_longer_hides_a_line_through_a_text`; in
+  `tests/test_node_validation.py`, `NodeValidation.test_two_labels_in_one_place_warn` and
+  `NodeValidation.test_a_layout_error_is_refused_before_the_labels_are_placed`. The CLI outputs of
+  the shipped examples are unchanged (`tests/test_examples.py`, `test_exact_cli_outputs`, against
+  `tests/models/shipped-examples.json`).

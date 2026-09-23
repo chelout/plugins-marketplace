@@ -687,7 +687,10 @@ def plan(model, mode_name, overrides=None, draft=False):
     # there, as rectangles of the lattice row they share, and the messages are written here. A label
     # raises one warning where it lies on a line along its rows or on another label, one per line
     # crossing a text on a horizontal second segment, and one per pair of labels that land in one
-    # place, on the later of the two — the numbers the advice of spec 6 counts
+    # place, on the later of the two — the numbers the advice of spec 6 counts. What each message tells
+    # the author to do keeps a label on the line, a shorter one with the rest in a footnote: only a
+    # decision exit refuses a label that is a footnote marker alone, and on any other line the whole
+    # label moved to a footnote would leave the marker all the line says
     texts = [(e["label"] + (" " + CIRCLED[e["note"] - 1] if e["note"] else "")).strip()
              if e["label"] or e["note"] else "" for e in routed]
     choices = labels.place(routed, texts, paths, offsets, geo, cells, occupied, card_w)
@@ -695,20 +698,22 @@ def plan(model, mode_name, overrides=None, draft=False):
         e, text, spot = routed[choice.edge], texts[choice.edge], choice.cand
         if any(c.kind == labels.ON_LINE for c in choice.clashes):
             warnings.append(f"связь {e['a']} -> {e['b']}: подпись {text!r} {spot.where} ляжет на другую линию "
-                            f"или подпись; переставьте узлы или уберите подпись в сноску")
+                            f"или подпись; переставьте узлы или сократите подпись, "
+                            f"а остальное вынесите в сноску")
         if choice.room is not None:
             def label_fits(s, room=choice.room):
                 return label_width(s) <= room
             fit_error(f"связь {e['a']} -> {e['b']}: подпись {text!r} {len(text)} симв. не помещается {spot.where}, "
                       f"влезает ~{fit_prefix(text, label_fits)}{in_the_way(choice.blocked, routed)}; "
-                      f"сократите, вынесите в сноску [n] "
+                      f"сократите подпись, а остальное вынесите в сноску [n], "
                       f"или переставьте узлы так, чтобы линия уходила вниз")
         e["la"] = spot.la
         for clash in choice.clashes:
             if clash.kind == labels.SAME_PLACE:
                 first = routed[clash.owner]
                 warnings.append(f"связи {first['a']} -> {first['b']} и {e['a']} -> {e['b']}: подписи встанут "
-                                f"в одно место и наложатся; переставьте узлы или уберите одну подпись в сноску")
+                                f"в одно место и наложатся; переставьте узлы или сократите одну подпись, "
+                                f"а остальное вынесите в сноску")
 
     # the lines that run through a label over a horizontal second segment, by edge: the labels above
     # are answered for in the order they were placed, which is not the order of the model
@@ -718,7 +723,8 @@ def plan(model, mode_name, overrides=None, draft=False):
             if clash.kind == labels.CROSSED:
                 other = routed[clash.owner]
                 warnings.append(f"связь {e['a']} -> {e['b']}: подпись {e['label']!r} пересечёт линию "
-                                f"{other['a']} -> {other['b']}; переставьте узлы или уберите подпись в сноску")
+                                f"{other['a']} -> {other['b']}; переставьте узлы или сократите подпись, "
+                                f"а остальное вынесите в сноску")
 
     if layout_errors and not draft:
         raise ModelError(layout_errors, layout=layout_errors, fit=fit_errors)
