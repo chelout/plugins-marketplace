@@ -691,7 +691,8 @@ class TheTableOfPlaces(unittest.TestCase):
                                   and LIES in w],
                                  [f"связь {edge}: подпись {layout['edges'][i]['label']!r} "
                                   f"{choice.cand.where} ляжет на другую линию или подпись; "
-                                  f"переставьте узлы или уберите подпись в сноску"], warnings)
+                                  f"переставьте узлы или сократите подпись, а остальное вынесите в сноску"],
+                                 warnings)
 
 
 # Every label of the seeded hundred greedy stands over a horizontal second segment just after the
@@ -1239,9 +1240,9 @@ class TheRowsATextReaches(unittest.TestCase):
         self.assertEqual(sorted(c.kind for c in took.clashes), [labels.CROSSED, labels.ON_LINE])
         self.assertEqual([w for w in warnings if w.startswith("связь a? -> c:")],
                          ["связь a? -> c: подпись 'да' над вторым отрезком ляжет на другую линию "
-                          "или подпись; переставьте узлы или уберите подпись в сноску",
+                          "или подпись; переставьте узлы или сократите подпись, а остальное вынесите в сноску",
                           "связь a? -> c: подпись 'да' пересечёт линию b -> d; переставьте узлы "
-                          "или уберите подпись в сноску"], warnings)
+                          "или сократите подпись, а остальное вынесите в сноску"], warnings)
 
     def test_a_text_over_a_segment_above_the_middle_of_its_gutter_reaches_the_row_over_it(self):
         """The same reading the other way up: `b -> d` hangs from a segment drawn 4 px above the
@@ -1262,7 +1263,8 @@ class TheRowsATextReaches(unittest.TestCase):
                          (1, "p", 0, -labels.LABEL_BEND, labels.LABEL_UNDER, "end"))
         self.assertEqual([w for w in warnings if w.startswith("связь b -> d:")],
                          ["связь b -> d: подпись 'да' под вторым отрезком ляжет на другую линию "
-                          "или подпись; переставьте узлы или уберите подпись в сноску"], warnings)
+                          "или подпись; переставьте узлы или сократите подпись, а остальное вынесите в сноску"],
+                         warnings)
 
     def test_a_segment_on_the_middle_of_its_gutter_keeps_every_place_it_has(self):
         """And the segment drawn on the base of its own gutter row: LABEL_OVER, LABEL_DROP and
@@ -2015,7 +2017,8 @@ class TheEndOfAVerticalRun(unittest.TestCase):
                         f"{text.x0}..{text.x1}")
         self.assertIn(labels.Clash(labels.CROSSED, j), choice.clashes)
         self.assertIn(f"связь {mine}: подпись {layout['edges'][i]['label']!r} пересечёт линию "
-                      f"{other}; переставьте узлы или уберите подпись в сноску", said)
+                      f"{other}; переставьте узлы или сократите подпись, а остальное вынесите в сноску",
+                      said)
 
 
 class TheCardALabelHangsFromIsExempt(unittest.TestCase):
