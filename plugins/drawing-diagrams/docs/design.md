@@ -922,3 +922,69 @@ crossed more often than `router.crossings` reported, in 0.9% of them.
   a model error.
 - The full suite at the tests' final state (commit `162d3ae`) runs 577 tests, all passing, none
   skipped.
+
+## 19. What the flow reference no longer spells out (amendment, 2026-09-23)
+
+`reference/flow.md` is read in full for every flow, swimlane, state and blocks diagram, and it had
+grown from 11 452 characters, the version the token cost benchmark of section 13 measured, to
+16 562, mostly in its "Grid and routing" and "Edges". It was cut back to what an author acts on:
+fields, limits, rules, what each message and the advice mean and what to do about them. What it said
+about how the renderer computes, where this file did not already hold it, is kept here.
+
+- The prices `router.route` gives one step, which is why a line leaves a card downward or sideways,
+  enters it from above and draws a back edge along a margin: 1 per step, +2 per turn, +1 per empty
+  cell crossed, +8 for a first step up through the top of the source card, +4 for entering the
+  target from below, +1 per step on an outer margin, +8 for a labelled line's first step sideways
+  towards an occupied neighbour; against the traffic of the lines already routed, +10 for crossing
+  one, +3 for passing through another line's corner, +3 per line already leaving the source through
+  that side and per arrow already entering the target through that side, +1 for running along an
+  earlier line; and +20 for a step along a unit edge of a line whose load already equals its
+  capacity, so every step on a line that holds none. How the lines are then routed together is the
+  objective and the orchestration of section 14 (`router.phi`, `router.route_all`); the reference's
+  old sentence that every line is rerouted twice more with the others in place described the loop
+  `tests/reference.py` keeps, not the renderer at the time it was cut.
+- How a label is measured: `common.label_width` sums per-glyph advances measured in a browser on the
+  macOS system font (`common.LABEL_ADVANCE`), and a glyph not in that table counts as a circled
+  number, `CIRCLED_WIDTH` = 10.25 px. A text keeps `LABEL_CLEAR` = 2 px from a card edge or a line and
+  2 + `LABEL_WORD` = 10 px from another label (`labels.CLEARANCE`), a word space, so two labels of one
+  row do not read as one phrase.
+- Only a card, in any row the text reaches, or the edge of the diagram drops a place outright
+  (`labels.fits`); a line or another label on a place is priced by `labels.cost`, so a place can be
+  kept and warned about where every other place costs more. That holds for every place.
+- A straight exit down or up (the last branch of `labels.candidates`): the text stands
+  `LABEL_BESIDE` = 5 px beside its line, right of it first and left of it where the right has no
+  room, at the last column or where another line turns there, and between the card and the middle of
+  the gutter, where lines turn. A line leaving or entering the same side of the card beside it runs
+  through the text, and so does a line along the gutter moved towards the card (4 px is enough in a
+  widget, 8 px on a page); a line from the far side that turns along the middle stays clear, except
+  over a card with two or more empty rows above it, where the gutter next to the card stands 16.5 px
+  or less over it and a line along its middle lies on the label of an exit up. Under a card shorter
+  than its row the text hangs inside the row, so when the row holds other cards the next card ends
+  the room, and a line drawn there at another card's height lies on the label.
+- A horizontal second segment (`labels._on_segment`): the text is drawn `LABEL_OVER` = 9 px over the
+  segment as the segment itself is drawn, so parallel lines that move the segment take its label with
+  it; its second place is `LABEL_UNDER` = 17 px under the same segment, its third over the segment's
+  far end. The three places have one room between them unless a text reaches the row of cards beside
+  its line: it spans 19.5 px from the segment (section 14, "A text stands in every row it reaches"),
+  and a card in its way there ends that place's room. Between two rows of cards the gutter is 20 px
+  each way in a widget and 22 on a page, so a text reaches a row only once its segment is drawn more
+  than 0.5 or 2.5 px off the middle towards it, which two lines spread 8 px apart already are. On the
+  top and bottom margins, `Geometry.margin` = 12 px (widget) or 18 px (page) from the cards, and in
+  the gutter next to a card under two or more empty rows, the cards stand nearer than 19.5 px, so the
+  text on their side reaches them unless its segment is drawn away from them by the difference.
+  Otherwise what chooses is what runs through each.
+- A vertical second segment: `LABEL_BEND` = 6 px off the line, moved with it when parallel lines
+  spread, right side before left, at most a card width less 20 px. By default the script would centre
+  the text on the segment, at a height that depends on how tall the cards are, which Python does not
+  know; so that place is kept only where no card and no edge of the diagram takes the room in any row
+  the middle can fall in, the rows of cards and gutters the segment passes less the target card it
+  ends on. Otherwise the label is pinned to one of those rows, the middle first and the rows where the
+  line turns last, and the anchor `la` hands the place to the script (section 14, "The anchor").
+  Beside the cards of a gutter between two occupied cells only half a gutter less 6 px is left, less
+  than one letter, so such a line's label stands in the gutter row above or below them.
+- The advice of section 14, stage D, is unchanged; the reference states its output and its two
+  promises (every move verified by routing, no move bringing an error the model did not have or more
+  warnings, the crossings warning aside) and leaves out how the headline and each step choose the
+  term they name (`render.SCORE_TERMS`, `render.moved_term`), the trimmed cosmetic tail, the rule
+  that a warning may change its kind while their number never grows, and what the search costs on a
+  dozen cards, all of which that stage holds.
